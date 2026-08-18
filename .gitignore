@@ -1,0 +1,37 @@
+# 자격증명 / PC별 설정 — 로그인 계정과 시험망 주소를 포함하므로 공개 금지
+config.json
+.env
+.env.*
+
+# 실행 산출물 — 환자정보·환경정보·라이선스 키가 섞일 수 있다
+Cache/
+Evidence/
+Log/
+Reports/
+Temp/
+work/
+
+# 로컬 탐색 스크립트
+_probe_*.py
+
+# Python / IDE
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.idea/
+.vscode/
+
+# 설정 내보내기 / 파라미터 픽스처 / 로그
+*.vxs
+*.bak
+*.pim
+*.xtp
+*.eap
+*.egp
+*.dcm
+*.log
+
+# 내부 설계 노트 원본 — 라이선스 키/하드웨어 키/QA 계정/시험망 주소 포함.
+# 공개용 마스킹 사본은 work/scrub_docs.py 가 docs/ 에 생성한다.
+지식/
