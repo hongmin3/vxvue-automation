@@ -205,6 +205,24 @@ def cmd_xipl_license(cfg, args):
     return 0 if res["status"] == "OK" else 2
 
 
+def cmd_tc13(cfg, args):
+    from tests import tc13_import_patient as tc13
+    ui = _ready_ui(cfg)
+    result = tc13.run(ui, cfg)
+    env = result_mod.collect_env(cfg) if not args.no_env else None
+    paths = result_mod.write_reports([result], os.path.join(HERE, "Reports"), env=env)
+    print("\n판정: %s" % result.verdict)
+    for c in result.checks:
+        print("  [%s] Step %s %s" % (c.status, c.step, c.title))
+        if str(c.actual):
+            print("        실제: %s" % c.actual)
+        if c.note:
+            print("        비고: %s" % c.note)
+    for k, v in paths.items():
+        print("%-5s %s" % (k, v))
+    return 0 if result.verdict != "FAIL" else 2
+
+
 def cmd_tc14(cfg, args):
     from tests import tc14_setting_display as tc14
     ui = _ready_ui(cfg)
@@ -321,6 +339,7 @@ def cmd_setting_export_import(cfg, args):
 COMMANDS = {
     "env": cmd_env,
     "xipl-license": cmd_xipl_license,
+    "tc13": cmd_tc13,
     "tc14": cmd_tc14,
     "snapshot": cmd_snapshot,
     "snapshot-diff": cmd_snapshot_diff,

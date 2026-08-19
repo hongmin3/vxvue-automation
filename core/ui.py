@@ -467,6 +467,29 @@ class VXvueUi:
             time.sleep(0.3)
         return win
 
+    SW_MINIMIZE = 6
+
+    def ensure_foreground(self):
+        """VXvue가 아닌 다른 창이 최전면에 있으면 최소화하고 VXvue를 올린다.
+
+        실측(2026-08-19): 로그인 화면 위에 다른 프로그램(Microsoft Teams)의
+        창이 최전면으로 뜬 채로 남아 있었다 — `click()`/`type_text()`는
+        절대 화면 좌표로 클릭하므로(`SetCursorPos`+`mouse_event`), VXvue가
+        최전면이 아니면 그 좌표에 있는 **다른 창이 클릭을 그대로 받는다.**
+        `SetForegroundWindow` 한 번으로 안 밀릴 수 있어(다른 앱이 알림 등으로
+        계속 앞에 나서는 경우), 방해 창을 최소화까지 한다.
+        """
+        fg = u32.GetForegroundWindow()
+        if not fg:
+            return
+        fg_pid = w.DWORD()
+        u32.GetWindowThreadProcessId(fg, ctypes.byref(fg_pid))
+        if fg_pid.value == self.pid:
+            return
+        u32.ShowWindow(fg, self.SW_MINIMIZE)
+        time.sleep(0.2)
+        self.activate()
+
     # --- 로그인 --------------------------------------------------------
     def at_login_screen(self):
         """로그인 화면 여부.
@@ -497,12 +520,20 @@ class VXvueUi:
         if not self.at_login_screen():
             return True
 
-        # 로그인 화면에서 다른 창(탐색기 등)이 위에 떠 있으면, 좌표 기반
+        # 이전 시도의 오류 팝업(예: 빈 비밀번호로 제출된 뒤의 "Error")이
+        # 화면에 남아 있으면, 그 팝업이 비밀번호 필드 위를 가리고 있어 클릭이
+        # 팝업으로 가고 실제 입력란은 계속 빈 채로 남는다(실측 2026-08-19).
+        # 로그인 시도 전에 항상 비워 둔다.
+        while self.dismiss_info(timeout=2):
+            pass
+
+        # 로그인 화면에서 다른 창(Teams 등)이 위에 떠 있으면, 좌표 기반
         # 클릭(self.click)이 VXvue가 아니라 그 창을 때린다 — 로그인 실패의
-        # 실측 원인 중 하나(2026-08-19). VXvue를 최전면으로 올린다.
-        self.activate()
+        # 실측 원인 중 하나(2026-08-19). 방해 창을 최소화하고 VXvue를
+        # 최전면으로 올린다.
+        self.ensure_foreground()
         if not self.at_login_screen():
-            # activate() 이후 화면이 바뀌었다면 이미 다른 처리가 끝난 것이다.
+            # ensure_foreground() 이후 화면이 바뀌었다면 이미 다른 처리가 끝난 것이다.
             return True
         cur = (self.current_login_id() or "").strip()
         if cur and cur.lower() != user_id.strip().lower():
@@ -516,7 +547,17 @@ class VXvueUi:
         if not pw or not btn:
             raise RuntimeError("로그인 컨트롤을 찾지 못했습니다. 'python run.py ui-probe'로 확인하십시오.")
 
+        # 컨트롤을 찾는 사이에 다른 창이 다시 앞으로 나설 수 있어 클릭
+        # 직전에 한 번 더 확인한다.
+        self.ensure_foreground()
         self.type_text(pw[0], password)
+        if not self.get_text(pw[0]):
+            # 입력이 반영되지 않았다 — 무언가(다른 창/팝업)가 여전히 클릭을
+            # 가로챘다는 뜻이다. 한 번 더 정리하고 재시도한다.
+            while self.dismiss_info(timeout=2):
+                pass
+            self.ensure_foreground()
+            self.type_text(pw[0], password)
         self.click(btn[0], settle=1.5)
 
         end = time.time() + timeout

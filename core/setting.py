@@ -333,6 +333,29 @@ def walk(ui, on_screen=None):
 
         toggle_major(ui, mi)          # 다음 대분류를 깨끗하게 판별하기 위해 접는다
         time.sleep(0.3)
+
+
+def goto_screen(ui, title):
+    """제목이 일치하는 Setting 소분류 화면으로 이동한다.
+
+    여러 테스트 모듈(TC13/TC14/Setting Export-Import)이 반복하던 "대분류를
+    하나씩 펼쳐서 원하는 소분류를 찾는" 순회를 한 곳에 모은 것이다. 화면을
+    찾아 열면 그 minor_id를, 못 찾으면 None을 반환한다.
+    """
+    collapse_all(ui)
+    majors, _ = menu_items(ui)
+    for mi in range(len(majors)):
+        before = visible_minor_ids(ui)
+        if toggle_major(ui, mi) is None:
+            continue
+        time.sleep(0.4)
+        after = visible_minor_ids(ui)
+        for minor_id in sorted(after - before):
+            scr = open_screen(ui, minor_id)
+            if scr == title:
+                return minor_id
+        toggle_major(ui, mi)
+    return None
     return visited
 
 
@@ -483,7 +506,15 @@ def _file_dialog_submit(ui, path, timeout=20):
     if dlg is None:
         return False, "파일 대화상자가 나타나지 않았습니다."
 
-    edits = [c for c in children(dlg.hwnd, 4) if c.cls == "Edit"]
+    # 대화상자 창은 나타났지만 자식 컨트롤(파일명 Edit 등)이 아직 다 그려지지
+    # 않은 채로 조회되는 경우가 실측됐다(2026-08-19, TC13 Import Patient에서
+    # 재현). 곧바로 실패로 보지 않고 잠깐씩 재시도한다.
+    edits = []
+    for _ in range(5):
+        edits = [c for c in children(dlg.hwnd, 4) if c.cls == "Edit"]
+        if edits:
+            break
+        time.sleep(0.4)
     if not edits:
         return False, "파일명 입력 컨트롤(1148)을 찾지 못했습니다."
 
