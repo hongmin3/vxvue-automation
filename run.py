@@ -10,9 +10,24 @@
   python run.py mwl-list            공용 MWL 서버의 처방 목록
   python run.py mwl-ensure          VXvue 전용 DX 시험 처방을 오늘 날짜로 보장
   python run.py db-ae               Setting > DICOM 에 등록된 SCP 목록(DB 기준)
+  python run.py xipl-license        XIPL.SERVER About의 영상처리 라이선스 4종 확인
+  python run.py vxvue-license       VXvue 자체 라이선스(Demo/CAD/Live View) 확인
+  python run.py tc02                TC02 MWL 조회 워크플로우(조회→촬영→Send→Close→DB)
+  python run.py tc03                TC03 영상 조작(Interpolation + 툴 적용, 화면 변화 판정)
+  python run.py tc05                TC05 DICOM 전송(Image + Dose SR 수신 객체 판정)
+  python run.py tc07                TC07 DICOM Print(수신 필름 목록으로 판정)
+  python run.py tc08                TC08 Study Export(E 드라이브 기준, #21049 회귀)
   python run.py report-sample       현재 환경 헤더만 넣은 빈 리포트 생성(형식 확인용)
-  python run.py run-regression      체크리스트 전체 회귀(구현된 TC는 실행, 나머지는
-                                     automation_scope.json 수준을 리포트에 그대로 표시)
+  python run.py run-regression      체크리스트 전체 회귀. 구현된 TC는 실제로 실행하고,
+                                     나머지는 automation_scope.json 수준을 리포트에
+                                     그대로 표시한다(수행/미수행이 구분된다).
+                                     선택 옵션:
+                                       --reset-baseline       DB/폴더를 클린 baseline으로
+                                                              되돌린 뒤 시작(파괴적)
+                                       --approve-destructive  맨 마지막 Setting Import까지
+                                                              실행(파괴적)
+                                       --only TC_WindowsUpdate_14   특정 TC만
+                                       --no-checklist         xlsx 결과 기록 생략
 
 설계/진행 상황 문서: `지식/[자동화 설계] VXvue Windows Update 호환성 자동화 설계.md`
 """
@@ -21,7 +36,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import date
+from datetime import date, datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -176,6 +191,22 @@ def cmd_report_sample(cfg, args):
     return 0
 
 
+def _print_result(result):
+    """TCResult를 콘솔에 표로 출력한다(각 cmd_*가 같은 루프를 복사하던 것)."""
+    print()
+    print("판정: %s" % result.verdict)
+    for c in result.checks:
+        print("  [%s] Step %s %s" % (c.status, c.step, c.title))
+        if str(c.expected):
+            print("        기대: %s" % str(c.expected)[:400])
+        if str(c.actual):
+            print("        실제: %s" % str(c.actual)[:400])
+        if c.note:
+            print("        비고: %s" % str(c.note)[:400])
+    print()
+    print("합계: " + " / ".join("%s %d" % (k, v) for k, v in result.counts.items()))
+
+
 def _ready_ui(cfg, login=True):
     """VXvue 드라이버를 준비한다(필요하면 기동·로그인까지)."""
     from core.ui import VXvueUi
@@ -203,6 +234,74 @@ def cmd_xipl_license(cfg, args):
         print("누락: %s" % ", ".join(res["missing"]))
     print("전체 등록 목록: %s" % ", ".join(res["all"]))
     return 0 if res["status"] == "OK" else 2
+
+
+def cmd_vxvue_license(cfg, args):
+    """VXvue 자체 라이선스 확인 — Setting > System > License.
+
+    `xipl-license`(XIPL.SERVER About 창의 영상처리 라이선스 4종)와는 다른
+    검증이다. 이쪽은 VXvue 본체/옵션 라이선스(Demo / CAD / Live View)를
+    화면과 설치된 `.lic` 파일 양쪽에서 확인한다.
+    """
+    from core import license as license_mod
+    ui = _ready_ui(cfg)
+    result = license_mod.run_standalone(
+        ui, cfg, evidence_dir=os.path.join(HERE, "Evidence"))
+    env = None if args.no_env else result_mod.collect_env(cfg)
+    paths = result_mod.write_reports([result], os.path.join(HERE, "Reports"), env=env)
+    _print_result(result)
+    for k, v in paths.items():
+        print("%-5s %s" % (k, v))
+    return 0 if result.verdict != "FAIL" else 2
+
+
+def _run_tc_module(cfg, args, mod_name, **kwargs):
+    """TC 모듈 하나를 실행하고 리포트까지 낸다(각 cmd_tcNN이 공유)."""
+    import importlib
+    mod = importlib.import_module(mod_name)
+    ui = _ready_ui(cfg)
+    result = mod.run(ui, cfg, **kwargs)
+    env = None if args.no_env else result_mod.collect_env(cfg)
+    paths = result_mod.write_reports([result], os.path.join(HERE, "Reports"), env=env)
+    _print_result(result)
+    for k, v in paths.items():
+        print("%-5s %s" % (k, v))
+    return 0 if result.verdict != "FAIL" else 2
+
+
+def cmd_tc02(cfg, args):
+    """TC02 MWL 조회 워크플로우 — 조회 → 촬영 → Close → DB 대조 → Send → 수신 확인."""
+    return _run_tc_module(cfg, args, "tests.tc02_mwl_workflow",
+                          do_send=not args.no_send,
+                          map_procedure=args.map_procedure)
+
+
+def cmd_tc03(cfg, args):
+    """TC03 영상 조작 — Interpolation 변경 + Zoom/Pan/Rotation 툴 적용(화면 변화로 판정)."""
+    return _run_tc_module(cfg, args, "tests.tc03_image_display",
+                          do_acquire=not args.no_acquire,
+                          map_procedure=args.map_procedure)
+
+
+def cmd_tc05(cfg, args):
+    """TC05 DICOM 전송 — Send Dose SR 확인 → 촬영 → Send → 수신 객체 종류 판정."""
+    return _run_tc_module(cfg, args, "tests.tc05_dicom_send",
+                          do_acquire=not args.no_acquire,
+                          map_procedure=args.map_procedure)
+
+
+def cmd_tc07(cfg, args):
+    """TC07 DICOM Print — Print SCP 가동 확인 → 촬영 → Print → 수신 필름 확인."""
+    return _run_tc_module(cfg, args, "tests.tc07_dicom_print",
+                          do_acquire=not args.no_acquire,
+                          map_procedure=args.map_procedure)
+
+
+def cmd_tc08(cfg, args):
+    """TC08 Study Export — E 드라이브로 Export → 산출물 DICOM 태그 검증 → 역방향 Import."""
+    return _run_tc_module(cfg, args, "tests.tc08_study_export",
+                          do_acquire=not args.no_acquire,
+                          map_procedure=args.map_procedure)
 
 
 def cmd_tc13(cfg, args):
@@ -300,19 +399,52 @@ def cmd_run_regression(cfg, args):
     않았음"이 리포트만 보고 구분되게 한다.
     """
     from core import regression as reg_mod
+    only = set(args.only.split(",")) if getattr(args, "only", None) else None
     results = reg_mod.run(cfg, ui_factory=lambda: _ready_ui(cfg),
-                          approve_destructive=args.approve_destructive)
+                          approve_destructive=args.approve_destructive,
+                          reset_baseline=args.reset_baseline,
+                          evidence_root=os.path.join(HERE, "Evidence"),
+                          only=only)
     env = None if args.no_env else result_mod.collect_env(cfg)
     paths = result_mod.write_reports(results, os.path.join(HERE, "Reports"), env=env)
-    print("\n%-26s %-8s" % ("TC ID", "판정"))
+
+    print()
+    print("%-28s %-8s %s" % ("TC ID", "판정", "제목"))
+    print("-" * 100)
     for r in results:
-        print("%-26s %-8s %s" % (r.tc_id, r.verdict, r.title))
+        print("%-28s %-8s %s" % (r.tc_id, r.verdict, r.title))
+        for c in r.checks:
+            if c.status in (result_mod.FAIL, result_mod.BLOCKED):
+                print("      [%s] Step %s %s" % (c.status, c.step, c.title))
+                if str(c.actual):
+                    print("            실제: %s" % str(c.actual)[:300])
     total = dict((s, 0) for s in result_mod.STATUSES)
     for r in results:
         for k, v in r.counts.items():
             total[k] = total.get(k, 0) + v
-    print("\n판정 합계: PASS %d / FAIL %d / MANUAL %d / SKIP %d / BLOCKED %d"
+    print()
+    print("판정 합계: PASS %d / FAIL %d / MANUAL %d / SKIP %d / BLOCKED %d"
           % tuple(total[s] for s in result_mod.STATUSES))
+
+    # 체크리스트 원본(xlsx) 사본에 결과 열을 채운다. 원본은 읽기만 한다.
+    if not args.no_checklist:
+        try:
+            from core import checklist as checklist_mod
+            src = checklist_mod.source_path(cfg, root=HERE)
+            if not src:
+                print("체크리스트 원본을 찾지 못해 xlsx 기록을 건너뜁니다 "
+                      "(config.json의 checklist_xlsx 또는 VXvue/ 루트 확인).")
+            else:
+                out = os.path.join(
+                    HERE, "Reports",
+                    "Checklist_Result_%s.xlsx" % datetime.now().strftime("%Y%m%d_%H%M%S"))
+                info = checklist_mod.write_results(src, results, out_path=out, env=env)
+                print("xlsx  %s (기록 %d행 / 미수행 %d행 / 추가 %d행, 시트 %s)"
+                      % (info["path"], info["written"], info["not_run"],
+                         info["extra"], info["sheet"]))
+        except Exception as exc:                          # noqa: BLE001
+            print("체크리스트 기록 실패: %s: %s" % (type(exc).__name__, exc))
+
     for k, v in paths.items():
         print("%-5s %s" % (k, v))
     return 2 if total[result_mod.FAIL] else 0
@@ -338,7 +470,13 @@ def cmd_setting_export_import(cfg, args):
 
 COMMANDS = {
     "env": cmd_env,
+    "tc02": cmd_tc02,
+    "tc03": cmd_tc03,
+    "tc05": cmd_tc05,
+    "tc07": cmd_tc07,
+    "tc08": cmd_tc08,
     "xipl-license": cmd_xipl_license,
+    "vxvue-license": cmd_vxvue_license,
     "tc13": cmd_tc13,
     "tc14": cmd_tc14,
     "snapshot": cmd_snapshot,
@@ -370,11 +508,39 @@ def main(argv=None):
     p.add_argument("--label", help="snapshot 라벨")
     p.add_argument("--a", help="비교 대상 A (snapshot-diff / vxs-info)")
     p.add_argument("--b", help="비교 대상 B (snapshot-diff / vxs-info)")
+    p.add_argument("--map-procedure", nargs="?", const="Chest PA", default=None,
+                   metavar="PROCEDURE",
+                   help="MWL 처방의 Procedure Code를 지정한 Procedure(기본 'Chest PA')에 "
+                        "매핑한다. **제품 설정을 바꾸는 조작이라 기본은 하지 않는다.** "
+                        "매핑하지 않으면 Step이 등록되지 않아 (1) 촬영 직후 영상처리 "
+                        "파라미터 오류가 뜨고 (2) 검사가 완료되지 않아 Database 목록에 "
+                        "나타나지 않으며 (3) Database에서 Print/Export 대상을 고를 수 "
+                        "없다(2026-08-19 실측). TC04/05/07/08의 정상 흐름을 검증할 때 "
+                        "지정한다.")
+    p.add_argument("--no-acquire", action="store_true",
+                   help="tc05/tc07/tc08에서 촬영 단계를 생략하고 이미 열려 있는 "
+                        "영상을 사용한다(반복 디버깅용).")
+    p.add_argument("--no-send", action="store_true",
+                   help="tc02에서 마지막 DICOM Send 단계를 생략한다(조회·촬영·DB "
+                        "대조까지만 수행).")
     p.add_argument("--no-import", action="store_true",
                    help="setting-export-import에서 파괴적인 Import 단계를 생략한다")
     p.add_argument("--approve-destructive", action="store_true",
                    help="run-regression 맨 마지막의 Setting Import(DB 전체 복원)까지 "
                         "실행한다. 지정하지 않으면 Export까지만 수행한다.")
+    p.add_argument("--reset-baseline", action="store_true",
+                   help="run-regression 시작 시 DB와 data_dir 폴더를 baseline "
+                        "(config.json의 baseline.db_backup / folder_backup) 상태로 "
+                        "되돌린다. **파괴적 조작** — 현재 DB의 환자·검사·설정이 전부 "
+                        "사라진다. 라이선스와 운영 로그는 왕복 백업으로 보존한다. "
+                        "지정하지 않으면 현재 DB 상태 위에서 회귀를 수행하고 그 사실을 "
+                        "리포트에 SKIP으로 남긴다.")
+    p.add_argument("--no-checklist", action="store_true",
+                   help="run-regression 결과를 체크리스트 xlsx 사본에 기록하는 단계를 "
+                        "생략한다(원본은 어떤 경우에도 수정하지 않는다).")
+    p.add_argument("--only",
+                   help="run-regression에서 특정 TC만 실행한다(쉼표 구분, 디버깅용). "
+                        "예: --only TC_WindowsUpdate_14")
     p.add_argument("--with-folder-watch", action="store_true",
                    help="tc13에서 'Import Patient Information From a Specific Folder' "
                         "기능(Import Patient Order와 상호 배타)까지 켜서 확인한다. "

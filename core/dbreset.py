@@ -30,7 +30,11 @@ DEFAULT_BACKUP_DIR = r"D:\Database\Database\Bak"
 # `config.json`의 `data_dir`/`baseline.db_backup`/`baseline.folder_backup`을
 # 호출부(core/regression.py)가 읽어서 넘겨준다.
 LICENSE_SUBDIR = "Database"
-LICENSE_FILES = ("license.lic", "Optionlicense0.lic", "Optionlicense1.lic")
+# 라이선스 파일 이름을 상수로 열거하지 않는다 — 사양서1 p.7(VP-415)이
+# "The VXvue Option license supports up to 16 options"라고 하므로
+# `Optionlicense0/1`만 박아 두면 옵션이 3개 이상 등록된 PC에서 조용히
+# 누락된다(이 PC 실측은 0/1 두 개). `core/license.license_files()`가 glob으로
+# 실제 존재하는 파일을 찾고, 아래 백업/복원 함수는 그 목록을 그대로 쓴다.
 LOG_SUBDIR = "log"
 
 # 폴더 전체를 baseline으로 되돌릴 때(robocopy /MIR) 건드리지 않을 하위 폴더.
@@ -198,13 +202,14 @@ def backup_license_files(data_dir, dest_dir):
     다시 덮어쓰는 왕복용으로만 쓴다(사용자 지시, 2026-08-19).
     """
     import shutil
+    from . import license as license_mod
     os.makedirs(dest_dir, exist_ok=True)
     saved = []
     src_dir = os.path.join(data_dir, LICENSE_SUBDIR)
-    for name in LICENSE_FILES:
-        src = os.path.join(src_dir, name)
+    for entry in license_mod.license_files(data_dir):
+        src = os.path.join(src_dir, entry["file"])
         if os.path.exists(src):
-            dst = os.path.join(dest_dir, name)
+            dst = os.path.join(dest_dir, entry["file"])
             shutil.copy2(src, dst)
             saved.append(dst)
     return saved
@@ -212,16 +217,17 @@ def backup_license_files(data_dir, dest_dir):
 
 def restore_license_files(data_dir, src_dir):
     """`backup_license_files()`로 떠 둔 파일을 제자리에 다시 덮어쓴다."""
+    import glob as _glob
     import shutil
     dst_dir = os.path.join(data_dir, LICENSE_SUBDIR)
     os.makedirs(dst_dir, exist_ok=True)
     restored = []
-    for name in LICENSE_FILES:
-        src = os.path.join(src_dir, name)
-        if os.path.exists(src):
-            dst = os.path.join(dst_dir, name)
-            shutil.copy2(src, dst)
-            restored.append(dst)
+    # 백업해 둔 폴더에 실제로 있는 `.lic`을 전부 되돌린다(이름을 열거하지
+    # 않는 이유는 LICENSE_SUBDIR 주석 참고).
+    for src in sorted(_glob.glob(os.path.join(src_dir, "*.lic"))):
+        dst = os.path.join(dst_dir, os.path.basename(src))
+        shutil.copy2(src, dst)
+        restored.append(dst)
     return restored
 
 

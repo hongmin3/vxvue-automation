@@ -1,0 +1,15 @@
+# VXvue 자동화 - Python 의존성.
+#   python -m pip install -r requirements.txt
+#
+# 그 밖의 것(SQL Server 접속, Win32 UI 조작, 화면 캡처·클릭 합성)은 표준
+# 라이브러리(ctypes, subprocess, json ...)와 Windows에 기본 포함된
+# PowerShell + .NET System.Data.SqlClient만 쓴다. pyodbc/pywin32는 필요 없다.
+#
+# Tesseract-OCR 본체는 pip 패키지가 아니라 별도 설치가 필요하다
+# (`C:\Program Files\Tesseract-OCR\tesseract.exe` — config.json의
+#  xipl.tesseract_exe로 경로를 지정한다).
+
+Pillow>=10.0          # 화면 캡처(ImageGrab), 체크박스 색 판별
+pytesseract>=0.3.13   # owner-draw 목록/로그 영역 OCR
+openpyxl>=3.1         # 체크리스트 xlsx 읽기·결과 기록 (core/checklist.py)
+pypdf>=6.0            # 사양서·매뉴얼 PDF 근거 검색 (core/specs.py)

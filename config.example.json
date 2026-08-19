@@ -115,10 +115,11 @@
       }
     ],
     "bunny": {
-      "_comment": "Storage 수신용 Bunny는 시험 PC 자신에서 동작한다. Bunny.exe가 떠 있어야 수신 포트가 열린다.",
+      "_comment": "<STORAGE_HOST>는 이 시험 PC 자신의 IP다. Bunny.exe가 떠 있어야 포트 3000이 열린다. **실측(2026-08-19): 수신 객체는 Receive가 아니라 Temp에 저장된다** — 판정은 두 폴더를 모두 본다(core/bunny.receive_dirs).",
       "app_path": "C:\\Program Files (x86)\\Bunny\\Bunny.exe",
       "receive_dir": "C:\\Program Files (x86)\\Bunny\\Receive",
-      "log_dir": "C:\\Program Files (x86)\\Bunny\\Log"
+      "log_dir": "C:\\Program Files (x86)\\Bunny\\Log",
+      "temp_dir": "C:\\Program Files (x86)\\Bunny\\Temp"
     }
   },
   "test_data": {
@@ -158,5 +159,18 @@
     "_comment": "클린 설치 기준 백업 경로. 회귀 시험 전 이 시점으로 되돌린다.",
     "db_backup": "<BASELINE_BAK_PATH>",
     "folder_backup": "<BASELINE_FOLDER_PATH>"
+  },
+  "export": {
+    "_comment": "TC08 Study Export 대상. 사용자 지시(2026-08-19): E 드라이브를 기준으로 수행한다. 체크리스트 Precondition은 CD/USB지만 물리 매체 굽기는 사람이 해야 하므로, Export 실행·산출물 검증·역방향 Import까지를 이 경로로 자동화한다.",
+    "dest_dir": "E:\\VXvue_QA_Export",
+    "exe": "C:\\Program Files\\Vxvue\\VX.EXPORT.MANAGER.exe",
+    "process_name": "VX.EXPORT.MANAGER"
+  },
+  "license": {
+    "required": [
+      "Demo",
+      "CAD",
+      "LiveView"
+    ]
   }
 }

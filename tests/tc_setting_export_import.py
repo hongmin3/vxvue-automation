@@ -91,6 +91,34 @@ MUTATION_EXCLUDE = {
                         "남아 있음 — 필요하면 사람이 UI에서 직접 삭제할 것.",
 }
 
+# --- 컨트롤 단위 뮤테이션 금지 -----------------------------------------
+# 화면 전체를 제외하면 그 화면의 회귀 자체를 못 하므로, **특정 컨트롤만**
+# 건드리지 않도록 하는 목록이다.
+#
+# `System - Theme`의 "Use virtual keyboard"가 그 대상이다(사용자 지시,
+# 2026-08-19: "화상키보드 옵션은 자동화할 때 체크하지 않도록 예외처리").
+# 이 옵션을 Yes로 켜면 이후 모든 입력 필드에서 **화상 키보드 창이 떠서 자동화의
+# 키 입력이 그쪽으로 가고**, 그 창을 닫기 전에는 조작이 진행되지 않는다. 즉
+# 자동화가 스스로 이후 단계를 막아 버리는 설정이다(HANDOFF 세션 3부 "환경/도구
+# 관련 주의"에도 "켜져 있으면 안 된다"고 기록돼 있다).
+#
+# 컨트롤 ID를 실측으로 확정하지 못한 상태에서 이름만으로 막을 수는 없으므로
+# (owner-draw라 라벨을 표준 API로 읽을 수 없다) **두 겹으로** 막는다.
+#   1) `MUTATION_EXCLUDE_CONTROLS`: 실측된 컨트롤 ID는 여기서 정확히 뺀다.
+#   2) `VIRTUAL_KEYBOARD_SCREEN`: 그 화면에서는 RadioButton/CheckBox를 아예
+#      건드리지 않는다(Edit 텍스트 변경만 한다). 어느 라디오가 화상키보드인지
+#      ID로 특정하지 못하는 동안의 안전장치다.
+MUTATION_EXCLUDE_CONTROLS = {
+    # "System - Theme": (라디오 ID, ...)  <- 실측 후 채운다
+}
+
+# 이 화면에서는 라디오/체크박스를 건드리지 않는다(위 주석 참고).
+NO_TOGGLE_SCREENS = {
+    "System - Theme": "Use virtual keyboard를 켜면 화상 키보드 창이 떠서 이후 "
+                      "자동화 입력이 전부 막힌다(사용자 지시로 예외처리). "
+                      "이 화면에서는 Edit 텍스트 변경만 수행한다.",
+}
+
 MUTATION_SUFFIX = "_QA1"
 
 
@@ -154,11 +182,22 @@ def mutate_screen(ui, screen_title, evidence_dir=None):
                 "skipped_reason": MUTATION_EXCLUDE[screen_title]}
 
     edits = _editable_edits(ui)
-    checkboxes = _clickable_by_text(ui, "CheckBox")
-    radios = _clickable_by_text(ui, "RadioButton")
+    banned = set(MUTATION_EXCLUDE_CONTROLS.get(screen_title, ()))
+    no_toggle = screen_title in NO_TOGGLE_SCREENS
+    if no_toggle:
+        checkboxes, radios = [], []
+    else:
+        checkboxes = [c for c in _clickable_by_text(ui, "CheckBox")
+                      if c.ctrl_id not in banned]
+        radios = [c for c in _clickable_by_text(ui, "RadioButton")
+                  if c.ctrl_id not in banned]
+    edits = [c for c in edits if c.ctrl_id not in banned]
     if not edits and not checkboxes and not radios:
         return {"screen": screen_title, "changed": False,
-                "skipped_reason": "변경 가능한 Edit/CheckBox/RadioButton 컨트롤이 없음"}
+                "skipped_reason": ("변경 가능한 Edit/CheckBox/RadioButton 컨트롤이 없음"
+                                   if not no_toggle else
+                                   "토글 금지 화면이고 변경 가능한 Edit도 없음: %s"
+                                   % NO_TOGGLE_SCREENS[screen_title])}
 
     actions = []
     text_changed = False

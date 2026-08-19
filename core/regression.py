@@ -1,27 +1,57 @@
 # -*- coding: utf-8 -*-
-"""체크리스트 전체 회귀 러너.
+r"""체크리스트 전체 회귀 러너.
 
-`automation_scope.json`의 TC별 자동화 수준을 읽어 EXCLUDED는 건너뛰고,
-나머지는 의존 순서대로 실행한 뒤 **모든 TC 결과를 리포트 1건으로 합친다**
-(HANDOFF.md 3.2절 요구사항).
+## 실행 순서 (NEXT_TASK.md "최우선" 큐 그대로)
 
-지금 실제로 자동 수행되는 것은 preflight/mwl-ensure/xipl-license(선행조건),
-TC14(Setting 전체 화면), TC_Setting_ExportImport(파괴적, 승인 필요) 뿐이다.
-TC13/02/06/03/04/11/12와 그 외 TC는 아직 그 항목을 실제로 수행하는 자동화
-코드가 없으므로, `automation_scope.json`에 기록된 현재 수준(MANUAL/PARTIAL/
-BLOCKED/EXCLUDED)과 그 판단 근거를 리포트 항목으로 그대로 옮긴다.
+```
+Phase 0  선행조건       preflight -> mwl-ensure -> xipl-license
+Phase 1  baseline 초기화 (--reset-baseline 필요, 파괴적)
+           라이선스 파일 백업 -> 로그 백업 -> 뷰어 종료 확인
+           -> dbreset.restore()      (DB를 baseline .bak으로)
+           -> dbreset.restore_folder() (data_dir를 baseline 폴더로)
+           -> restore_license_files() / restore_log_files()  (되돌린 것 복구)
+           -> 뷰어 재기동 + 로그인
+Phase 2  라이선스 확인   core/license.check()  (Setting > System > License)
+Phase 3  서버 연동       dicom_settings.ensure_registered()  (MWL/Storage/Print + Echo)
+Phase 4  TC 실행         TC13 -> TC14 -> (그 외는 automation_scope 수준 표시)
+Phase 5  파괴적 TC       TC_Setting_ExportImport (맨 마지막, --approve-destructive 필요)
+리포트                   Reports/*.txt|html|json|csv + 체크리스트 xlsx 사본
+```
+
+## 이 러너의 핵심 요구사항
+
 **"이번에 실제로 수행했다"와 "아직 자동화 코드가 없어 수행하지 않았다"를
-리포트만 보고 구분할 수 있어야 한다** — 이것이 이 러너의 핵심 요구사항이다.
+리포트만 보고 구분할 수 있어야 한다.** 그래서 자동화 코드가 없는 TC는 추정
+PASS를 내지 않고 `automation_scope.json`에 기록된 수준(MANUAL/PARTIAL/BLOCKED/
+EXCLUDED)과 그 판단 근거를 리포트 항목으로 그대로 옮긴다.
 
-실행 순서(파괴적 조작은 맨 뒤로):
-    preflight -> mwl-ensure -> xipl-license
-    -> TC13 -> TC14 -> TC02 -> TC06 -> TC03 -> TC04 -> TC11 -> TC12
-    -> (나머지 TC: 05/07/08/09/01/10/15 — 실행 순서와 무관, 수준만 표시)
-    -> TC_Setting_ExportImport(맨 마지막, 파괴적, 명시적 승인 필요)
+## 파괴적 조작은 옵션으로 분리한다
+
+되돌리기 어려운 두 가지는 기본으로 실행하지 않고, 실행하지 않았다는 사실을
+리포트에 SKIP으로 남긴다.
+
+- `--reset-baseline` : Phase 1. DB와 `data_dir` 폴더를 2026-08-18 클린 설치
+  시점으로 되돌린다. 지금 DB에 있는 환자·검사·설정이 전부 사라진다.
+- `--approve-destructive` : Phase 5의 실제 Import. DB 전체가 마지막 Export
+  시점으로 복원된다.
+
+Phase 1을 켜면 그 안에서 뷰어를 내리므로, 복원 뒤 **반드시 다시 띄우고
+로그인까지 확인**한다(Bellalun에서 서비스를 내려놓고 다시 올리지 않아 이후
+TC가 연쇄 실패한 사례가 있다 — `Bellalun Viewer/auto/PORTABILITY_AUDIT.md`).
+
+## 실패 격리
+
+한 Phase가 예외로 죽어도 나머지를 계속 실행한다. 예외는 그 Phase의 FAIL로
+기록하고, 뷰어 기동/화면 진입 실패에는 그 시점 메모리 여유
+(`preflight.memory_pressure()`)를 함께 남긴다 — 이 시험 PC는 물리 메모리
+여유가 항상 기준 아래라(사용자 지시로 차단하지 않음) 실패 원인이 자원 부족인지
+제품 문제인지 사후에 구분할 근거가 필요하다.
 """
 
 import os
-from datetime import date
+import time
+import traceback
+from datetime import date, datetime
 
 from . import preflight as preflight_mod
 from . import result as result_mod
@@ -38,32 +68,50 @@ _LEVEL_TO_VERDICT_WHEN_NOT_IMPLEMENTED = {
     "FULL 가능성 높음": result_mod.MANUAL,
 }
 
-# 실행 순서. HANDOFF.md 3.2절 순서 그대로. 여기 없는 TC(01/05/07/08/09/10/15)는
-# 실행 순서상 의미가 없으므로(모두 MANUAL/BLOCKED/EXCLUDED) 순서 뒤에 이어붙인다.
+# 실제로 실행하는 TC — tc_id -> (모듈 경로, run() 키워드 인자)
+#
+# **파일명은 TC ID와 맵핑한다**(사용자 지시, 2026-08-19): `tests/tcNN_*.py` 의
+# `NN`이 `TC_WindowsUpdate_NN`의 번호다. 체크리스트에 없는 자체 TC만
+# 번호 대신 이름을 쓴다(`tc_setting_export_import.py` ->
+# `TC_Setting_ExportImport`).
+IMPLEMENTED = {
+    "TC_WindowsUpdate_02": ("tests.tc02_mwl_workflow", {}),
+    "TC_WindowsUpdate_03": ("tests.tc03_image_display", {}),
+    "TC_WindowsUpdate_05": ("tests.tc05_dicom_send", {}),
+    "TC_WindowsUpdate_07": ("tests.tc07_dicom_print", {}),
+    "TC_WindowsUpdate_08": ("tests.tc08_study_export", {}),
+    "TC_WindowsUpdate_13": ("tests.tc13_import_patient", {}),
+    "TC_WindowsUpdate_14": ("tests.tc14_setting_display", {}),
+}
+
+
+# 실행 순서. **촬영이 필요한 TC를 먼저 묶는다** — 한 번 열어 둔 검사를 이어
+# 쓰는 것이 아니라, 각 TC가 자기 시작 상태를 스스로 정리하도록 만들었기 때문에
+# 순서 자체가 판정을 바꾸지는 않는다. 다만 Setting을 건드리는 TC(03/14)를
+# 촬영 TC 뒤에 두어, 설정 변경이 촬영 흐름에 영향을 주지 않게 한다.
 RUN_ORDER = [
-    "TC_WindowsUpdate_13",
-    "TC_WindowsUpdate_14",
-    "TC_WindowsUpdate_02",
-    "TC_WindowsUpdate_06",
-    "TC_WindowsUpdate_03",
-    "TC_WindowsUpdate_04",
-    "TC_WindowsUpdate_11",
-    "TC_WindowsUpdate_12",
+    "TC_WindowsUpdate_02",      # MWL 조회 -> 촬영 -> Send -> Close -> DB
+    "TC_WindowsUpdate_05",      # DICOM 전송 (Image + Dose SR)
+    "TC_WindowsUpdate_07",      # DICOM Print
+    "TC_WindowsUpdate_08",      # Study Export (E 드라이브)
+    "TC_WindowsUpdate_13",      # Import Patient
+    "TC_WindowsUpdate_03",      # 영상 조작 (Interpolation 설정 변경 포함)
+    "TC_WindowsUpdate_14",      # Setting 전체 화면
+    "TC_WindowsUpdate_06",      # Extra Tool/SBSC (미구현)
+    "TC_WindowsUpdate_04",      # XIPL (미구현)
+    "TC_WindowsUpdate_11",      # AI/CAD (미구현)
+    "TC_WindowsUpdate_12",      # 카메라/Live View (미구현)
 ]
 
-# HANDOFF.md 3.3절에서 정리한 작업용 명칭. 체크리스트 원본(엑셀)의 정식
-# 제목이 아니라 이 프로젝트 안에서 부르는 이름이므로, 정확한 원본 제목은
-# `VXvue 지식파일/(TC) RA16-14B-010_VXvue Basic Function Checklist.xlsx`를
-# 직접 확인해야 한다.
 TC_LABELS = {
-    "TC_WindowsUpdate_01": "TC01 (범위 제외)",
-    "TC_WindowsUpdate_02": "TC02 MWL 워크플로우",
-    "TC_WindowsUpdate_03": "TC03 표시/도구",
-    "TC_WindowsUpdate_04": "TC04 XIPL 처리",
-    "TC_WindowsUpdate_05": "TC05 원격 PACS 전송",
-    "TC_WindowsUpdate_06": "TC06 Extra Tool/SBSC",
+    "TC_WindowsUpdate_01": "TC01 패키지 설치 확인",
+    "TC_WindowsUpdate_02": "TC02 MWL 조회 워크플로우",
+    "TC_WindowsUpdate_03": "TC03 영상 조작(표시/도구)",
+    "TC_WindowsUpdate_04": "TC04 Image Processing(XIPL)",
+    "TC_WindowsUpdate_05": "TC05 DICOM 전송",
+    "TC_WindowsUpdate_06": "TC06 Extra Tool 전송(SBSC)",
     "TC_WindowsUpdate_07": "TC07 DICOM Print",
-    "TC_WindowsUpdate_08": "TC08 Export(CD/USB)",
+    "TC_WindowsUpdate_08": "TC08 Study Export(CD/USB)",
     "TC_WindowsUpdate_09": "TC09 (재부팅 필요)",
     "TC_WindowsUpdate_10": "TC10 (범위 제외)",
     "TC_WindowsUpdate_11": "TC11 AI 분석(CAD)",
@@ -83,41 +131,42 @@ def _load_scope():
         return json.load(f)
 
 
-def _placeholder(tc_id, scope_by_id, override_note=None):
-    row = scope_by_id.get(tc_id) or {}
-    level = row.get("level", "확인 필요")
-    reason = row.get("reason", "")
-    r = result_mod.TCResult(tc_id, TC_LABELS.get(tc_id, tc_id))
-    verdict = _LEVEL_TO_VERDICT_WHEN_NOT_IMPLEMENTED.get(level, result_mod.MANUAL)
-    note = override_note or reason
-    if level in ("PARTIAL", "FULL 가능성 높음") and not override_note:
-        note = (reason + " | automation_scope.json 상 수준은 '%s'이지만 이를 실제로 "
-                "수행하는 자동화 코드가 아직 없다(HANDOFF.md 3.3절 참고). "
-                "수동으로 수행하거나 다음 세션에서 구현해야 한다." % level)
-    r.add(1, "automation_scope.json 기준 현재 수준: %s" % level, verdict, note=note)
-    r.finalize()
-    return r
+def _log(msg):
+    print("[%s] %s" % (datetime.now().strftime("%H:%M:%S"), msg), flush=True)
 
 
+def _fail_from_exception(r, step, title, exc, cfg):
+    r.add(step, title, result_mod.FAIL,
+          actual="%s: %s" % (type(exc).__name__, exc),
+          note=(traceback.format_exc(limit=3).strip()[-600:] + " | "
+                + preflight_mod.memory_pressure(cfg)))
+
+
+# --- Phase 0: 선행조건 -------------------------------------------------
 def _run_precondition(cfg):
-    """preflight + mwl-ensure + xipl-license 를 한 TCResult로 묶는다."""
+    """preflight + mwl-ensure + xipl-license 를 한 TCResult로 묶는다.
+
+    반환: (TCResult, blocked). blocked=True면 UI 자동화를 시작하지 않는다.
+    메모리 부족은 WARN이므로 blocked에 들지 않는다(`core/preflight.py` docstring).
+    """
     r = result_mod.TCResult("Precondition", "회귀 실행 전 환경/선행조건 점검")
     items = preflight_mod.run(cfg)
     for i, it in enumerate(items, 1):
-        status = result_mod.PASS if it.status == preflight_mod.OK else (
-            result_mod.FAIL if it.status == preflight_mod.NG else result_mod.MANUAL)
+        status = (result_mod.PASS if it.status == preflight_mod.OK else
+                  result_mod.FAIL if it.status == preflight_mod.NG else
+                  result_mod.MANUAL)
         r.add(i, it.name, status, expected=it.expected, actual=it.actual, note=it.note)
     step = len(items) + 1
 
     bad = preflight_mod.blocking(items)
     if bad:
-        r.add(step, "mwl-ensure / xipl-license",
-              result_mod.SKIP, note="preflight NG로 인해 건너뜀")
+        r.add(step, "mwl-ensure / xipl-license", result_mod.SKIP,
+              note="preflight NG(%s)로 인해 건너뜀"
+                   % ", ".join(i.name for i in bad))
         r.finalize()
-        return r, True  # blocked=True
+        return r, True
 
     try:
-        from datetime import date as _date
         from .mwl import MwlServer, make_dx_order
         td = cfg.get("test_data") or {}
         url = (cfg.get("dicom") or {}).get("mwl_server_url")
@@ -132,7 +181,7 @@ def _run_precondition(cfg):
                 accession_number=td.get("mwl_accession", "ACC_VX_AUTO_001"),
                 sps_id=td.get("mwl_sps_id", "SPS_VX_AUTO_001"),
                 station_ae=(cfg.get("dicom") or {}).get("local_ae_title", "VXVUE"),
-                sps_start_date=_date.today().isoformat(),
+                sps_start_date=date.today().isoformat(),
                 sps_start_time=td.get("mwl_sps_start_time", "09:00"),
                 procedure_id=td.get("mwl_procedure_id"),
                 procedure_description=td.get("mwl_procedure_description", "CHEST"),
@@ -140,80 +189,330 @@ def _run_precondition(cfg):
                 patient_sex=td.get("mwl_patient_sex", "M"),
                 patient_birthdate=td.get("mwl_patient_birthdate", "1980-01-01"),
             )
-            item, how, removed = m.ensure_order(_date.today().isoformat(), **fields)
+            item, how, removed = m.ensure_order(date.today().isoformat(), **fields)
             r.add(step, "mwl-ensure (당일 DX 처방 보장)", result_mod.PASS,
+                  expected="오늘 날짜의 VXvue 전용 DX 처방 1건",
                   actual="%s (지난 처방 삭제 %d건)" % (how, removed))
     except Exception as exc:                              # noqa: BLE001
-        r.add(step, "mwl-ensure", result_mod.FAIL, note=str(exc))
+        _fail_from_exception(r, step, "mwl-ensure", exc, cfg)
     step += 1
 
     try:
         from . import xipl
         res = xipl.check_licenses()
-        ok = res["status"] == "OK"
-        status = result_mod.PASS if ok else (
-            result_mod.MANUAL if res["status"] == xipl.ABOUT_CLOSED else result_mod.FAIL)
-        r.add(step, "xipl-license (영상처리 라이선스 4종)", status,
-              expected="필요 라이선스 전체 등록", actual=", ".join(res.get("found", [])),
+        status = (result_mod.PASS if res["status"] == "OK" else
+                  result_mod.MANUAL if res["status"] == xipl.ABOUT_CLOSED else
+                  result_mod.FAIL)
+        r.add(step, "xipl-license (XIPL 영상처리 라이선스 4종)", status,
+              expected="필요 라이선스 전체 등록",
+              actual=", ".join(res.get("found", [])),
               note=(xipl.ABOUT_OPEN_HINT if status == result_mod.MANUAL else
-                    ("누락: %s" % ", ".join(res["missing"]) if res.get("missing") else "")))
+                    ("누락: %s" % ", ".join(res["missing"]) if res.get("missing") else ""))
+                   + " | 이것은 XIPL.SERVER About 창의 라이선스다. VXvue 본체"
+                     " 라이선스(Demo/CAD/Live View)는 VXvue_License 항목 참고.")
     except Exception as exc:                              # noqa: BLE001
-        r.add(step, "xipl-license", result_mod.FAIL, note=str(exc))
+        _fail_from_exception(r, step, "xipl-license", exc, cfg)
 
     r.finalize()
     return r, False
 
 
-def run(cfg, ui_factory, approve_destructive=False, no_env=False):
+# --- Phase 1: baseline 초기화 ------------------------------------------
+def _run_baseline_reset(cfg, approved):
+    """DB/폴더를 baseline으로 되돌리고 라이선스·로그는 그대로 지킨다."""
+    from . import dbreset
+
+    r = result_mod.TCResult("Baseline_Reset",
+                            "DB/폴더/라이선스 클린 초기화 (baseline 복원)")
+    base = cfg.get("baseline") or {}
+    bak = base.get("db_backup")
+    folder = base.get("folder_backup")
+    data_dir = cfg.get("data_dir")
+
+    if not approved:
+        r.add(1, "baseline 복원", result_mod.SKIP,
+              expected="DB=%s / 폴더=%s" % (bak, folder),
+              note="--reset-baseline 없이 실행되어 초기화를 건너뛰었다. 이 회귀는 "
+                   "**현재 DB 상태 위에서** 수행됐다 — 클린 상태 전제가 필요한 판정"
+                   "(예: 목록 건수 비교)은 이 사실을 감안해 읽을 것.")
+        r.finalize()
+        return r, False
+
+    if not (bak and folder and data_dir):
+        r.add(1, "baseline 설정 확인", result_mod.FAIL,
+              expected="config.json의 baseline.db_backup / baseline.folder_backup / data_dir",
+              actual="db_backup=%r folder_backup=%r data_dir=%r" % (bak, folder, data_dir))
+        r.finalize()
+        return r, False
+
+    work = os.path.join(HERE, "work", "license_roundtrip")
+    log_work = os.path.join(HERE, "work", "log_roundtrip")
+    step = 1
+
+    # 1) 지금 적용된 라이선스/로그를 왕복용으로 뜬다.
+    try:
+        saved = dbreset.backup_license_files(data_dir, work)
+        r.add(step, "라이선스 파일 백업(왕복용)",
+              result_mod.PASS if saved else result_mod.FAIL,
+              expected="현재 적용된 .lic 파일 보관",
+              actual="%d개: %s" % (len(saved), ", ".join(os.path.basename(p) for p in saved)),
+              note="라이선스는 하드웨어 키에 묶여 있어 기준 백업/git에 값으로 남기지 "
+                   "않는다(사용자 지시). 되돌리기 직전에 떴다가 되돌린 뒤 다시 "
+                   "덮어쓰는 왕복 전용이다.")
+    except Exception as exc:                              # noqa: BLE001
+        _fail_from_exception(r, step, "라이선스 파일 백업", exc, cfg)
+        r.finalize()
+        return r, False
+    step += 1
+
+    try:
+        log_saved = dbreset.backup_log_files(data_dir, log_work)
+        r.add(step, "운영 로그 백업(왕복용)",
+              result_mod.PASS if log_saved else result_mod.SKIP,
+              expected="%s\\log 보관" % data_dir,
+              actual=log_saved or "log 폴더가 없어 건너뜀",
+              note="사용자 지시(2026-08-19) — 회귀 실행마다 운영 로그가 사라지지 "
+                   "않게 한다. restore_folder()도 log/를 제외하지만 이중으로 지킨다.")
+    except Exception as exc:                              # noqa: BLE001
+        _fail_from_exception(r, step, "운영 로그 백업", exc, cfg)
+    step += 1
+
+    # 2) DB 복원 (내부에서 뷰어 프로세스를 내리고 완전히 꺼졌는지 확인한다)
+    try:
+        _log("DB 복원 시작: %s" % bak)
+        info = dbreset.restore(bak, server=cfg.get("sql_server", r".\CHAMELEON"),
+                               database=cfg.get("database", "DRF"), confirm=True)
+        r.add(step, "DB 복원 (baseline .bak)", result_mod.PASS,
+              expected=os.path.basename(bak),
+              actual="안전 백업=%s / 종료한 프로세스=%s"
+                     % (os.path.basename(str(info.get("safety_backup"))),
+                        ", ".join(info.get("stopped") or []) or "없음"),
+              note="복원 전 PRERESTORE 안전 백업을 자동으로 뜬다.")
+    except Exception as exc:                              # noqa: BLE001
+        _fail_from_exception(r, step, "DB 복원", exc, cfg)
+        r.finalize()
+        return r, False
+    step += 1
+
+    # 3) 폴더 복원
+    try:
+        _log("폴더 복원 시작: %s -> %s" % (folder, data_dir))
+        finfo = dbreset.restore_folder(folder, data_dir, confirm=True)
+        rc = finfo.get("returncode")
+        # robocopy 종료코드는 0~7이 성공(8 이상이 실패)이다.
+        r.add(step, "폴더 복원 (baseline 폴더)",
+              result_mod.PASS if rc is not None and rc < 8 else result_mod.FAIL,
+              expected="robocopy 종료코드 < 8",
+              actual="종료코드=%s" % rc,
+              note="Bak/(DB 백업 이력)과 log/(운영 로그)는 제외한다. DB 파일"
+                   "(*.mdf/*.ldf)도 제외 — SQL Server가 점유 중이라 파일 복사로 "
+                   "다루면 안 되고 위 DB 복원이 담당한다.")
+    except Exception as exc:                              # noqa: BLE001
+        _fail_from_exception(r, step, "폴더 복원", exc, cfg)
+    step += 1
+
+    # 4) 라이선스/로그 되돌리기
+    try:
+        restored = dbreset.restore_license_files(data_dir, work)
+        r.add(step, "라이선스 파일 복원", result_mod.PASS if restored else result_mod.FAIL,
+              expected="백업해 둔 .lic 전부 제자리로",
+              actual="%d개: %s" % (len(restored),
+                                  ", ".join(os.path.basename(p) for p in restored)))
+    except Exception as exc:                              # noqa: BLE001
+        _fail_from_exception(r, step, "라이선스 파일 복원", exc, cfg)
+    step += 1
+
+    try:
+        dbreset.restore_log_files(data_dir, log_work)
+        r.add(step, "운영 로그 복원", result_mod.PASS)
+    except Exception as exc:                              # noqa: BLE001
+        _fail_from_exception(r, step, "운영 로그 복원", exc, cfg)
+
+    r.finalize()
+    return r, True
+
+
+# --- Phase 2/3 ---------------------------------------------------------
+def _run_license_check(cfg, ui, evidence_dir):
+    from . import license as license_mod
+    r = result_mod.TCResult("VXvue_License",
+                            "VXvue 자체 라이선스 확인 (Setting > System > License)")
+    try:
+        license_mod.check(ui, cfg, r, first_step=1, evidence_dir=evidence_dir)
+    except Exception as exc:                              # noqa: BLE001
+        _fail_from_exception(r, len(r.checks) + 1, "라이선스 확인", exc, cfg)
+    return r.finalize()
+
+
+def _run_dicom_registration(cfg, ui):
+    from . import dicom_settings
+    from .db import VXvueDb
+
+    r = result_mod.TCResult("DICOM_Servers",
+                            "DICOM SCP 연동 확인·구성 (MWL / Storage / Print)")
+    specs = (cfg.get("dicom") or {}).get("servers_to_register") or []
+    if not specs:
+        r.add(1, "등록 대상 서버", result_mod.SKIP,
+              note="config.json의 dicom.servers_to_register가 비어 있다.")
+        return r.finalize()
+    try:
+        db = VXvueDb(cfg.get("sql_server", r".\CHAMELEON"), cfg.get("database", "DRF"))
+        rows = dicom_settings.ensure_registered(ui, cfg, db)
+        for i, row in enumerate(rows, 1):
+            ok = row.get("registered") and row.get("echo_ok")
+            r.add(i, "%s SCP: %s" % (row.get("kind"), row.get("name")),
+                  result_mod.PASS if ok else result_mod.FAIL,
+                  expected="등록 확인 + Echo 성공",
+                  actual="등록=%s / Echo=%s" % (row.get("registered"), row.get("echo_ok")),
+                  note=row.get("note", ""))
+        missing = len(specs) - len(rows)
+        if missing > 0:
+            r.add(len(rows) + 1, "등록 대상 누락", result_mod.FAIL,
+                  expected="%d건 처리" % len(specs), actual="%d건 처리" % len(rows))
+    except Exception as exc:                              # noqa: BLE001
+        _fail_from_exception(r, len(r.checks) + 1, "DICOM 서버 등록", exc, cfg)
+    return r.finalize()
+
+
+# --- Phase 4: TC 실행 --------------------------------------------------
+def _placeholder(tc_id, scope_by_id, override_note=None):
+    row = scope_by_id.get(tc_id) or {}
+    level = row.get("level", "확인 필요")
+    reason = row.get("reason", "")
+    r = result_mod.TCResult(tc_id, TC_LABELS.get(tc_id, tc_id))
+    verdict = _LEVEL_TO_VERDICT_WHEN_NOT_IMPLEMENTED.get(level, result_mod.MANUAL)
+    note = override_note or reason
+    if level in ("PARTIAL", "FULL 가능성 높음") and not override_note:
+        note = (reason + " | automation_scope.json 상 수준은 '%s'이지만 이를 실제로 "
+                "수행하는 자동화 코드가 아직 없다. 수동으로 수행하거나 다음 "
+                "세션에서 구현해야 한다." % level)
+    r.add(1, "automation_scope.json 기준 현재 수준: %s" % level, verdict,
+          expected="자동 수행", actual="이번 회귀에서 수행하지 않음", note=note)
+    r.finalize()
+    return r
+
+
+def _run_tc(tc_id, cfg, ui, evidence_root):
+    """구현된 TC 모듈을 실행한다. 예외는 그 TC의 FAIL로 격리한다."""
+    import importlib
+    mod_name, kwargs = IMPLEMENTED[tc_id]
+    label = TC_LABELS.get(tc_id, tc_id)
+    _log("%s 실행 시작" % label)
+    started = time.time()
+    try:
+        mod = importlib.import_module(mod_name)
+        r = mod.run(ui, cfg, **kwargs)
+        _log("%s 완료: %s (%.0f초)" % (label, r.verdict, time.time() - started))
+        return r
+    except Exception as exc:                              # noqa: BLE001
+        r = result_mod.TCResult(tc_id, label)
+        _fail_from_exception(r, 1, "%s 실행" % label, exc, cfg)
+        _log("%s 예외로 실패: %s" % (label, exc))
+        return r.finalize()
+
+
+# --- 진입점 -------------------------------------------------------------
+def run(cfg, ui_factory, approve_destructive=False, reset_baseline=False,
+        evidence_root=None, only=None):
     """전체 회귀를 실행하고 TCResult 리스트를 반환한다.
 
-    ui_factory: () -> VXvueUi. preflight를 통과했을 때만 호출한다(UI를
-    아직 준비하지 못한 상태에서 자동화를 시작하지 않기 위해).
-    approve_destructive: True일 때만 Setting Export/Import의 실제 Import
-    단계를 수행한다(파괴적 조작 — DB 전체가 마지막 Export 시점으로 복원된다).
+    ui_factory: () -> VXvueUi. preflight를 통과했을 때만 호출한다.
+                Phase 1(baseline 복원)이 뷰어를 내리므로 그 뒤에 **다시** 호출해
+                재기동·로그인까지 맡긴다.
+    approve_destructive: Phase 5의 실제 Import 수행 여부.
+    reset_baseline: Phase 1 수행 여부.
+    only: 특정 TC만 돌릴 때의 tc_id 집합(디버깅용). None이면 전체.
     """
     scope = _load_scope()
-    scope_by_id = {r["tc_id"]: r for r in scope}
+    scope_by_id = dict((row["tc_id"], row) for row in scope)
     all_ids = list(scope_by_id) or list(TC_LABELS)
+    evidence_root = evidence_root or os.path.join(HERE, "Evidence")
 
     results = []
+
+    # Phase 0
+    _log("Phase 0 — 선행조건 점검")
     pre, blocked = _run_precondition(cfg)
     results.append(pre)
-
     if blocked:
+        _log("preflight NG — UI 자동화를 시작하지 않는다.")
+        results.append(_run_baseline_reset(cfg, approved=False)[0])
         for tc_id in all_ids:
             results.append(_placeholder(
                 tc_id, scope_by_id,
                 override_note="preflight 실패로 이번 회귀에서 실행되지 않았다"
-                              "(Precondition TC 결과 참고)."))
+                              "(Precondition 결과 참고)."))
         return results
 
-    ui = ui_factory()
+    # Phase 1
+    _log("Phase 1 — baseline 초기화 (%s)"
+         % ("수행" if reset_baseline else "건너뜀: --reset-baseline 없음"))
+    reset_result, did_reset = _run_baseline_reset(cfg, approved=reset_baseline)
+    results.append(reset_result)
 
+    # 뷰어 준비. Phase 1이 뷰어를 내렸으면 여기서 다시 띄운다.
+    ui = None
+    try:
+        if did_reset:
+            _log("baseline 복원 후 뷰어 재기동")
+        ui = ui_factory()
+    except Exception as exc:                              # noqa: BLE001
+        r = result_mod.TCResult("Viewer_Startup", "뷰어 기동·로그인")
+        _fail_from_exception(r, 1, "뷰어 기동·로그인", exc, cfg)
+        results.append(r.finalize())
+        for tc_id in all_ids:
+            results.append(_placeholder(
+                tc_id, scope_by_id,
+                override_note="뷰어를 준비하지 못해 실행되지 않았다"
+                              "(Viewer_Startup 결과 참고)."))
+        return results
+
+    # Phase 2
+    _log("Phase 2 — VXvue 라이선스 확인")
+    results.append(_run_license_check(cfg, ui, evidence_root))
+
+    # Phase 3
+    _log("Phase 3 — DICOM 서버 연동 확인·구성")
+    results.append(_run_dicom_registration(cfg, ui))
+
+    # Phase 4
+    _log("Phase 4 — TC 실행")
     ran = set()
     for tc_id in RUN_ORDER:
-        if tc_id == "TC_WindowsUpdate_14":
-            from tests import tc14_setting_display as tc14
-            results.append(tc14.run(ui, cfg))
+        if only and tc_id not in only:
+            continue
+        if tc_id in IMPLEMENTED:
+            results.append(_run_tc(tc_id, cfg, ui, evidence_root))
         else:
             results.append(_placeholder(tc_id, scope_by_id))
         ran.add(tc_id)
 
     for tc_id in all_ids:
-        if tc_id in ran:
+        if tc_id in ran or (only and tc_id not in only):
             continue
         results.append(_placeholder(tc_id, scope_by_id))
 
-    # 파괴적 조작은 항상 맨 마지막.
-    from tests import tc_setting_export_import as tc_ei
-    if approve_destructive:
-        results.append(tc_ei.run(ui, cfg, do_import=True))
-    else:
-        r = tc_ei.run(ui, cfg, do_import=False)
-        r.add(len(r.checks) + 1, "Import(파괴적 조작) 실행 여부",
-              result_mod.MANUAL,
-              note="--approve-destructive 없이 실행되어 Import(DB 전체 복원) 단계는 "
-                   "건너뛰었다. Export까지의 결과만 포함한다.")
+    # Phase 5 — 파괴적 조작은 항상 맨 마지막.
+    if only and "TC_Setting_ExportImport" not in only:
+        return results
+    _log("Phase 5 — Setting Export/Import (%s)"
+         % ("Import 포함" if approve_destructive else "Export까지만"))
+    try:
+        from tests import tc_setting_export_import as tc_ei
+        r = tc_ei.run(ui, cfg, do_import=approve_destructive)
+        if not approve_destructive:
+            r.add(len(r.checks) + 1, "Import(파괴적 조작) 실행 여부",
+                  result_mod.SKIP,
+                  expected="Import 후 3단 비교까지",
+                  actual="Export까지만 수행",
+                  note="--approve-destructive 없이 실행되어 Import(DB 전체 복원) "
+                       "단계는 건너뛰었다.")
+            r.finalize(r.completed)
         results.append(r)
+    except Exception as exc:                              # noqa: BLE001
+        r = result_mod.TCResult("TC_Setting_ExportImport",
+                                "Setting Export/Import 회귀")
+        _fail_from_exception(r, 1, "Setting Export/Import 실행", exc, cfg)
+        results.append(r.finalize())
 
     return results

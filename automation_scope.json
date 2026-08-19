@@ -1,17 +1,77 @@
 [
-  {"tc_id": "TC_WindowsUpdate_01", "level": "EXCLUDED", "reason": "사용자 지시로 이번 자동화 범위 제외 (패키지 설치·실행 확인 TC, 수행 불필요)"},
-  {"tc_id": "TC_WindowsUpdate_02", "level": "PARTIAL", "reason": "2026-08-18 실측: VXvue 전용 DX 처방 VXVUE_MWL_DX_01을 MWL 서버 API로 등록하고, Registration>Scheduled에서 Search(30689)로 실제 조회 성공(Result 2/2, Modality DX, Acc ACC_VX_AUTO_001, CHEST PA). Step1(MWL 조회·정보 대조)은 정답지가 API 등록값이므로 완전 자동 판정 가능. 남은 것: 오픈→F2 촬영→Close→DB 대조→Send 흐름 구현"},
-  {"tc_id": "TC_WindowsUpdate_03", "level": "PARTIAL", "reason": "Interpolation 설정 변경·Zoom/Pan/Rotation Tool 적용은 컨트롤 ID 확보 시 자동화 가능. Expected Result의 'delay 없이'는 정량 기준(예: 상태 전이 완료 polling)으로 재정의 필요"},
-  {"tc_id": "TC_WindowsUpdate_04", "level": "PARTIAL", "reason": "XIPL 라이선스 적용 후 촬영+Image Process+XIPL Studio Processing은 Bellalun XIPL_01/02 패턴과 개념적으로 동일. 라이선스 적용 상태와 SBSC 판정 기준(썸네일 아이콘) 확인 필요"},
-  {"tc_id": "TC_WindowsUpdate_05", "level": "MANUAL", "reason": "사용자 지시(2026-08-18): 검증에 다른 PC의 PACS가 필요해 이번 범위에서는 MANUAL로 두고 추후 자동화한다. 참고로 이 PC에서 Bunny(BUNNY_TEST/Bunny/<시험 PC>:3000) 등록·Echo 검증과 수신 판정 경로(Receive 폴더 diff + Log의 Status: 0000h)는 이미 확보돼 있어, PACS 접근이 가능해지면 그대로 재사용할 수 있다."},
-  {"tc_id": "TC_WindowsUpdate_06", "level": "PARTIAL", "reason": "2026-08-18 확정: Setting>Integration>Extra Tool 맨 아래 'Remove Image Processing' 행의 체크박스 라벨이 실제로 'S.B.S.C.'이며 체크리스트의 Remove SBSC와 동일함을 실물로 확인(컨트롤 ID 31523). DB AE_LIST.RemoveSBSC 컬럼과 대응하므로 UI 체크→Update→DB 값 1 확인으로 자동 판정 가능. 전송 대상 AE/IP/Port는 미설정 상태라 사용자 확인 필요. XIPL Server Log(C:\\XIPL\\SERVER_X64\\log)의 'PureGrid.Apply=\"0\"' 판정 구현 필요"},
-  {"tc_id": "TC_WindowsUpdate_07", "level": "PARTIAL", "reason": "2026-08-18: PRINT_SCP(<시험 서버>:11113) 등록 및 Echo 검증 완료(Precondition 충족). Bellalun WorkFlow_03 패턴(신규 Print job 식별 + 웹 preview OCR) 재사용 검토. 웹 preview 접근 권한은 아직 미확인"},
-  {"tc_id": "TC_WindowsUpdate_08", "level": "PARTIAL", "reason": "사용자 확인(2026-08-18): 실제 CD/USB 물리 매체 사용. 매체 삽입/굽기는 사람이 수행(MANUAL Step), Export 실행 트리거·Import 역방향 확인·파일 존재 및 DICOM Tag 대조는 자동화"},
-  {"tc_id": "TC_WindowsUpdate_09", "level": "MANUAL", "reason": "사용자 확인(2026-08-18): 재부팅이 필요해 TC09 전체 수동 처리로 결정"},
-  {"tc_id": "TC_WindowsUpdate_10", "level": "EXCLUDED", "reason": "사용자 지시로 이번 자동화 범위 제외 (직접 수행 필요 TC)"},
-  {"tc_id": "TC_WindowsUpdate_11", "level": "PARTIAL", "reason": "2026-08-18: Setting>System>License에서 'Computer Aided Detection' 옵션 라이선스(****-*****-****-*****) 적용 확인 — AI 라이선스 선행조건 충족. vunoSDK.dll 1.1.1.0 설치, Viewer.xml <AIEngine product=\"3\">. GPU 미탑재(Intel Iris Xe 내장만)라 Serialization/AI 결과물 생성 검증은 Bellalun과 동일하게 SKIP, 라이선스·UI 흐름은 자동화 대상 유지"},
-  {"tc_id": "TC_WindowsUpdate_12", "level": "PARTIAL", "reason": "2026-08-18 해소: VX.LIVE.SERVER 설치(1.1.0.1, DEMO 트리거 파일 존재) + 'Live View' 옵션 라이선스(****-*****-****-*****) 적용 + Viewer.xml <Camera UseLiveView=\"1\"/> 상태에서 Setting>Integration에 'Camera' 소분류가 실제로 나타남을 확인(조건부 표시 추정이 확인됨, Integration 소분류 6개→7개). 이전 BLOCKED 사유(미설치) 해소. 남은 것: Camera 화면 진입 후 Step Analysis/스냅샷 전송 흐름 확인"},
-  {"tc_id": "TC_WindowsUpdate_13", "level": "FULL", "reason": "2026-08-19 라이브 검증 완료: tests/tc13_import_patient.py Step1~7이 python run.py tc13 1회 클린 실행으로 FAIL 0건(PASS 8/MANUAL 2, MANUAL 2건은 자동판정 불가 사유가 명확한 항목 — 아래 참고) 통과했다. 실측으로 밝혀지고 고친 것: (1) Import Patient Order(30392) 클릭은 OS 파일 대화상자가 아니라 Setting 화면과 동일 구조를 재사용한 별도 모달 팝업을 여는 것이었다(그 안의 Browse(30515)를 다시 눌러야 진짜 파일 대화상자가 열림) — 원래 설계는 이 팝업 존재를 몰라 항상 실패했었다. (2) Import 확인은 'Import'라는 별도 확인창(All Patients/Selected/Cancel, 27002/27001/27000)을 거쳐야 하고, 완료 후 팝업(-4 아이콘)을 최대 4회까지 반복해서 닫아야 본체 팝업까지 완전히 닫힌다(완료 직후 임시 팝업이 하나 더 뜰 수 있음). (3) 완료 확인 팝업 무한반복 버그(실측 343회)는 core/ui.drain_dialogs()(상한 有)+dismiss_dialog()의 ensure_foreground() 선-클릭으로 해결. (4) Registration-Reserved에서 Default 필터를 Clear로 바꾸고 Search를 누른 뒤 목록에 실제로 표시되는지까지 pass/fail에 포함(사용자 지시) — 목록 행이 owner-draw라 표준 API로 못 읽어 캡처+OCR(pytesseract, C:\\Program Files\\Tesseract-OCR)로 확인. (5) 기존 결함 #22985(Tab 구분자) 회귀를 Step6으로 추가 — Data Delimiter 콤보(31042)를 core/setting.select_combo()로 전환(항목 텍스트도 owner-draw라 '클릭 후 값 재확인' 방식으로 우회)하고 ui.is_responsive()로 응답없음(hang) 감지 시 즉시 중단하도록 설계(과거 콤보 조작 중 hang 전례 있었음, 이번 라이브 검증에선 재현되지 않음), 성공 후 반드시 COMMA로 원복까지 확인. DB(CONFIGURATION_IMPORT_PATIENT_OPTION Type=716)로 TAB 반영은 확인됐으나 Save Sample이 그 값을 즉시 반영하지 않는 현상은 MANUAL로 남김(원인 미확정 — 화면 재진입 필요 여부 확인 과제). (6) Service Manual 4.6.7절 원문 확인 결과 'Import Patient Order'(수동)와 'Import Patient Information From a Specific Folder'(폴더 자동 감지)가 상호 배타 기능임을 확인 — Step7은 기본 실행에서 라벨 존재만 확인(PASS)하고 실제 On/Off 전환은 컨트롤 구조가 라이브 미검증이라 'python run.py tc13 --with-folder-watch' 별도 실행으로 분리해 뒀다(MANUAL). (7) core/setting.goto_screen()에 세션 내 캐시 + 대분류 고정 순서(사용자 확인: 대분류는 라이선스와 무관하게 고정, 소분류만 변동) 기반 단축 경로를 추가해 매 Step마다 55개 화면을 처음부터 다시 훑던 비효율을 없앴다. 남은 것: --with-folder-watch 경로의 라이브 검증(별도 세션), Save Sample-Delimiter 관계 확인."},
-  {"tc_id": "TC_WindowsUpdate_14", "level": "PARTIAL", "reason": "2026-08-18: Setting 전체 트리(10개 대분류, 53개 소분류) 확인 완료. 좌측 메뉴는 커스텀 owner-draw(StepItem)라 GetWindowText로 라벨을 읽을 수 없어 Bellalun bellalunSetting.py처럼 좌표+OCR/SSIM 방식이 필요함을 확인. 다음 단계: 확인된 목록 기준으로 좌표 캘리브레이션 스크립트 작성"},
-  {"tc_id": "TC_WindowsUpdate_15", "level": "EXCLUDED", "reason": "사용자 지시로 이번 자동화 범위 제외 (직접 수행 필요 TC)"}
+  {
+    "tc_id": "TC_WindowsUpdate_01",
+    "level": "EXCLUDED",
+    "reason": "사용자 지시로 이번 자동화 범위 제외 (패키지 설치·실행 확인 TC, 수행 불필요)"
+  },
+  {
+    "tc_id": "TC_WindowsUpdate_02",
+    "level": "PARTIAL",
+    "reason": "2026-08-19 구현·라이브 검증(`python run.py tc02`, PASS 10/FAIL 1/MANUAL 2). MWL 조회 -> 목록 표시값 대조 -> Start(Study 등록) -> F2 데모 촬영 -> DICOM Send -> **수신 파일의 DICOM 태그가 MWL 등록값과 완전 일치 확인** -> Close -> DB(STUDY+PATIENT) 대조까지 자동. 정답지는 화면이 아니라 MWL 서버에 HTTP API로 등록한 값을 쓴다. PARTIAL로 남긴 이유: (1) 목록 셀이 owner-draw라 Patient ID가 '...'로 잘려 OCR로 전체를 못 읽는다(다른 필드는 확인됨, DB 대조로 보완), (2) **Database 화면에 이 검사가 표시되지 않는다** — Operation Manual 3.6(p.41)이 Database는 '완료된 검사'만 조회한다고 하고, Procedure Mapping을 생략하면 Step이 등록되지 않아 STUDY.StudyStatus가 1로 남는다. 매핑을 수행하면 FULL 가능. 근거: 사양서1 p.37~38 VP-460, p.86 VP-526."
+  },
+  {
+    "tc_id": "TC_WindowsUpdate_03",
+    "level": "PARTIAL",
+    "reason": "2026-08-19 구현(`python run.py tc03`). Setting > Display - General의 Interpolation Mode 콤보(30975) 변경·재확인·원복, Exposure Tool 레일의 Select/Zoom/Pan/CW/CCW를 눌러 **영상 표시 영역 캡처 SSIM 비교로 실제 반영 여부를 판정**(버튼 클릭만으로 적용을 인정하지 않는다). PARTIAL 이유: (1) Expected Result의 '**delay 없이**'에 정량 기준이 사양서·매뉴얼에 없어 소요 시간은 측정·기록만 하고 판정하지 않는다, (2) 체크리스트 Step 3의 '영상 2장 이상'은 Step이 2개 이상인 Procedure가 필요하고 그것은 Procedure Mapping이 선행돼야 한다."
+  },
+  {
+    "tc_id": "TC_WindowsUpdate_04",
+    "level": "BLOCKED",
+    "reason": "2026-08-19 실측으로 **선행 조건이 이 PC에서 충족되지 않음을 확인**했다. F2 데모 촬영 직후 `Error: Image process parameter file does not exist.`가 뜨고 XIPL 서버 로그에 `Loading base parameter : Chest PA_normal_H.hs8` -> `Parameter file not found`가 기록된다. 그런데 그 파일은 `C:\\XIPL\\PARAMETER\\VXvue\\Chest PA_normal_H.hs8`로 **실제로 존재한다**(812개 파라미터 파일 확인). 즉 XIPL 서버가 보는 파라미터 경로가 VXvue 하위 폴더를 가리키지 않는 **환경 구성 문제**로 보인다 — 이 시험대는 Bellalun과 XIPL 설치를 공유하며 루트에 `*.pim`을 두는 구성이다. `Setting > Integration > XIPL`의 파라미터 경로는 다른 제품 자동화에 영향을 주므로 **사용자 확인 없이 바꾸지 않았다.** 이 설정이 정리되면 촬영 -> Image Process -> XIPL Studio 흐름을 구현할 수 있다(Bellalun `core/xipl.py` 패턴 재사용)."
+  },
+  {
+    "tc_id": "TC_WindowsUpdate_05",
+    "level": "PARTIAL",
+    "reason": "2026-08-19 구현(`python run.py tc05`). 촬영 -> Send -> **수신 객체의 SOP Class UID로 Image/Dose SR 포함 여부를 판정**한다(Image=1.2.840.10008.5.1.4.1.1.1.1 / Dose SR=…88.67). 수신 확인은 Bunny 로그의 C-STORE Status 0000h와 실제 저장 파일 양쪽을 본다(`core/bunny.py`). 사용자 지시(2026-08-19)로 체크리스트 Precondition('다른 PC 의 Server')과 달리 **이 PC의 Bunny를 Storage로 사용**하며, 그 차이를 판정 note에 항상 남긴다. 원격 PC로 옮길 때는 config.json의 Storage 항목만 바꾸면 된다. PARTIAL 이유: Setting > DICOM - General의 'Send Dose SR' 컨트롤 ID를 실측으로 확정하지 못해 그 설정 확인이 MANUAL이다(근거 없는 조작 금지)."
+  },
+  {
+    "tc_id": "TC_WindowsUpdate_06",
+    "level": "PARTIAL",
+    "reason": "2026-08-18 확정: Setting>Integration>Extra Tool 맨 아래 'Remove Image Processing' 행의 체크박스 라벨이 실제로 'S.B.S.C.'이며 체크리스트의 Remove SBSC와 동일함을 실물로 확인(컨트롤 ID 31523). DB AE_LIST.RemoveSBSC 컬럼과 대응하므로 UI 체크→Update→DB 값 1 확인으로 자동 판정 가능. 전송 대상 AE/IP/Port는 미설정 상태라 사용자 확인 필요. XIPL Server Log(C:\\XIPL\\SERVER_X64\\log)의 'PureGrid.Apply=\"0\"' 판정 구현 필요"
+  },
+  {
+    "tc_id": "TC_WindowsUpdate_07",
+    "level": "PARTIAL",
+    "reason": "2026-08-19 구현(`python run.py tc07`, PASS 5/FAIL 1). Print SCP 가동 확인(HTTP `/api/scp-status`) -> 기존 필름 기준선 -> Print 화면 설정 판독(서버 30955 / 필름 크기 30956 / 방향 30957 — 평문 판독 가능) -> 촬영 -> Print -> **수신 필름 목록(`/api/jobs`)에서 Calling AE=VXVUE 신규 필름 확인**. 기존 BELLALUN 필름을 지우지 않고 AE로 걸러낸다. PARTIAL 이유: 전송 대상 지정이 Database 목록을 전제로 하는데 그 목록이 비어 있어(TC02와 같은 원인) 라이브 검증에서 필름 수신을 확인하지 못했다. Print 화면 버튼은 실측 확정됨(Print=30718 / Print & Close=30719)."
+  },
+  {
+    "tc_id": "TC_WindowsUpdate_08",
+    "level": "PARTIAL",
+    "reason": "2026-08-19 구현(`python run.py tc08`). 사용자 지시로 **E 드라이브 기준**(`config.json > export.dest_dir`, 기본 `E:\\VXvue_QA_Export`) — 물리 CD/USB 굽기는 사람이 해야 하므로 대상만 로컬 드라이브로 바꾸고 검증 내용은 동일하게 유지한다. 대상 폴더 기준선 -> 촬영·Close -> Database 선택 -> Export(30300) -> **Export Manager(별도 프로세스 VX.EXPORT.MANAGER) 창 표시 확인** -> 산출물 DICOM 태그 대조 -> QXLink portable viewer 포함 확인 -> 역방향 Import(MANUAL). 체크리스트 Comment의 **알려진 결함 #21049(Win11에서 Export 시 에러)** 를 회귀 대상으로 삼아, 에러 팝업이 뜨면 문구를 증적으로 남긴다. PARTIAL 이유: (1) Export Manager 창 내부 컨트롤 ID 미실측(추측 조작 금지), (2) Database 목록이 비어 라이브에서 BLOCKED로 판정됨."
+  },
+  {
+    "tc_id": "TC_WindowsUpdate_09",
+    "level": "MANUAL",
+    "reason": "사용자 확인(2026-08-18): 재부팅이 필요해 TC09 전체 수동 처리로 결정"
+  },
+  {
+    "tc_id": "TC_WindowsUpdate_10",
+    "level": "EXCLUDED",
+    "reason": "사용자 지시로 이번 자동화 범위 제외 (직접 수행 필요 TC)"
+  },
+  {
+    "tc_id": "TC_WindowsUpdate_11",
+    "level": "PARTIAL",
+    "reason": "2026-08-18: Setting>System>License에서 'Computer Aided Detection' 옵션 라이선스(****-*****-****-*****) 적용 확인 — AI 라이선스 선행조건 충족. vunoSDK.dll 1.1.1.0 설치, Viewer.xml <AIEngine product=\"3\">. GPU 미탑재(Intel Iris Xe 내장만)라 Serialization/AI 결과물 생성 검증은 Bellalun과 동일하게 SKIP, 라이선스·UI 흐름은 자동화 대상 유지"
+  },
+  {
+    "tc_id": "TC_WindowsUpdate_12",
+    "level": "PARTIAL",
+    "reason": "2026-08-18 해소: VX.LIVE.SERVER 설치(1.1.0.1, DEMO 트리거 파일 존재) + 'Live View' 옵션 라이선스(****-*****-****-*****) 적용 + Viewer.xml <Camera UseLiveView=\"1\"/> 상태에서 Setting>Integration에 'Camera' 소분류가 실제로 나타남을 확인(조건부 표시 추정이 확인됨, Integration 소분류 6개→7개). 이전 BLOCKED 사유(미설치) 해소. 남은 것: Camera 화면 진입 후 Step Analysis/스냅샷 전송 흐름 확인"
+  },
+  {
+    "tc_id": "TC_WindowsUpdate_13",
+    "level": "FULL",
+    "reason": "2026-08-19 라이브 검증 완료: tests/tc13_import_patient.py Step1~7이 python run.py tc13 1회 클린 실행으로 FAIL 0건(PASS 8/MANUAL 2, MANUAL 2건은 자동판정 불가 사유가 명확한 항목 — 아래 참고) 통과했다. 실측으로 밝혀지고 고친 것: (1) Import Patient Order(30392) 클릭은 OS 파일 대화상자가 아니라 Setting 화면과 동일 구조를 재사용한 별도 모달 팝업을 여는 것이었다(그 안의 Browse(30515)를 다시 눌러야 진짜 파일 대화상자가 열림) — 원래 설계는 이 팝업 존재를 몰라 항상 실패했었다. (2) Import 확인은 'Import'라는 별도 확인창(All Patients/Selected/Cancel, 27002/27001/27000)을 거쳐야 하고, 완료 후 팝업(-4 아이콘)을 최대 4회까지 반복해서 닫아야 본체 팝업까지 완전히 닫힌다(완료 직후 임시 팝업이 하나 더 뜰 수 있음). (3) 완료 확인 팝업 무한반복 버그(실측 343회)는 core/ui.drain_dialogs()(상한 有)+dismiss_dialog()의 ensure_foreground() 선-클릭으로 해결. (4) Registration-Reserved에서 Default 필터를 Clear로 바꾸고 Search를 누른 뒤 목록에 실제로 표시되는지까지 pass/fail에 포함(사용자 지시) — 목록 행이 owner-draw라 표준 API로 못 읽어 캡처+OCR(pytesseract, C:\\Program Files\\Tesseract-OCR)로 확인. (5) 기존 결함 #22985(Tab 구분자) 회귀를 Step6으로 추가 — Data Delimiter 콤보(31042)를 core/setting.select_combo()로 전환(항목 텍스트도 owner-draw라 '클릭 후 값 재확인' 방식으로 우회)하고 ui.is_responsive()로 응답없음(hang) 감지 시 즉시 중단하도록 설계(과거 콤보 조작 중 hang 전례 있었음, 이번 라이브 검증에선 재현되지 않음), 성공 후 반드시 COMMA로 원복까지 확인. DB(CONFIGURATION_IMPORT_PATIENT_OPTION Type=716)로 TAB 반영은 확인됐으나 Save Sample이 그 값을 즉시 반영하지 않는 현상은 MANUAL로 남김(원인 미확정 — 화면 재진입 필요 여부 확인 과제). (6) Service Manual 4.6.7절 원문 확인 결과 'Import Patient Order'(수동)와 'Import Patient Information From a Specific Folder'(폴더 자동 감지)가 상호 배타 기능임을 확인 — Step7은 기본 실행에서 라벨 존재만 확인(PASS)하고 실제 On/Off 전환은 컨트롤 구조가 라이브 미검증이라 'python run.py tc13 --with-folder-watch' 별도 실행으로 분리해 뒀다(MANUAL). (7) core/setting.goto_screen()에 세션 내 캐시 + 대분류 고정 순서(사용자 확인: 대분류는 라이선스와 무관하게 고정, 소분류만 변동) 기반 단축 경로를 추가해 매 Step마다 55개 화면을 처음부터 다시 훑던 비효율을 없앴다. 남은 것: --with-folder-watch 경로의 라이브 검증(별도 세션), Save Sample-Delimiter 관계 확인."
+  },
+  {
+    "tc_id": "TC_WindowsUpdate_14",
+    "level": "PARTIAL",
+    "reason": "2026-08-18: Setting 전체 트리(10개 대분류, 53개 소분류) 확인 완료. 좌측 메뉴는 커스텀 owner-draw(StepItem)라 GetWindowText로 라벨을 읽을 수 없어 Bellalun bellalunSetting.py처럼 좌표+OCR/SSIM 방식이 필요함을 확인. 다음 단계: 확인된 목록 기준으로 좌표 캘리브레이션 스크립트 작성"
+  },
+  {
+    "tc_id": "TC_WindowsUpdate_15",
+    "level": "EXCLUDED",
+    "reason": "사용자 지시로 이번 자동화 범위 제외 (직접 수행 필요 TC)"
+  }
 ]

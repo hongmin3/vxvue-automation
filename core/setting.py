@@ -88,9 +88,20 @@ def _item_wnd(ui, refresh=False):
 
 
 def open_setting(ui, timeout=15):
-    """우측 세로 탭에서 Setting 화면으로 이동한다."""
+    """우측 세로 탭에서 Setting 화면으로 이동한다.
+
+    **모달 팝업이 떠 있으면 탭 클릭이 조용히 무시된다**(VXvue 고유 함정) —
+    2026-08-19 TC03 실측에서 촬영 뒤 남은 Error 팝업 때문에 Setting 진입이
+    실패하고 "Display - General 화면으로 이동하지 못했습니다"라는, 원인과
+    무관해 보이는 메시지가 나왔다. 그래서 먼저 떠 있는 팝업을 걷어낸다.
+    """
     if _item_wnd(ui) is not None:
         return True
+    if ui.dialog() is not None:
+        ui.drain_dialogs(max_iters=4, timeout=3)
+        time.sleep(0.5)
+        if _item_wnd(ui) is not None:
+            return True
     tabs = [c for c in ui.controls(max_depth=8) if c.ctrl_id == NAV_TAB_CONTAINER]
     if not tabs:
         raise SettingError("우측 네비 Tab(%d)을 찾지 못했습니다." % NAV_TAB_CONTAINER)
@@ -395,6 +406,13 @@ def goto_screen(ui, title_target):
        확인한다 — 대분류 순서 가정이 언젠가 틀리더라도 여기서 스스로
        복구된다.
     """
+    # Setting 화면이 아니면 먼저 들어간다. 예전에는 호출부가 open_setting()을
+    # 따로 불러야 했는데, 그걸 빠뜨리면 "Setting 화면이 아닙니다(ItemWnd 없음)"
+    # 라는 **원인과 무관해 보이는 예외**로 실패한다(2026-08-19 TC03 실측).
+    # 화면 전환은 이 함수의 책임이므로 여기서 처리한다.
+    if _item_wnd(ui) is None:
+        open_setting(ui)
+
     if title(ui) == title_target:
         return _GOTO_SCREEN_CACHE.get((ui.pid, title_target), True)
 
