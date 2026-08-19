@@ -317,6 +317,12 @@ class VXvueUi:
                 self.capture_dialog(d, evidence_path)
             except Exception:
                 pass
+        # 실측(2026-08-19, TC13): 클릭이 팝업 버튼을 계속 빗맞혀 dismiss_info()가
+        # 343회 반복된 사례가 있었다. click()/click_button() 모두 물리 좌표
+        # 클릭이거나 대상 hwnd 기준이라, VXvue가 최전면이 아니면(로그인 화면
+        # 때와 같은 원인) 좌표가 다른 창에 먹히거나 입력이 무시될 수 있다.
+        # 버튼을 누르기 전에 항상 VXvue를 최전면으로 확보한다.
+        self.ensure_foreground()
         buttons = self.dialog_buttons(d)
         buttons.sort(key=lambda c: (c.ctrl_id not in self.DIALOG_OK_IDS, c.rect[0]))
         for b in buttons:
@@ -335,10 +341,63 @@ class VXvueUi:
         """
         return self.dismiss_dialog(timeout=timeout, evidence_path=evidence_path)
 
+    def drain_dialogs(self, max_iters=6, timeout=8, evidence_dir=None):
+        """연달아 뜰 수 있는 Info 팝업을 전부 닫는다 — 상한이 있는 버전.
+
+        `while dismiss_info(): pass` 패턴은 클릭이 버튼을 계속 빗맞히는
+        상황에서 멈추지 않는다(실측 2026-08-19, TC13 Import Patient에서
+        343회 반복). 이 함수는 반복 횟수를 제한하고, 직전 반복과 **같은
+        대화상자 hwnd**가 그대로 남아 있으면(=클릭이 안 먹힌 신호)
+        `ensure_foreground()`를 한 번 더 강제한 뒤 마지막으로 시도한다.
+
+        반환: (messages, stuck). `stuck=True`면 max_iters를 다 쓰고도
+        팝업이 남아 있다는 뜻이다 — 호출부는 이를 FAIL/확인 필요로 보고하고
+        더 반복하지 않아야 한다.
+        """
+        import os
+        messages = []
+        last_hwnd = None
+        for i in range(max_iters):
+            dlg = self.dialog()
+            if dlg is None:
+                return messages, False
+            if dlg.hwnd == last_hwnd:
+                self.ensure_foreground()
+            last_hwnd = dlg.hwnd
+            ev = None
+            if evidence_dir:
+                os.makedirs(evidence_dir, exist_ok=True)
+                ev = os.path.join(evidence_dir, "drain_%02d.png" % i)
+            msg = self.dismiss_info(timeout=timeout, evidence_path=ev)
+            if msg is None:
+                return messages, False
+            messages.append(msg)
+        return messages, self.dialog() is not None
+
     def click_and_ack(self, target, settle=0.6, ack_timeout=6, evidence_path=None):
         """클릭 후 Info 팝업까지 닫는다. 팝업 문구(없으면 None)를 반환."""
         self.click(target, settle=settle)
         return self.dismiss_info(timeout=ack_timeout, evidence_path=evidence_path)
+
+    def is_responsive(self, timeout_ms=3000):
+        """메인 창이 지금 입력을 처리할 수 있는 상태인지(응답 없음 감지).
+
+        `SendMessageTimeoutW` + `SMTO_ABORTIFHUNG`으로 확인한다. False면
+        화면이 멈춰 있다는 뜻이므로, 그 이후 클릭을 계속 보내는 대신 즉시
+        멈추고 재기동으로 복구해야 한다 — Data Delimiter 콤보처럼 조작 중
+        VXvue가 응답 없음 상태가 된 전례가 있는 컨트롤을 다룰 때 반드시
+        이 확인을 거친다(재현 조건 미상, 2026-08-19 실측).
+        """
+        win = self.main_window()
+        if win is None:
+            return False
+        SMTO_ABORTIFHUNG = 0x0002
+        WM_NULL = 0x0000
+        result = ctypes.c_void_p()
+        ok = u32.SendMessageTimeoutW(win.hwnd, WM_NULL, 0, 0,
+                                     SMTO_ABORTIFHUNG, timeout_ms,
+                                     ctypes.byref(result))
+        return bool(ok)
 
     # --- 조작 ----------------------------------------------------------
     def click(self, target, settle=0.4):

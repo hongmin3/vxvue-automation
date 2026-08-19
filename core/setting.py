@@ -335,28 +335,107 @@ def walk(ui, on_screen=None):
         time.sleep(0.3)
 
 
-def goto_screen(ui, title):
+# 대분류(10개) 순서 — 사용자 확인(2026-08-19): "대분류는 라이선스/연동 상태와
+# 무관하게 항상 고정, 소분류만 달라질 수 있다." 3.4.3절 실측(2026-08-18)과도
+# 일치한다. 대분류 라벨 자체는 owner-draw라 읽을 수 없지만(그래서 원래
+# 전체 소분류를 열어 제목을 읽는 방식이 필요했다), 순서가 고정이라는 사실은
+# 실측이 아니라 사용자 확인이므로 그대로 신뢰하고 인덱스로만 쓴다. 소분류
+# 제목("Study - Import Patient" 등)의 " - " 앞부분과 대조해 대분류 인덱스를
+# 알아내면, 그 대분류만 펼쳐 그 안의 소분류만 확인하면 된다 — 55개 화면을
+# 전부 열 필요가 없다.
+MAJOR_TITLES = ("System", "Registration", "Display", "Tool", "Study",
+                "Procedure", "Integration", "DICOM", "Backup", "Account Default")
+
+_GOTO_SCREEN_CACHE = {}   # (pid, title) -> (major_index, minor_id)
+
+
+def _search_within_major(ui, mi, title):
+    """대분류 mi를 펼쳐 그 안의 소분류에서 title과 일치하는 화면을 찾는다.
+
+    찾으면 (minor_id, 계속 펼쳐진 상태)를 반환하고, 못 찾으면 다시 접고
+    None을 반환한다.
+    """
+    before = visible_minor_ids(ui)
+    if toggle_major(ui, mi) is None:
+        return None
+    time.sleep(0.4)
+    after = visible_minor_ids(ui)
+    for minor_id in sorted(after - before):
+        scr = open_screen(ui, minor_id)
+        if scr == title:
+            return minor_id
+    toggle_major(ui, mi)
+    return None
+
+
+def goto_screen(ui, title_target):
     """제목이 일치하는 Setting 소분류 화면으로 이동한다.
 
-    여러 테스트 모듈(TC13/TC14/Setting Export-Import)이 반복하던 "대분류를
-    하나씩 펼쳐서 원하는 소분류를 찾는" 순회를 한 곳에 모은 것이다. 화면을
-    찾아 열면 그 minor_id를, 못 찾으면 None을 반환한다.
+    여러 테스트 모듈(TC13/TC14/Setting Export-Import/DICOM 서버 등록)이
+    반복하던 "대분류를 하나씩 펼쳐서 원하는 소분류를 찾는" 순회를 한 곳에
+    모은 것이다. 화면을 찾아 열면 그 minor_id(또는 이미 그 화면이면
+    `True`)를, 못 찾으면 None을 반환한다.
+
+    빠른 경로부터 안전한 경로 순으로 시도한다:
+
+    0. **이미 그 화면**: 지금 상단 제목이 이미 목표와 같으면 아무것도
+       누르지 않는다.
+    0.5. **이미 펼쳐진 대분류 안에서 탐색**: 지금 어떤 대분류가 펼쳐져
+       있으면(예: DICOM - MWL을 보다가 DICOM - Storage로 넘어가는 경우),
+       접었다 펴는 비용 없이 그 안의 소분류만 확인한다. 실측(2026-08-19,
+       사용자 지적): 이게 없어서 DICOM 서버 등록 자동화가 화면을 오갈 때마다
+       `collapse_all()`이 대분류 10개를 전부 접었다 펴며 전체를 훑고 있었다.
+    1. **캐시**: 이번 프로세스에서 이미 찾은 (대분류, 소분류)면 그 대분류만
+       펼쳐 재확인한다.
+    2. **대분류 이름으로 직행**: 제목이 `"Study - Import Patient"`처럼
+       `"대분류 - 소분류"` 형식이면, `MAJOR_TITLES`(사용자 확인: 대분류
+       순서는 라이선스/연동 상태와 무관하게 고정)에서 그 대분류의 인덱스를
+       찾아 **그 대분류만** 펼쳐서 안의 소분류만 확인한다.
+    3. **전체 탐색**: 위 단계가 모두 실패하면 대분류를 하나씩 펼쳐 전체를
+       확인한다 — 대분류 순서 가정이 언젠가 틀리더라도 여기서 스스로
+       복구된다.
     """
+    if title(ui) == title_target:
+        return _GOTO_SCREEN_CACHE.get((ui.pid, title_target), True)
+
+    cache_key = (ui.pid, title_target)
+
+    visible_now = visible_minor_ids(ui)
+    if visible_now:
+        for minor_id in sorted(visible_now):
+            scr = open_screen(ui, minor_id)
+            if scr == title_target:
+                return minor_id
+
+    cached = _GOTO_SCREEN_CACHE.get(cache_key)
+    if cached is not None:
+        cached_major, cached_minor = cached
+        collapse_all(ui)
+        if toggle_major(ui, cached_major) is not None:
+            time.sleep(0.4)
+            scr = open_screen(ui, cached_minor)
+            if scr == title_target:
+                return cached_minor
+            toggle_major(ui, cached_major)
+        _GOTO_SCREEN_CACHE.pop(cache_key, None)
+
+    major_name = title_target.split(" - ", 1)[0] if " - " in title_target else None
+    if major_name in MAJOR_TITLES:
+        mi = MAJOR_TITLES.index(major_name)
+        collapse_all(ui)
+        minor_id = _search_within_major(ui, mi, title_target)
+        if minor_id is not None:
+            _GOTO_SCREEN_CACHE[cache_key] = (mi, minor_id)
+            return minor_id
+
     collapse_all(ui)
     majors, _ = menu_items(ui)
     for mi in range(len(majors)):
-        before = visible_minor_ids(ui)
-        if toggle_major(ui, mi) is None:
-            continue
-        time.sleep(0.4)
-        after = visible_minor_ids(ui)
-        for minor_id in sorted(after - before):
-            scr = open_screen(ui, minor_id)
-            if scr == title:
-                return minor_id
-        toggle_major(ui, mi)
+        minor_id = _search_within_major(ui, mi, title_target)
+        if minor_id is not None:
+            _GOTO_SCREEN_CACHE[cache_key] = (mi, minor_id)
+            return minor_id
     return None
-    return visited
 
 
 # --- Update / Export / Import ----------------------------------------
@@ -829,6 +908,30 @@ def iter_list_rows(ui, list_ctrl, on_row, max_pages=12):
     return handled
 
 
+def checkbox_checked(ui, ctrl, mark_color=(223, 182, 56), tolerance=40):
+    """owner-draw 체크박스가 지금 체크된 상태인지 캡처로 판별한다.
+
+    표준 API(`BM_GETCHECK`)는 이 화면들의 커스텀 체크박스에 항상 0을
+    반환해 못 읽는다(여러 화면에서 실측 확인된 한계, `screen_values()`의
+    `unreadable_state_controls`와 같은 원인). 체크되면 노란/주황색
+    체크표시가 나타나는 것을 실측으로 확인했다(2026-08-19, DICOM - Storage
+    Burning Option: Annotation/Information 체크박스) — 캡처 안에 그 색이
+    있는지로 판별한다.
+
+    이 판별은 캡처 기반 근사치다 — 테마·해상도가 다르면 색이 다를 수 있어
+    100% 신뢰하지 않는다. 확신이 필요한 값(예: 실제로 DB에 반영됐는가)은
+    여전히 DB 스냅샷으로 검증할 것.
+    """
+    from PIL import ImageGrab
+    img = ImageGrab.grab(bbox=ctrl.rect, all_screens=True).convert("RGB")
+    for px in img.getdata():
+        if (abs(px[0] - mark_color[0]) < tolerance
+                and abs(px[1] - mark_color[1]) < tolerance
+                and abs(px[2] - mark_color[2]) < tolerance):
+            return True
+    return False
+
+
 def scp_detail_fields(ui):
     """DICOM SCP 상세 입력값을 읽는다.
 
@@ -866,6 +969,66 @@ def combo_value(ui, control):
         if kid.cls == "Edit" and kid.text:
             return kid.text
     return control.text
+
+
+def select_combo(ui, combo, target_text, open_settle=0.5, pick_settle=0.5):
+    """커스텀 콤보(owner-draw)를 열어 목표 값을 선택한다.
+
+    이 프로젝트의 1순위 원칙(속성으로 탐색, CLAUDE.md 3절)에 따라 드롭다운
+    항목의 좌표를 추정하지 않는다 — 클릭 전/후 컨트롤 목록의 차이로 새로
+    나타난 항목을 찾는다. 다만 실측(2026-08-19, Data Delimiter 콤보) 결과
+    드롭다운 항목도 owner-draw라 `.text`가 실제 표시 문구가 아니라
+    `'TextButton'` 같은 내부 클래스 힌트만 담고 있었다 — 텍스트로 목표
+    항목을 미리 골라낼 수 없다. 그래서 **"클릭 → 콤보 값을 다시 읽어 목표와
+    같은지 확인"** 방식으로 바꿨다: 새로 나타난 항목을 하나씩 눌러보고, 콤보
+    표시값이 `target_text`가 되면 성공으로 본다. 시도 횟수는 실제로 발견된
+    항목 개수로 제한되므로(무한 재시도가 아니라 있는 선택지를 다 확인하는
+    것) 원칙에 위배되지 않는다.
+
+    Data Delimiter 콤보(TC13 TAB 구분자 회귀)처럼 과거 조작 중 VXvue가
+    응답 없음 상태가 된 전례가 있는 컨트롤을 다루므로, 열기 클릭과 항목
+    클릭 각각의 뒤에 `ui.is_responsive()`로 멈춤 여부를 확인한다. 멈춘
+    것이 감지되면 더 클릭을 보내지 않고 즉시 실패를 반환한다 — 호출부가
+    복구(재기동)를 판단해야 한다.
+
+    반환: (성공 여부, 메모)
+    """
+    if combo_value(ui, combo) == target_text:
+        return True, "이미 목표값(%s)임" % target_text
+
+    # 드롭다운을 열 때마다 항목 컨트롤이 새로 생성돼(hwnd가 매번 바뀜) 첫
+    # 오픈에서 찾은 항목을 재사용할 수 없다 — 시도마다 새로 열고 새로
+    # 진단해야 한다. 위치(세로 순서)로 몇 번째 항목인지만 기억해 재현한다.
+    tried_values = []
+    n_candidates = None
+    attempt = 0
+    while n_candidates is None or attempt < n_candidates:
+        before = set(c.hwnd for c in ui.controls(max_depth=8))
+        ui.click(combo, settle=open_settle)
+        if not ui.is_responsive(timeout_ms=3000):
+            return False, "콤보를 연 뒤 응답 없음(hang) 감지"
+
+        after = ui.controls(max_depth=8)
+        candidates = sorted((c for c in after if c.hwnd not in before),
+                            key=lambda c: (c.rect[1], c.rect[0]))
+        if not candidates:
+            ui.key("ESC", settle=0.3)
+            return False, "드롭다운을 열었지만 새로 나타난 항목이 없음"
+        n_candidates = len(candidates) if n_candidates is None else n_candidates
+        if attempt >= len(candidates):
+            break
+
+        ui.click(candidates[attempt], settle=pick_settle)
+        if not ui.is_responsive(timeout_ms=3000):
+            return False, "항목 선택 후 응답 없음(hang) 감지"
+        cur = combo_value(ui, combo)
+        if cur == target_text:
+            return True, None
+        tried_values.append(cur)
+        attempt += 1
+
+    return False, ("항목 %d개를 순서대로 시도(결과: %s)했지만 콤보 값이 '%s'가 되지 않음"
+                   % (attempt, ", ".join(tried_values) or "-", target_text))
 
 
 def screen_values(ui, title_text=None):

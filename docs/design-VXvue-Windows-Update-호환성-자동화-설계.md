@@ -790,3 +790,209 @@ Registration > Scheduled에서 `Search`(30689)를 눌러 오늘 날짜 조회 �
    Setting > Integration > General(또는 Detector) 화면에서 확인 예정.
 5. **TC03 Expected Result의 "delay 없이"를 무엇으로 정량화할 것인가** — 기존
    미해결 항목 그대로.
+
+## 8. TC13 자동화 이어서 설계 (2026-08-19 세션)
+
+NEXT_TASK.md 1순위("TC13 마무리")를 이어받았다. 코드를 만들기 전에
+`VXvue 지식파일/(매뉴얼) VXvue Operation Manual.V1.0.11_KO.pdf`(5.3/5.3.1절,
+p.74~76)와 `(매뉴얼) VXvue Service Manual.V1.0.11_KO.pdf`(4.6.7절, p.95~96)
+원문을 PyMuPDF로 직접 추출해 확인했다(가이드 3절 "확인되지 않은 것은 확인하지
+못했다고 적는다" 원칙 — 추정 대신 원문 대조).
+
+### 8.1 매뉴얼 원문에서 새로 확인된 것
+
+1. **Import Patient에는 상호 배타적인 두 경로가 있다.** Service Manual
+   4.6.7절 원문: *"본 기능 설정 시 Registration > Reserved > Import Patient
+   Order 기능을 사용할 수 없습니다."* 즉 "Import Patient Information From a
+   Specific Folder"(폴더 자동 감지)를 켜면 지금까지 구현·검증해 온 수동
+   "Import Patient Order" 경로가 막힌다. HANDOFF.md의 TC13 요약("수동+폴더
+   자동 감지 두 가지 경로")과 일치하지만, 기존 `tc13_import_patient.py`는
+   수동 경로만 구현돼 있었다 — 이번 세션에 Step7로 보완했다(8.3절).
+2. Import Patient 화면의 설정 항목(Data Delimiter/Use Header/Sex Format/
+   Date Format/Date Delimiter/Age Type/Language/Column Mapping/Blank 추가/
+   Save Sample/Sample Test)이 매뉴얼과 기존 코드 구현이 정확히 일치함을
+   재확인했다 — 이 부분은 추가 설계 변경 없음.
+3. 완료 확인 팝업의 정확한 동작(예: 여러 번 뜨는지)은 매뉴얼에 근거가 없다
+   — 즉 기존에 관찰된 "dismiss_info 343회 반복"은 제품 사양이 아니라
+   **자동화 코드의 결함**으로 판단했다(8.2절).
+
+### 8.2 완료 팝업 무한반복 버그 — 원인 추정과 수정
+
+`core/ui.dismiss_dialog()`가 팝업 버튼을 클릭하기 전에 `ensure_foreground()`를
+호출하지 않고 있었다. 로그인 실패의 실측 원인(다른 창이 최전면을 가로채
+좌표 클릭이 VXvue가 아닌 다른 창에 먹힘, 3.4.1절/HANDOFF.md 참고)과 같은
+메커니즘이라면, 클릭이 팝업 버튼을 계속 빗맞히고 같은 팝업을 반복
+재조회했을 것이다. 확정된 근본 원인은 아니지만(재현 실측은 다음 세션
+라이브 검증에서 확인), 정황상 가장 설득력 있는 가설이고 이미 다른 곳에서
+검증된 수정 패턴이라 우선 반영했다.
+
+수정 내용(`core/ui.py`):
+
+- `dismiss_dialog()`: 버튼 클릭 전 `ensure_foreground()` 호출 추가.
+- `drain_dialogs(max_iters=6, timeout=8, evidence_dir=None)` 신설: 상한 있는
+  팝업 비우기. 직전 반복과 같은 대화상자 hwnd가 그대로 남아 있으면(=클릭이
+  안 먹힌 신호) `ensure_foreground()`를 한 번 더 강제한 뒤 마지막으로
+  시도하고, `max_iters`를 다 쓰고도 팝업이 남아 있으면 `stuck=True`를
+  반환한다. `tests/tc13_import_patient.py` Step5의
+  `while ui.dismiss_info(): pass`를 이것으로 교체했다 — 상한 없는 반복을
+  코드베이스에 더 남기지 않는다(`core/ui.login()`에도 같은 패턴이 있어
+  다음 정리 대상이다, 8.5절).
+
+### 8.3 TC13 Step6 — TAB 구분자 회귀(#22985) 설계
+
+기존 결함(Tab 구분자 실패, Comma는 성공)을 회귀 케이스로 넣되, 이 콤보
+(Data Delimiter, 실측 컨트롤 ID `31042`)를 조작하다 VXvue가 응답 없음
+상태가 된 전례가 있어(재현 조건 미상, HANDOFF.md 0.2절) 신중하게 설계했다.
+
+- `core/setting.select_combo(ui, combo, target_text)` 신설: 드롭다운을 연
+  뒤 클릭 전/후 컨트롤 목록 차이로 새로 나타난 항목을 찾아 그 실제 rect를
+  클릭한다(좌표 추정 금지, CLAUDE.md 3절 1순위 원칙). 열기·선택 각 클릭
+  뒤에 `core/ui.is_responsive()`(`SendMessageTimeoutW`+`SMTO_ABORTIFHUNG`)로
+  응답 없음(hang)을 확인하고, 감지되면 추가 재시도 없이 즉시 실패를
+  반환한다.
+- Step6 흐름: 원래 값 기록 → TAB으로 변경(hang 감지 시 중단) → Update →
+  (hang 감지 시 중단) → Save Sample로 TAB 반영 확인 → TAB 구분자 테스트
+  파일 생성 → Sample Test 미리보기로 파싱 성공 확인(#22985 재발 여부의
+  핵심 판정) → **성공/실패 여부와 무관하게 항상 COMMA로 원복**(Update까지
+  재실행). 원복까지 실패하면 FAIL이 아니라 "사람이 직접 확인·복원할 것"으로
+  명시해 남긴다 — 이 값이 잘못 남으면 이후 모든 정상 Import가 깨지므로,
+  자동화가 정직하게 이상 상태를 알리는 것이 조용히 넘어가는 것보다 낫다.
+
+### 8.4 TC13 Step7 — 폴더 자동 감지 경로 (opt-in, 라이브 미검증)
+
+8.1절에서 확인된 상호 배타 기능이다. 이 화면의 체크박스/Target Directory
+컨트롤 구조는 이번 세션까지 한 번도 실측하지 않았다 — "모르는 컨트롤을
+추정 클릭하지 않는다" 원칙에 따라 두 단계로 나눴다.
+
+1. **기본 실행(`python run.py tc13`)**: 화면에서 "Specific Folder"/
+   "Target Directory" 문구가 있는 라벨의 존재만 확인해 보고한다(Service
+   Manual 4.6.7절 근거 대조). 실제 체크박스는 클릭하지 않는다.
+2. **명시적 옵트인(`python run.py tc13 --with-folder-watch`)**: 라벨 근처의
+   CheckBox를 세로 위치로 추정해 클릭 → Update → 다시 클릭해 원복 →
+   Update까지 시도한다. 체크박스 on/off는 owner-draw라 UI로 읽을 수 없어
+   DB 대조가 필요하나 이번 세션에서는 미구현이다(다음 과제). **이 분기는
+   아직 라이브로 한 번도 실행해 보지 않았다** — 반드시 별도 세션에서
+   `--with-folder-watch`만 단독으로 먼저 확인할 것. Import Patient Order
+   경로(Step1~6)를 이미 통과시킨 뒤에 이 옵션을 켜는 순서를 권장한다(먼저
+   검증된 경로를 확보한 뒤에 상호 배타 기능을 건드리는 것이 더 안전하다).
+
+### 8.5 라이브 검증 착수 — preflight에서 중단 (2026-08-19)
+
+코드 반영 후 `python run.py preflight`를 실행했으나 **물리 메모리 여유
+2.49GB(기준 3.0GB 미달)로 NG**가 나왔다. 3.4.1절에 기록된 "감지기 초기화
+무한대기" 사고의 실제 원인과 정확히 같은 조건이라, preflight의 설계
+목적대로 여기서 UI 자동화를 시작하지 않고 멈췄다. 사용자가 직접 여유
+프로세스를 정리하기로 했다 — **다음 세션(또는 메모리 확보 후) 첫 작업은
+`python run.py preflight` 재확인 → `python run.py tc13` 라이브 실행으로
+Step1~6까지 깨끗한 1회 통과를 확인하는 것**이다. Step7(`--with-folder-watch`)은
+Step1~6이 안정적으로 통과함을 먼저 확인한 뒤 별도로 시도한다.
+
+### 8.6 다음 세션 확인 필요 항목 (누적)
+
+1. Step5 팝업 무한반복의 근본 원인이 정말 foreground 문제였는지 —
+   `drain_dialogs()` 적용 후 재현되지 않는지 라이브로 확인 필요.
+2. Data Delimiter 콤보 조작 시 hang이 실제로 재현되는지, `select_combo()`의
+   hang 감지가 실제로 작동하는지 라이브 확인 필요.
+3. 폴더 자동 감지 체크박스의 정확한 컨트롤 구조(좌표 기반 추정이 아니라
+   실측으로 확정) — `--with-folder-watch` 첫 실행에서 확인.
+4. 체크박스 on/off를 DB(`CONFIGURATION_IMPORT_PATIENT_OPTION`)로 검증하는
+   로직 — 아직 미구현.
+5. `core/ui.login()`의 `while self.dismiss_info(): pass`(상한 없음)도
+   `drain_dialogs()`로 교체할지 검토 — 로그인 화면은 지금까지 문제가 없었지만
+   같은 패턴이라 일관성 차원에서 정리 대상.
+
+### 8.7 라이브 검증 완료 — Import Patient Order의 실제 구조 (2026-08-19 세션 계속)
+
+8.5절에서 preflight 메모리 부족으로 멈췄던 지점을 사용자 지시("자동화 쭉
+진행해줘! 메모리 상관없이! 막히면 그때 고민해보자!")로 다시 이어받아
+`python run.py tc13`을 실제로 여러 차례 라이브 실행하며 막힌 지점을 하나씩
+실측·수정했다. **최종적으로 1회 클린 실행에서 FAIL 0건**(PASS 8 / MANUAL 2)을
+확인했다.
+
+**핵심 발견 — Import Patient Order는 파일 대화상자를 직접 열지 않는다.**
+버튼(30392) 클릭은 Setting > Study - Import Patient 화면과 **완전히 같은
+컨트롤 구조(File Path/Browse 30515/Refresh 30644/미리보기 그리드 31178)를
+재사용한 별도 모달 팝업**을 연다(Operation Manual 5.3.1절 "Import Patient
+Order 팝업 창이 나타납니다"와 정확히 일치 — 처음 설계는 이 팝업의 존재를
+문서만 보고 짐작했지 실제 구조를 확인하지 않아 "버튼 클릭 → 바로 OS 파일
+대화상자"로 잘못 가정했었다). 그 안의 Browse를 다시 눌러야 진짜 OS "열기"
+대화상자가 열린다. 확정된 나머지 조작 순서:
+
+1. 팝업 안 Browse(30515) → OS "열기" 대화상자 → 경로 입력 → Refresh(30644)
+   → 미리보기 그리드(31178)에 행 표시 확인.
+2. 팝업 좌측 하단 버튼(30645)을 누르면 제목 **"Import"**, 문구 "Do you want
+   to import all patient?"인 확인창이 뜬다. 버튼은 왼쪽부터 **All
+   Patients(27002) / Selected(27001) / Cancel(27000)**(스크린샷으로 확인,
+   owner-draw라 텍스트는 표준 API로 못 읽음). 미리보기 행을 개별 선택하지
+   않았으므로 All Patients를 누른다.
+3. 확인 직후 DB(`ORDER_PATIENT`)에 즉시 반영됨을 확인했다(라이브 실측,
+   TEST_VALUES와 완전 일치).
+4. 팝업은 확인 후에도 스스로 닫히지 않는다 — 우상단 **X 아이콘(컨트롤 ID
+   `-4`)**으로 닫아야 한다. 확인 직후 완료 안내용 임시 팝업이 하나 더 뜰 수
+   있고 그것도 같은 `-4` 아이콘을 갖는다 — 한 번만 닫으면 그 임시 팝업만
+   닫히고 본체 팝업이 남는 사례를 실측했다. 그래서 `-4` 아이콘이 더 없을
+   때까지(최대 4회) 반복해서 닫는다. 이 팝업은 "닫아야 할 안내 팝업"이
+   아니므로 `drain_dialogs()`(다른 버튼을 눌러 진짜 조작을 방해할 수 있음)로
+   다루면 안 된다 — 별도의 전용 닫기 루프로 처리했다.
+
+**완료 팝업 무한반복 버그(8.2절 가설)는 실측으로 확인되지 않았다** — 이번
+라이브 검증에서는 `dismiss_dialog()`의 `ensure_foreground()` 선-클릭만으로
+문제가 재현되지 않았다. 다만 별도로, 코드가 "안내 팝업"과 "실제 조작이 필요한
+본체 팝업"을 구분하지 못해 `drain_dialogs()`가 본체 팝업을 잘못 붙잡고
+`stuck=True`를 반환하는 상황을 여러 번 재현했다 — 근본 원인은 가설과
+달랐지만(클릭 정확도가 아니라 "이게 안내 팝업인지 아닌지 구분 못 함"),
+`drain_dialogs()`의 상한 설계 자체는 정확히 의도대로 동작해 무한 루프를
+막아줬다(343회 재현 없이 6회에서 안전하게 멈춤).
+
+**사용자 지시로 추가한 화면 표시 확인(Step5 확장)**: Import 직후
+Registration > Reserved의 Default/Clear 필터 스플릿 버튼(30935, 자식
+드롭다운 화살표 id=2)을 Clear(30941)로 바꾸고 Search(30689)를 누른 뒤,
+목록(전체 스캔으로 찾은 ListCtrl 중 행이 가장 많은 것)에 실제로 표시되는지
+확인한다. 목록 행은 자식 컨트롤이 전혀 없는 단일 owner-draw 윈도우라(실측:
+`children()` 빈 리스트) 표준 API로 셀 텍스트를 읽을 수 없어, 캡처 +
+pytesseract OCR로 Study Description("QA Import Chest Study", 잘리지 않고
+전부 렌더링됨을 확인)을 찾는 방식으로 판정한다. tesseract.exe는 PATH에는
+없지만 `C:\Program Files\Tesseract-OCR\tesseract.exe`에 설치돼 있어 경로를
+직접 지정했다.
+
+**#22985(Tab 구분자) 회귀(Step6) 설계 보완**: Data Delimiter 콤보(31042)의
+드롭다운 항목도 owner-draw라 `.text`가 `'TextButton'`(내부 클래스 힌트)만
+담고 실제 표시 문구("TAB" 등)를 읽을 수 없음을 실측했다 — `select_combo()`
+초안(텍스트로 항목을 미리 골라내는 방식)은 이 때문에 실패했다. **"항목을
+하나씩 눌러보고 콤보 값을 다시 읽어 목표와 같은지 확인"** 방식으로 재설계해
+해결했다(시도 횟수는 실제 발견된 항목 개수로 제한되므로 무한 재시도가
+아니다). DB(`CONFIGURATION_IMPORT_PATIENT_OPTION` Type=716, 값 `5`→`6`)로
+델리미터 변경이 실제로 반영됨을 확인했다. 그런데도 그 직후 다시 누른 Save
+Sample은 구분자를 COMMA로 만들었다 — Save Sample이 화면 진입 시점의 캐시된
+값을 쓰는지, 아니면 Data Delimiter와 무관하게 항상 COMMA 예시를 만드는지는
+이번 세션에서 확정하지 못해 MANUAL로 남겼다(FAIL이 아니다 — 설정 변경 자체는
+DB로 검증됨).
+
+**`goto_screen()` 성능 개선(사용자 지적, 2026-08-19)**: "Import Patient 화면
+가는데 왜 매번 메뉴 전체를 다 클릭해보냐"는 질문을 받고 확인해 보니, TC13의
+Step1/6/7이 같은 화면을 찾는데도 캐시가 없어 매번 55개 화면 전체를 처음부터
+다시 훑고 있었다. 사용자가 추가로 확인해 준 사실(**"대분류는 라이선스/연동
+상태와 무관하게 항상 고정, 소분류만 달라질 수 있다"**)을 근거로 두 단계
+최적화를 추가했다: (1) 프로세스 내 캐시(`(pid, title) -> (대분류, 소분류
+ID)`) — 재확인만 하면 되는 경우 전체 탐색을 건너뛴다. (2) 대분류 이름 직행
+— 제목이 `"대분류 - 소분류"` 형식이면 고정 순서표(`MAJOR_TITLES`, 3.4.3절과
+동일)에서 대분류 인덱스를 바로 찾아 **그 대분류만** 펼쳐 확인한다. 둘 다
+실패하면 원래의 전체 탐색으로 자동 복구한다 — "메뉴 지도를 하드코딩하지
+않는다"는 원칙(CLAUDE.md 3절)은 대분류 순서가 사용자가 확인해 준 안정적
+사실이라는 점에서 예외를 두되, 소분류는 여전히 실행 시점에 매번 확인한다.
+
+### 8.8 다음 세션 확인 필요 항목 (8.6절 갱신)
+
+1. ~~Step5 팝업 무한반복이 foreground 문제였는지~~ → 이번 라이브 검증에서는
+   재현되지 않음(원인이 다른 것이었을 가능성, 8.7절).
+2. ~~Data Delimiter 콤보 hang 감지가 작동하는지~~ → 이번 세션엔 hang 자체가
+   재현되지 않아 `is_responsive()` 분기가 실제로 트리거된 적은 없다. hang이
+   재현되면 그때 검증.
+3. **`--with-folder-watch` 경로 라이브 검증** — 아직 한 번도 실행하지 않았다.
+   Import Patient Order 경로(Step1~6)가 이미 안정적으로 통과하는 지금이
+   시도하기 좋은 시점이다.
+4. **Save Sample과 Data Delimiter의 관계** — 화면을 벗어나 재진입하면 Save
+   Sample이 TAB을 반영하는지 확인.
+5. 체크박스 on/off를 DB로 검증하는 로직(`--with-folder-watch`용) — 미구현.
+6. `core/ui.login()`의 상한 없는 `while dismiss_info(): pass`를
+   `drain_dialogs()`로 교체할지 검토(8.6절 5항목 유지).

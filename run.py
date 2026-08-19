@@ -208,7 +208,7 @@ def cmd_xipl_license(cfg, args):
 def cmd_tc13(cfg, args):
     from tests import tc13_import_patient as tc13
     ui = _ready_ui(cfg)
-    result = tc13.run(ui, cfg)
+    result = tc13.run(ui, cfg, with_folder_watch=getattr(args, "with_folder_watch", False))
     env = result_mod.collect_env(cfg) if not args.no_env else None
     paths = result_mod.write_reports([result], os.path.join(HERE, "Reports"), env=env)
     print("\n판정: %s" % result.verdict)
@@ -375,6 +375,11 @@ def main(argv=None):
     p.add_argument("--approve-destructive", action="store_true",
                    help="run-regression 맨 마지막의 Setting Import(DB 전체 복원)까지 "
                         "실행한다. 지정하지 않으면 Export까지만 수행한다.")
+    p.add_argument("--with-folder-watch", action="store_true",
+                   help="tc13에서 'Import Patient Information From a Specific Folder' "
+                        "기능(Import Patient Order와 상호 배타)까지 켜서 확인한다. "
+                        "아직 라이브 미검증 경로라 기본은 끔(경고: 이 옵션 없이도 "
+                        "관련 컨트롤 존재 여부는 보고된다).")
     args = p.parse_args(argv)
 
     cfg = load_config(args.config)
