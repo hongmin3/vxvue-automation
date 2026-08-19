@@ -4,20 +4,31 @@
 체크리스트 Step: Setting의 각 탭(대분류/소분류)을 순회하며 화면이 정상적으로
 표시되는지 확인한다.
 
-## 무엇을 근거로 PASS/FAIL을 정하는가
+## 이 TC가 실제로 검증하는 것 (사용자 확인 2026-08-19)
 
-| # | 확인 내용 | 근거 |
-|---|---|---|
-| 1 | Setting 화면 진입 | 좌측 메뉴(ItemWnd) 존재 |
-| 2 | 소분류 전부 열림 | 상단 제목 `Static`이 실제로 바뀜(평문으로 읽힘) |
-| 3 | 제목 중복 없음 | 같은 제목이 두 번 = 클릭이 다른 항목에 안 먹은 것 |
-| 4 | **모든 컨트롤이 스크롤 순회 중 화면에 온전히 노출됨** | 본문 대화상자의 자식 컨트롤 전수와, 페이지별로 뷰포트에 들어온 집합을 비교 |
-| 5 | 스크롤을 끝까지 내렸는지 | 페이지 서명이 반복될 때까지 내려가며, 상한에 걸린 화면이 있으면 FAIL |
-| 6 | SCP 목록 상세가 DB 등록값과 일치 | 목록 행을 클릭해 나타난 Edit 값 vs `AE_LIST` |
-| 7 | **화면별 설정 값이 기준과 일치** | Edit/콤보 값, 라벨, 체크박스 구성 (테마 비의존) |
-| 8 | 기준 캡처와 SSIM >= 0.99 | 테마까지 같은 **외형 서명** 기준과만 비교 |
-| 9 | 내용이 거의 없는 화면 | 참고 정보 |
-| 10 | Setting 트리 실측 목록 확보 | 정보 기록(체크리스트 대조용) |
+TC14는 **Windows Update 이후 각 탭(대분류/소분류)이 여전히 정상적으로
+클릭·표시되고, 화면에 있어야 할 옵션이 그대로 있는지**를 확인하는 시험이다.
+"기준값과 완전히 같아야 PASS"인 정밀 회귀는 이 TC의 목적이 아니다 — 그런
+값 단위 회귀는 `tests/tc_setting_export_import.py`(Setting Export/Import)
+쪽에서 다룬다. 그래서 여기서는:
+
+- 화면 진입·노출·스크롤 등 **탐색 자체가 깨졌는지**는 FAIL로 판정한다.
+- 화면에 있는 **옵션 구성(트리)이나 표시 텍스트가 이전 실행과 달라진 것**은
+  FAIL이 아니라 `확인 필요`(MANUAL)로만 표시하고, 무엇이 달라졌는지 적는다.
+  달라졌다는 사실 자체가 결함이라고 단정할 수 없기 때문이다(연동·라이선스
+  상태에 따라 메뉴 구성이 정상적으로 늘어나는 사례가 실제로 있었다).
+
+| # | 확인 내용 | 근거 | 판정 |
+|---|---|---|---|
+| 1 | Setting 화면 진입 | 좌측 메뉴(ItemWnd) 존재 | PASS/FAIL |
+| 2 | 소분류 전부 열림 | 상단 제목 `Static`이 실제로 바뀜(평문으로 읽힘) | PASS/FAIL |
+| 3 | 제목 중복 없음 | 같은 제목이 두 번 = 클릭이 다른 항목에 안 먹은 것 | PASS/FAIL |
+| 4 | **모든 컨트롤이 스크롤 순회 중 화면에 온전히 노출됨** | 본문 대화상자의 자식 컨트롤 전수와, 페이지별로 뷰포트에 들어온 집합을 비교 | PASS/FAIL |
+| 5 | 스크롤을 끝까지 내렸는지 | 페이지 서명이 반복될 때까지 내려가며, 상한에 걸린 화면이 있으면 FAIL | PASS/FAIL |
+| 6 | SCP 목록 상세가 DB 등록값과 일치 | 목록 행을 클릭해 나타난 Edit 값 vs `AE_LIST` | PASS/FAIL |
+| 7 | **화면별 옵션 구성(트리) 확인** | Edit/콤보/라벨/체크박스의 **존재 여부**를 기준과 대조. 값 텍스트가 달라도 FAIL이 아니라 확인 필요 | PASS/MANUAL |
+| 8 | 내용이 거의 없는 화면 | 참고 정보 | PASS/MANUAL |
+| 9 | Setting 트리 실측 목록 확보 | 정보 기록(체크리스트 대조용) | PASS |
 
 ### 4번이 이 시험의 핵심이다
 
@@ -34,27 +45,25 @@
 정보가 표시된다. 따라서 목록 행을 순서대로 클릭해 상세를 캡처하고, 표시된
 값을 DB `AE_LIST`의 실제 등록값과 대조한다 — 캡처 비교보다 강한 근거다.
 
-### 7번이 테마 문제의 답이다
+### 7번 — 트리(구성) 대조이지 값 대조가 아니다
 
-사용자 확인(2026-08-18): 테마·폰트에 따라 **색상, Setting 창 크기, 폰트가
+사용자 확인(2026-08-19): 테마·폰트에 따라 **색상, Setting 창 크기, 폰트가
 달라지지만 설정 값과 옵션, 메뉴 구성은 동일하다.** 그래서 판정은 픽셀이 아니라
 **값 JSON**으로 한다. 화면마다 Edit 값, 콤보 값(부모 텍스트는 잘리므로 숨은
 자식 Edit에서 전체값을 읽는다), 라벨, 체크박스 컨트롤 구성을 뽑아 기준과
 비교한다. 좌표·크기·색은 넣지 않는다.
 
+다만 **이 비교의 결론은 PASS 또는 `확인 필요`뿐이고 FAIL은 없다.** 옵션
+구성(어떤 Edit/콤보/체크박스/라벨이 있는지)이나 표시 텍스트가 기준과 달라도
+그 자체를 결함으로 단정하지 않는다 — 라이선스·연동 상태에 따라 메뉴가 정상
+적으로 늘어나는 사례가 실제로 있었다(Live View 연동 시 `Integration > Camera`
+등장). 값이 완전히 같아야만 PASS로 인정하는 정밀 회귀는
+`tests/tc_setting_export_import.py` 쪽 책임이다.
+
 읽을 수 없는 것은 정직하게 남긴다 — 체크박스/라디오는 커스텀 owner-draw라
 `BM_GETCHECK`가 항상 0이어서 **UI에서 on/off를 읽을 수 없다**(실측). 픽셀로
 체크 여부를 판정하는 방법은 테마에 종속되므로 쓰지 않고, 실제 on/off 값은
 DB 스냅샷(`python run.py snapshot`)으로 검증한다.
-
-### 8번 — 기준 캡처는 컨텍스트별로 보관한다
-
-Setting 메뉴는 라이선스·연동 상태에 따라 달라진다(Live View 라이선스가 있으면
-`Integration > Camera`가 생기고, 제너레이터를 연동하면 `Integration > Generator`가
-생긴다 — 실측). 기준을 하나로 두면 연동이 다른 PC에서 헛된 FAIL이 쏟아진다.
-그래서 `core/context.py`의 서명으로 기준 폴더를 나누고, 리포트에 어떤 컨텍스트와
-비교했는지 남긴다. 사용자 확인(2026-08-18): 현재 기준은 **VX.LIVE.SERVER 연동 +
-XIPL 전체 옵션 + VXvue(Shimadzu) 라이선스 + VXvue AI(VXCAD) 라이선스** 상태다.
 
 ## 화소 균일도만으로 '빈 화면'을 판정하면 안 된다 (실측 교훈)
 
@@ -74,7 +83,7 @@ from datetime import datetime
 from core import context as ctx_mod
 from core import screen as screen_mod
 from core import setting as S
-from core.result import TCResult
+from core.result import MANUAL, PASS, TCResult
 
 TC_ID = "TC_WindowsUpdate_14"
 TC_TITLE = "Setting 전체 화면 표시 확인 (스크롤·목록 상세 포함)"
@@ -138,6 +147,14 @@ def run(ui, cfg, evidence_root=None, run_name="last"):
                      encoding="utf-8") as vf:
             json.dump(values, vf, ensure_ascii=False, indent=1, sort_keys=True)
 
+        # page_through()가 화면을 마지막 페이지(스크롤 맨 아래)에 둔 채로
+        # 끝난다. 목록 행의 rect는 현재 스크롤 위치 기준으로 갱신되므로, 맨
+        # 위로 되돌리지 않으면 row_click_point()가 화면 밖(스크롤로 밀려난
+        # 위치)을 클릭한다 — DICOM - Storage(9페이지 화면)에서 실측 확인된
+        # 원인. 클릭이 목록을 완전히 비켜가면 상세 패널이 아직 그 항목으로
+        # 갱신되지 않은 채 남아 있던 필드(QXLink Server='service' 등)만
+        # 읽혀 "화면값=service"처럼 대조가 어긋난다(2026-08-19).
+        S.scroll_to_top(ui)
         detail = _walk_list_details(ui, out_dir, base, scr_title, scp_expected)
 
         blank_pages = [p for p in walked["pages"] if screen_mod.blankness(p)[0]]
@@ -165,10 +182,7 @@ def run(ui, cfg, evidence_root=None, run_name="last"):
     viewport = (dlg.size if dlg else None)
     context = ctx_mod.collect(setting_titles=titles, viewport=viewport,
                               note="TC14 기준을 만든 시점의 라이선스·연동·테마 상태")
-    # 캡처는 테마까지 같은 기준과만 비교한다(테마가 바뀌면 픽셀은 전부 달라진다).
-    baseline_dir = os.path.join(root, "Evidence", "tc14_baseline",
-                                context["visual_signature"])
-    # 구조 기준은 테마와 무관하므로 별도 서명으로 보관한다.
+    # 옵션 구성(트리) 기준은 테마·폰트와 무관하므로 구조 서명으로 보관한다.
     values_path = os.path.join(root, "Evidence", "tc14_baseline",
                                "values_%s.json" % context["structure_signature"])
     ctx_path = ctx_mod.save(context, os.path.join(out_dir, "context.json"))
@@ -210,13 +224,11 @@ def run(ui, cfg, evidence_root=None, run_name="last"):
 
     _judge_scp(r, rows, scp_expected)
 
-    _judge_values(r, rows, values_path)
-
-    _judge_ssim(r, rows, baseline_dir, out_dir)
+    _judge_option_tree(r, rows, values_path)
 
     sparse = [x for x in rows if x["blank_pages"]]
     unexpected_sparse = [x for x in sparse if x["title"] not in SPARSE_BY_DESIGN]
-    r.add(9, "내용이 거의 없는 화면(참고)", "PASS" if not unexpected_sparse else "MANUAL",
+    r.add(8, "내용이 거의 없는 화면(참고)", "PASS" if not unexpected_sparse else "MANUAL",
           "허용 목록: %s" % ", ".join(sorted(SPARSE_BY_DESIGN)),
           "%d화면" % len(sparse) + (
               " / 허용 외: %s" % ", ".join(x["title"] for x in unexpected_sparse)
@@ -225,7 +237,7 @@ def run(ui, cfg, evidence_root=None, run_name="last"):
 
     tree_path = _write_tree(rows, out_dir, context)
     r.attach(tree_path)
-    r.add(10, "Setting 트리 실측 목록 확보", "PASS",
+    r.add(9, "Setting 트리 실측 목록 확보", "PASS",
           "대분류/소분류 목록",
           "%d개 화면 / 구조서명 %s / 외형서명 %s"
           % (len(rows), context["structure_signature"], context["visual_signature"]),
@@ -234,13 +246,19 @@ def run(ui, cfg, evidence_root=None, run_name="last"):
     return r.finalize()
 
 
-# --- 값 기준 대조 (테마·폰트 비의존) ---------------------------------
-def _judge_values(r, rows, values_path):
-    """화면별 **설정 값**을 기준과 대조한다. 이 시험의 주 판정 근거다.
+# --- 옵션 구성(트리) 대조 (테마·폰트 비의존, FAIL 없음) ----------------
+def _judge_option_tree(r, rows, values_path):
+    """화면별 **옵션 구성(어떤 Edit/콤보/라벨/체크박스가 있는지)**을 기준과
+    대조한다. 값 텍스트가 다르거나 구성이 달라져도 FAIL이 아니라 `확인 필요`
+    (MANUAL)로만 표시한다.
 
-    사용자 확인(2026-08-18): 테마·폰트·옵션에 따라 색상, Setting 창 크기, 폰트가
-    달라지지만 **각 설정 값과 옵션, 메뉴 구성은 동일하다.** 그래서 픽셀이 아니라
-    값으로 비교한다 — 좌표·크기·색은 지문에 넣지 않는다.
+    사용자 확인(2026-08-19): TC14의 목적은 "Windows Update로 탭 클릭·옵션
+    노출이 깨지지 않았는가"이지, 각 옵션 값이 기준과 완전히 같아야 하는 정밀
+    회귀가 아니다. 값 단위로 PASS/FAIL을 가르는 회귀는
+    `tests/tc_setting_export_import.py`에서 수행한다. 여기서는 차이가 있다는
+    사실과 무엇이 달라졌는지만 남긴다 — 라이선스·연동 상태 변화로 메뉴 구성이
+    정상적으로 늘어나는 사례가 실제로 있었기 때문에, 차이를 곧 결함으로
+    단정하지 않는다.
 
     읽을 수 있는 값의 범위와 한계는 `core/setting.screen_values()` 참고.
     체크박스 상태는 UI에서 읽히지 않으므로 컨트롤 목록만 대조하고, 실제 on/off는
@@ -252,11 +270,11 @@ def _judge_values(r, rows, values_path):
         os.makedirs(os.path.dirname(values_path), exist_ok=True)
         with io.open(values_path, "w", encoding="utf-8") as f:
             json.dump(current, f, ensure_ascii=False, indent=1, sort_keys=True)
-        r.manual(7, "화면별 설정 값 기준 대조 (테마 비의존)",
-                 "이 구조 서명의 값 기준이 없어 이번 실행분을 기준으로 저장했다(%s). "
+        r.manual(7, "화면별 옵션 구성(트리) 기준 대조",
+                 "이 구조 서명의 기준이 없어 이번 실행분을 기준으로 저장했다(%s). "
                  "다음 실행부터 자동 비교된다. 첫 실행을 PASS로 위장하지 않는다."
                  % os.path.basename(values_path),
-                 expected="기준과 값이 완전 일치",
+                 expected="기준과 옵션 구성이 동일 (다르면 확인 필요로 표시, FAIL 아님)",
                  actual="기준 %d화면 생성 (Edit %d개 / 콤보 %d개 / 라벨 %d개)"
                         % (len(current),
                            sum(len(v["edits"]) for v in current.values()),
@@ -267,40 +285,25 @@ def _judge_values(r, rows, values_path):
     with io.open(values_path, encoding="utf-8") as f:
         baseline = json.load(f)
 
-    missing = sorted(set(baseline) - set(current))
-    added = sorted(set(current) - set(baseline))
-    diffs = []
-    for title in sorted(set(baseline) & set(current)):
-        b, c = baseline[title], current[title]
-        for kind in ("edits", "combos"):
-            bd, cd = b.get(kind) or {}, c.get(kind) or {}
-            for key in sorted(set(bd) | set(cd)):
-                if bd.get(key) != cd.get(key):
-                    diffs.append("%s / %s[%s]: %r -> %r"
-                                 % (title, kind, key, bd.get(key), cd.get(key)))
-        if sorted(b.get("labels") or []) != sorted(c.get("labels") or []):
-            only_b = sorted(set(b.get("labels") or []) - set(c.get("labels") or []))
-            only_c = sorted(set(c.get("labels") or []) - set(b.get("labels") or []))
-            diffs.append("%s / labels: 기준에만 %s / 현재에만 %s"
-                         % (title, only_b[:5], only_c[:5]))
-        bids = [x["id"] for x in b.get("unreadable_state_controls") or []]
-        cids = [x["id"] for x in c.get("unreadable_state_controls") or []]
-        if sorted(bids) != sorted(cids):
-            diffs.append("%s / 체크박스 구성: %s -> %s" % (title, bids, cids))
+    d = S.diff_all_screen_values(baseline, current)
+    missing, added = d["missing"], d["added"]
+    struct_diffs, value_diffs = d["struct_diffs"], d["value_diffs"]
 
-    ok = not (missing or added or diffs)
-    r.assert_true(7, "화면별 설정 값 기준 대조 (테마 비의존)",
-                  ok,
-                  expected="기준 %d화면의 값과 완전 일치" % len(baseline),
-                  actual=("일치 (Edit/콤보/라벨/체크박스 구성 전부 동일)" if ok else
-                          "없어진 화면 %d / 새 화면 %d / 값 차이 %d건%s"
-                          % (len(missing), len(added), len(diffs),
-                             (" -> " + "; ".join(diffs[:6])) if diffs else "")),
-                  note="좌표·크기·색은 비교하지 않는다. 테마·폰트가 바뀌어도 값과 "
-                       "옵션은 같아야 하므로 이 비교가 테마에 영향받지 않는 판정 "
-                       "근거가 된다. 체크박스 on/off는 UI에서 읽히지 않아 DB "
-                       "스냅샷으로 별도 검증한다. 기준: %s"
-                       % os.path.basename(values_path))
+    ok = not (missing or added or struct_diffs or value_diffs)
+    status = PASS if ok else MANUAL
+    r.add(7, "화면별 옵션 구성(트리) 기준 대조", status,
+          expected="기준 %d화면의 옵션 구성과 표시값이 동일" % len(baseline),
+          actual=("일치 (Edit/콤보/라벨/체크박스 구성과 값 전부 동일)" if ok else
+                  "확인 필요 - 없어진 화면 %d / 새 화면 %d / 구성 차이 %d건 / "
+                  "값 차이 %d건%s"
+                  % (len(missing), len(added), len(struct_diffs), len(value_diffs),
+                     (" -> " + "; ".join((struct_diffs + value_diffs)[:6])) if
+                     (struct_diffs or value_diffs) else "")),
+          note="구성(옵션 존재 여부)이나 값이 달라도 FAIL로 판정하지 않는다 - "
+               "Windows Update로 탐색 자체가 깨졌는지가 이 TC의 판정 기준이고, "
+               "값 단위 회귀(완전 일치=PASS)는 Setting Export/Import TC의 책임이다. "
+               "차이가 있으면 사람이 원인(정상적인 연동/라이선스 변화인지, 실제 "
+               "결함인지)을 확인해야 한다. 기준: %s" % os.path.basename(values_path))
 
 
 # --- SCP 목록 상세 ----------------------------------------------------
@@ -346,11 +349,17 @@ def _walk_list_details(ui, out_dir, base, scr_title, scp_expected):
         def on_row(page, idx, row, _li=li):
             key = "%s_l%02d_p%02d_r%02d" % (base, _li + 1, page + 1, idx + 1)
             ui.click(S.row_click_point(ui, row), settle=0.7)
+            fields = S.scp_detail_fields(ui)
+            # 상세 패널이 클릭 직후 아직 채워지지 않은 상태로 잡힐 수 있다
+            # (2026-08-19 실측: DICOM - Storage에서 Edit 1개(불특정 텍스트)만
+            # 읽힌 사례). 값이 1개 이하로 빈약하면 한 번 더 대기 후 재판독한다.
+            if len(fields["texts"]) <= 1:
+                time.sleep(0.6)
+                fields = S.scp_detail_fields(ui)
             dlg = S.content_dialog(ui)
             path = screen_mod.capture(os.path.join(out_dir, key + ".png"),
                                       bbox=dlg.rect if dlg else None)
             sig = S._page_signature(path)
-            fields = S.scp_detail_fields(ui)
             items.append({"list": _li, "page": page, "index": idx,
                           "capture": path, "fields": fields,
                           "duplicate": sig in seen_sigs})
@@ -404,50 +413,6 @@ def _judge_scp(r, rows, scp_expected):
                           % (len(checked), ", ".join(checked))),
                   note="DICOM 서버 설정은 목록 항목을 클릭해야 상세가 나타나므로, "
                        "행을 순서대로 클릭해 표시값을 읽고 DB와 비교했다.")
-
-
-# --- SSIM ------------------------------------------------------------
-def _judge_ssim(r, rows, baseline_dir, out_dir):
-    os.makedirs(baseline_dir, exist_ok=True)
-    compared, failed, created = [], [], 0
-    for x in rows:
-        caps = list(x["pages"])
-        d = x["detail"]
-        if d:
-            caps += [i["capture"] for i in d["items"]]
-        for cur in caps:
-            name = os.path.basename(cur)
-            base = os.path.join(baseline_dir, name)
-            result = screen_mod.compare(
-                base, cur, diff_path=os.path.join(out_dir, "DIFF_" + name))
-            if result["score"] is None:
-                try:
-                    shutil.copyfile(cur, base)
-                    created += 1
-                except OSError:
-                    pass
-                continue
-            compared.append((name, result["score"]))
-            if not result["passed"]:
-                failed.append((name, result["score"], result["diff"]))
-
-    if not compared:
-        r.manual(8, "기준 캡처와 구조적 유사도(SSIM) 비교",
-                 "이 컨텍스트의 기준 캡처가 없어 이번 실행분 %d장을 기준으로 저장했다"
-                 "(%s). 다음 실행부터 자동 비교되며 임계값 적정성도 그때 실측으로 "
-                 "조정한다. 첫 실행을 PASS로 위장하지 않는다." % (created, baseline_dir),
-                 expected="SSIM >= %.2f" % screen_mod.SSIM_THRESHOLD,
-                 actual="기준 %d장 생성" % created)
-        return
-
-    worst = min(compared, key=lambda t: t[1])
-    r.assert_true(8, "기준 캡처와 구조적 유사도(SSIM) 비교",
-                  not failed,
-                  expected="전 페이지 SSIM >= %.2f" % screen_mod.SSIM_THRESHOLD,
-                  actual="비교 %d장 / 미달 %d장 / 최저 %.6f (%s)%s"
-                         % (len(compared), len(failed), worst[1], worst[0],
-                            (" / 신규 기준 %d장" % created) if created else ""),
-                  note="기준 폴더: %s" % baseline_dir)
 
 
 def _write_tree(rows, out_dir, context):

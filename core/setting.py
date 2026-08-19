@@ -508,8 +508,10 @@ def export_settings(ui, path, timeout=180, poll=2.0):
     """Setting Export를 실행해 지정 경로에 `.vxs`를 만든다.
 
     반환: (실제 생성된 경로 또는 None, 메모)
-    확장자를 `.vxs`로 주지 않으면 제품이 뒤에 `.vxs`를 덧붙이므로, 호출부는
-    항상 `.vxs`로 넘기는 것을 권한다.
+    제품이 어차피 파일명 뒤에 `.vxs`를 자동으로 붙이므로(사용자 확인
+    2026-08-19), 호출부는 `path`에 확장자를 붙이지 않고 넘기는 것을 권한다
+    — 직접 `.vxs`를 붙이면 오히려 이중으로 남을 수 있다. 이 함수는 `path`
+    그대로와 `path + ".vxs"` 둘 다 확인해 실제로 만들어진 파일을 찾는다.
     """
     import glob
     import os
@@ -528,17 +530,29 @@ def export_settings(ui, path, timeout=180, poll=2.0):
     candidates = [target, target + ".vxs"]
     end = time.time() + timeout
     last_size = -1
+    finished = False
     while time.time() < end:
         found = next((p for p in candidates if os.path.exists(p)), None)
         if found:
             size = os.path.getsize(found)
             if size > 0 and size == last_size and ui.dialog() is None:
-                return found, note
+                finished = True
+                break
             last_size = size
         time.sleep(poll)
 
     found = next((p for p in candidates if os.path.exists(p)), None)
-    return found, (note + " (제한 시간 내 완료 확인 실패)").strip()
+    if not finished:
+        return found, (note + " (제한 시간 내 완료 확인 실패)").strip()
+
+    # 진행 대화상자가 사라진 직후 완료 확인 Info 팝업이 뒤이어 뜬다(실측
+    # 2026-08-19). 이 팝업을 닫지 않으면 이후 모든 클릭이 무시되므로
+    # (core/ui.dismiss_info 문서 참고), Export를 성공으로 보기 전에 반드시
+    # 닫는다. 팝업이 없으면 곧바로 넘어간다(timeout 내 None 반환).
+    ack = ui.dismiss_info(timeout=6)
+    if ack:
+        note = (note + " / 완료 팝업: %s" % ack).strip(" /")
+    return found, note
 
 
 def import_settings(ui, path, confirm=False, timeout=300, poll=2.0):
@@ -873,3 +887,60 @@ def screen_values(ui, title_text=None):
     values["buttons"] = sorted(set(values["buttons"]))
     values["unreadable_state_controls"].sort(key=lambda x: x["id"])
     return values
+
+
+def diff_all_screen_values(baseline, current):
+    """두 `{화면 제목: screen_values(...)}` 사전을 비교한다.
+
+    TC14(화면 순회)와 Setting Export/Import 회귀가 함께 쓴다. 둘의 차이는
+    "이 차이를 FAIL로 볼 것인가"에 있을 뿐, 무엇이 다른지 찾는 로직은 같다
+    (2026-08-19 정리: 값 완전 일치 판정은 Export/Import TC의 책임이고, TC14는
+    같은 비교 결과를 '확인 필요' 참고 정보로만 쓴다).
+
+    반환: dict(missing=[화면...], added=[화면...],
+              struct_diffs=[옵션 자체가 생기거나 없어진 항목...],
+              value_diffs=[같은 옵션인데 표시 텍스트가 다른 항목...])
+    """
+    missing = sorted(set(baseline) - set(current))
+    added = sorted(set(current) - set(baseline))
+    struct_diffs, value_diffs = [], []
+    for title in sorted(set(baseline) & set(current)):
+        b, c = baseline[title], current[title]
+        for kind in ("edits", "combos"):
+            bd, cd = b.get(kind) or {}, c.get(kind) or {}
+            for key in sorted(set(bd) | set(cd)):
+                if key not in bd or key not in cd:
+                    struct_diffs.append("%s / %s[%s]: %s"
+                                        % (title, kind, key,
+                                           "새 옵션" if key not in bd else "옵션 없어짐"))
+                elif bd.get(key) != cd.get(key):
+                    value_diffs.append("%s / %s[%s]: %r -> %r"
+                                       % (title, kind, key, bd.get(key), cd.get(key)))
+        if sorted(b.get("labels") or []) != sorted(c.get("labels") or []):
+            only_b = sorted(set(b.get("labels") or []) - set(c.get("labels") or []))
+            only_c = sorted(set(c.get("labels") or []) - set(b.get("labels") or []))
+            struct_diffs.append("%s / labels: 기준에만 %s / 현재에만 %s"
+                                % (title, only_b[:5], only_c[:5]))
+        bids = [x["id"] for x in b.get("unreadable_state_controls") or []]
+        cids = [x["id"] for x in c.get("unreadable_state_controls") or []]
+        if sorted(bids) != sorted(cids):
+            struct_diffs.append("%s / 체크박스 구성: %s -> %s" % (title, bids, cids))
+    return {"missing": missing, "added": added,
+            "struct_diffs": struct_diffs, "value_diffs": value_diffs}
+
+
+def capture_all_screen_values(ui):
+    """Setting 전체를 순회하며 화면별 표시값(`screen_values`)만 모은다.
+
+    캡처·스크롤 없이 값만 필요할 때 쓴다(Setting Export/Import 회귀의 S0/S2
+    UI 표시값 비교). `content_controls()`는 스크롤 밖 컨트롤도 포함하므로
+    스크롤하지 않아도 값 자체는 빠짐없이 읽힌다.
+    """
+    out = {}
+
+    def on_screen(_mi, _mj, _ctrl_id, scr_title):
+        if scr_title:
+            out[scr_title] = screen_values(ui, scr_title)
+
+    walk(ui, on_screen=on_screen)
+    return out

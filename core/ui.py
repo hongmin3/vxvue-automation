@@ -354,6 +354,18 @@ class VXvueUi:
         u32.SendMessageW(hwnd, BM_CLICK, 0, 0)
         time.sleep(0.4)
 
+    def double_click(self, target, settle=0.4):
+        """더블클릭(예: 목록 항목 인라인 이름 편집 진입)."""
+        x, y = target.center if isinstance(target, Control) else target
+        u32.SetCursorPos(int(x), int(y))
+        time.sleep(0.08)
+        for _ in range(2):
+            u32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+            time.sleep(0.05)
+            u32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+            time.sleep(0.05)
+        time.sleep(settle)
+
     def drag(self, start, end, duration=0.4, settle=0.4):
         sx, sy = start.center if isinstance(start, Control) else start
         ex, ey = end.center if isinstance(end, Control) else end
@@ -457,8 +469,20 @@ class VXvueUi:
 
     # --- 로그인 --------------------------------------------------------
     def at_login_screen(self):
-        return any(c.cls == "Edit" and c.ctrl_id == self.LOGIN_PW_EDIT
-                   for c in self.controls())
+        """로그인 화면 여부.
+
+        `LOGIN_PW_EDIT`(30147) 하나만 보고 판단하면 오탐이 난다 — 이 ID가
+        Setting > System - Account 화면의 Password 필드와 우연히 같아서,
+        그 화면에 머물러 있을 때도 "로그인 화면"으로 오판했다(실측
+        2026-08-19: Setting에서 로그인 화면이 아닌데 `login()`이 로그인
+        컨트롤을 찾다 실패해 크래시). Account 콤보(`LOGIN_ID_COMBO`)까지
+        함께 있어야 로그인 화면으로 판단한다.
+        """
+        controls = self.controls()
+        has_pw = any(c.cls == "Edit" and c.ctrl_id == self.LOGIN_PW_EDIT
+                    for c in controls)
+        has_combo = any(c.ctrl_id == self.LOGIN_ID_COMBO for c in controls)
+        return has_pw and has_combo
 
     def current_login_id(self):
         c = self.by_id(self.LOGIN_ID_COMBO)
@@ -471,6 +495,14 @@ class VXvueUi:
         선택된 계정이 다르면 예외를 던져 잘못된 계정으로 진행하는 것을 막는다.
         """
         if not self.at_login_screen():
+            return True
+
+        # 로그인 화면에서 다른 창(탐색기 등)이 위에 떠 있으면, 좌표 기반
+        # 클릭(self.click)이 VXvue가 아니라 그 창을 때린다 — 로그인 실패의
+        # 실측 원인 중 하나(2026-08-19). VXvue를 최전면으로 올린다.
+        self.activate()
+        if not self.at_login_screen():
+            # activate() 이후 화면이 바뀌었다면 이미 다른 처리가 끝난 것이다.
             return True
         cur = (self.current_login_id() or "").strip()
         if cur and cur.lower() != user_id.strip().lower():

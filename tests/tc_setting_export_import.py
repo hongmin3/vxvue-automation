@@ -9,17 +9,27 @@
 ## 흐름 (3단 비교)
 
 ```
-S0  설정 스냅샷(DB 설정 테이블 + 설정 파일 해시)
+S0  설정 스냅샷(DB 설정 테이블 + 설정 파일 해시) + UI 표시값 전체 캡처
  +-> Export  ->  export_A.vxs
  +-> 변경 수행 (탭별 최대 1건 + Extra Tool)
 S1  스냅샷      [검증] S1 != S0   <- 변경이 실제로 반영됐다는 증명
  +-> Import  export_A.vxs   (파괴적. 사전 백업 후 실행)
  +-> 뷰어 재기동 + 로그인
-S2  스냅샷      [검증] S2 == S0   <- Export 당시 값이 유지됐다
+S2  스냅샷 + UI 표시값 전체 재캡처
+    [검증] S2 == S0 (DB)          <- Export 당시 값이 DB에 그대로 복원됐다
+    [검증] UI(S2) == UI(S0)       <- 화면에도 그 값이 그대로 다시 그려진다
 ```
 
 **중간 검증(S1 != S0)이 핵심이다.** 이것이 없으면 변경이 한 건도 먹지 않아도
 마지막 대조가 통과해 헛된 PASS가 난다.
+
+사용자 확인(2026-08-19): "옵션 값이 기준과 완전히 같아야 PASS"인 정밀 회귀는
+TC14가 아니라 이 TC의 책임이다. TC14는 Windows Update로 탭 클릭·옵션 노출이
+깨지지 않았는지만 보고, 값이 달라도 `확인 필요`로만 표시한다. DB가 정확히
+복원돼도 Setting 화면이 그 값을 제대로 다시 그리지 못하는 경우(렌더링 결함)는
+DB 스냅샷 비교만으로 잡히지 않으므로, 화면에 실제로 표시되는 값도 S0/S2로
+비교한다(`core/setting.capture_all_screen_values`,
+`core/setting.diff_all_screen_values` — TC14와 공유하는 헬퍼).
 
 ## 판정에서 제외하는 것
 
@@ -35,9 +45,14 @@ S2  스냅샷      [검증] S2 == S0   <- Export 당시 값이 유지됐다
   조건을 깨뜨린다.
 """
 
+import ctypes
 import os
 import time
 from datetime import datetime
+
+_u32 = ctypes.windll.user32
+_GWL_STYLE = -16
+_ES_READONLY = 0x0800
 
 from core import config_snapshot as snap
 from core import dbreset
@@ -66,7 +81,14 @@ MUTATION_EXCLUDE = {
     "Integration - Camera": "장비(카메라/VX.LIVE.SERVER) 설정",
     "Integration - Bucky": "장비 설정",
     "Integration - Collimation": "장비 설정",
-    "Integration - XIPL": "XIPL 파라미터 경로 — 공유 설치라 다른 제품에 영향",
+    "Integration - XIPL": "XIPL 파라미터 경로 - 공유 설치라 다른 제품에 영향",
+    "System - Account": "사용자 판단(2026-08-19): Add 직후 자동 저장, 이후 Update가 "
+                        "'Empty password' 오류로 거부되는 등 흐름이 불안정했고, 목록 "
+                        "행 선택도 신뢰할 수 없어(어느 행을 클릭해도 같은 값이 표시됨) "
+                        "실제 admin/service 계정을 잘못 건드릴 위험이 있었다. 위험 대비 "
+                        "이익이 낮아 이 화면은 다루지 않기로 함. 부작용: 테스트 중 생성된 "
+                        "'service1' 테스트 계정(ACCOUNT.accountKey=3, systemFlag=0)이 "
+                        "남아 있음 — 필요하면 사람이 UI에서 직접 삭제할 것.",
 }
 
 MUTATION_SUFFIX = "_QA1"
@@ -78,11 +100,6 @@ def _editable_edits(ui):
     읽기 전용(ES_READONLY)과 비활성 컨트롤은 제외한다. 값이 이미 있는 것을
     우선하되, 빈 칸도 후보로 둔다(입력 자체가 변경이 된다).
     """
-    import ctypes
-    u32 = ctypes.windll.user32
-    GWL_STYLE = -16
-    ES_READONLY = 0x0800
-
     out = []
     for c in S.content_controls(ui):
         if c.cls != "Edit":
@@ -90,17 +107,45 @@ def _editable_edits(ui):
         w, h = c.size
         if w < 60 or h < 12:
             continue
-        style = u32.GetWindowLongW(c.hwnd, GWL_STYLE)
-        if style & ES_READONLY:
+        style = _u32.GetWindowLongW(c.hwnd, _GWL_STYLE)
+        if style & _ES_READONLY:
             continue
-        if not u32.IsWindowEnabled(c.hwnd):
+        if not _u32.IsWindowEnabled(c.hwnd):
+            continue
+        out.append(c)
+    return out
+
+
+def _clickable_by_text(ui, text, min_size=12):
+    """`text`로 표시되는 컨트롤(CheckBox/RadioButton 등) 중 클릭 가능한 것.
+
+    체크박스/라디오는 커스텀 owner-draw라 클릭 전 상태를 표준 API로 읽을 수
+    없다(`core/setting.screen_values`의 `unreadable_state_controls`와 같은
+    한계). 그래서 여기서는 "무엇을 클릭했는지"만 확정하고, 실제로 값이
+    바뀌었는지는 호출부가 DB 스냅샷 비교로 검증한다.
+    """
+    out = []
+    for c in S.content_controls(ui):
+        if c.text.strip() != text:
+            continue
+        w, h = c.size
+        if w < min_size or h < min_size:
+            continue
+        if not _u32.IsWindowEnabled(c.hwnd):
             continue
         out.append(c)
     return out
 
 
 def mutate_screen(ui, screen_title, evidence_dir=None):
-    """화면 하나에서 설정 1건을 바꾸고 Update한다.
+    """화면 하나에서 가능한 만큼 다양하게 값을 바꾸고 Update한다.
+
+    사용자 확인(2026-08-19): "텍스트 입력만이 아니라 체크박스·토글도 다양하게
+    바꿔봐라." Edit 텍스트 변경에 더해, 이 화면에 있는 CheckBox/RadioButton도
+    하나씩 클릭한다. 체크박스/라디오는 커스텀 owner-draw라 클릭 전 상태를
+    표준 API로 읽을 수 없으므로(`core/setting.screen_values`와 같은 한계),
+    "무엇을 클릭했는지"만 기록하고 실제 반영 여부는 Step 5(DB 스냅샷
+    S1 != S0)로 검증한다.
 
     반환: dict(screen=..., changed=bool, detail=..., skipped_reason=...)
     """
@@ -109,28 +154,108 @@ def mutate_screen(ui, screen_title, evidence_dir=None):
                 "skipped_reason": MUTATION_EXCLUDE[screen_title]}
 
     edits = _editable_edits(ui)
-    if not edits:
+    checkboxes = _clickable_by_text(ui, "CheckBox")
+    radios = _clickable_by_text(ui, "RadioButton")
+    if not edits and not checkboxes and not radios:
         return {"screen": screen_title, "changed": False,
-                "skipped_reason": "변경 가능한 Edit 컨트롤이 없음(체크박스/콤보 전용 화면)"}
+                "skipped_reason": "변경 가능한 Edit/CheckBox/RadioButton 컨트롤이 없음"}
 
-    target = edits[0]
-    before = ui.get_text(target)
-    after = (before + MUTATION_SUFFIX) if before else MUTATION_SUFFIX
-    # 길이 제한이 있는 필드에서 잘릴 수 있으므로 너무 길면 접미만 남긴다.
-    if len(after) > 60:
-        after = MUTATION_SUFFIX
+    actions = []
+    text_changed = False
 
-    ui.type_text(target, after, clear=True)
-    actual = ui.get_text(target)
+    if edits:
+        target = edits[0]
+        before = ui.get_text(target)
+        after = (before + MUTATION_SUFFIX) if before else MUTATION_SUFFIX
+        # 길이 제한이 있는 필드에서 잘릴 수 있으므로 너무 길면 접미만 남긴다.
+        if len(after) > 60:
+            after = MUTATION_SUFFIX
+        ui.type_text(target, after, clear=True)
+        actual = ui.get_text(target)
+        text_changed = actual != before
+        actions.append("Edit %d: %r -> %r" % (target.ctrl_id, before, actual))
+
+    if checkboxes:
+        cb = checkboxes[0]
+        ui.click(cb, settle=0.4)
+        actions.append("CheckBox %d 클릭(상태는 DB 스냅샷으로 검증)" % cb.ctrl_id)
+
+    if radios:
+        rb = radios[0]
+        ui.click(rb, settle=0.4)
+        actions.append("RadioButton %d 클릭(상태는 DB 스냅샷으로 검증)" % rb.ctrl_id)
+
     evidence = None
     if evidence_dir:
         evidence = os.path.join(evidence_dir, "mutate_%s.png"
                                 % screen_title.replace(" ", "_").replace("/", "_"))
     popup = S.update(ui, evidence_path=evidence)
+    actions.append("Update 팝업: %s" % (popup or "없음"))
 
-    return {"screen": screen_title, "changed": actual != before,
-            "detail": "컨트롤 %d: %r -> %r (Update 팝업: %s)"
-                      % (target.ctrl_id, before, actual, popup or "없음"),
+    changed = text_changed or bool(checkboxes) or bool(radios)
+    return {"screen": screen_title, "changed": changed,
+            "detail": "; ".join(actions),
+            "skipped_reason": None}
+
+
+# Registration - Physician 화면의 Referring Physician 목록/버튼(실측,
+# work/probe_physician_account.py). Reading/Performing 목록도 구조가
+# 같지만, 다양화 목적으로는 하나만 건드려도 충분하다.
+PHYSICIAN_LIST_ID = 31147
+PHYSICIAN_ADD_BUTTON_ID = 30797
+
+
+def mutate_physician_screen(ui, evidence_dir=None):
+    """Registration - Physician: Referring Physician 목록에 신규 항목을 추가한다.
+
+    사용자 확인(2026-08-19): "add를 클릭해서 신규로... 전문의 명단을
+    추가한다든지." 매뉴얼 근거(Service Manual p.60-61): Add 클릭 -> 빈
+    항목 생성 -> 더블클릭으로 이름 인라인 수정(별도 ID 필드 없이 이름
+    텍스트만 있다).
+    """
+    from core.ui import children
+
+    add_btn = [c for c in S.content_controls(ui) if c.ctrl_id == PHYSICIAN_ADD_BUTTON_ID]
+    if not add_btn:
+        return {"screen": "Registration - Physician", "changed": False,
+                "skipped_reason": "Add 버튼(%d)을 찾지 못함" % PHYSICIAN_ADD_BUTTON_ID}
+
+    target_list = next((lc for lc in S.list_ctrls(ui)
+                        if lc.ctrl_id == PHYSICIAN_LIST_ID), None)
+    if target_list is None:
+        return {"screen": "Registration - Physician", "changed": False,
+                "skipped_reason": "대상 목록(%d)을 찾지 못함" % PHYSICIAN_LIST_ID}
+
+    before_rows = len(S.list_rows(ui, target_list))
+    ui.click(add_btn[0], settle=1.0)
+    after_rows = S.list_rows(ui, target_list)
+    if len(after_rows) <= before_rows:
+        return {"screen": "Registration - Physician", "changed": False,
+                "skipped_reason": "Add 클릭 후에도 목록 행이 늘지 않음"}
+
+    new_row = after_rows[-1]
+    ui.double_click(S.row_click_point(ui, new_row), settle=0.6)
+
+    edit_ctrl = next((k for k in children(new_row.hwnd, 2) if k.cls == "Edit"), None)
+    if edit_ctrl is None:
+        return {"screen": "Registration - Physician", "changed": True,
+                "detail": "행은 추가됐으나(31147: %d -> %d) 더블클릭 후 인라인 편집 "
+                         "Edit을 찾지 못해 이름은 기본값(빈 값)으로 남음"
+                         % (before_rows, len(after_rows)),
+                "skipped_reason": None}
+
+    name = "QA Test Physician"
+    ui.type_text(edit_ctrl, name, clear=True)
+    ui.raw_key(0x0D)
+    time.sleep(0.3)
+
+    evidence = os.path.join(evidence_dir, "mutate_RegistrationPhysician.png") if evidence_dir else None
+    popup = S.update(ui, evidence_path=evidence)
+
+    return {"screen": "Registration - Physician", "changed": True,
+            "detail": "신규 전문의 추가: 목록 %d 행 %d -> %d, 이름=%r (Update 팝업: %s)"
+                      % (PHYSICIAN_LIST_ID, before_rows, len(after_rows), name,
+                         popup or "없음"),
             "skipped_reason": None}
 
 
@@ -220,14 +345,25 @@ def run(ui, cfg, work_dir=None, evidence_dir=None, do_import=True,
         r.add(2, "Setting 화면 진입", "FAIL", "Setting 화면", "진입 실패")
         return r.finalize()
 
-    # --- Step 2: Export ----------------------------------------------
-    export_a = os.path.join(work_dir, "export_A_%s.vxs" % stamp)
+    # UI 표시값 기준(S0) — 실제로 화면에 보이는 Edit/콤보/라벨/체크박스 구성을
+    # 통째로 캡처한다. Import 후(S2) 이것과 완전히 같아야 PASS다(Step 11).
+    # 사용자 확인(2026-08-19): 값이 완전히 같아야 PASS인 정밀 회귀는 TC14가
+    # 아니라 이 TC의 책임이다.
+    ui0 = S.capture_all_screen_values(ui)
+    r.add(2, "Setting 화면 진입 + UI 표시값 캡처(S0)", "PASS",
+          "Setting 화면 진입 성공", "%s / 화면 %d개 캡처" % (S.title(ui) or "(제목 없음)",
+                                                     len(ui0)))
+
+    # --- Step 3: Export ----------------------------------------------
+    # 확장자를 안 줘도 제품이 자동으로 .vxs를 붙인다(사용자 확인 2026-08-19).
+    # 확장자를 직접 붙이면 오히려 이중으로 남을 수 있어 빼고 넘긴다.
+    export_a = os.path.join(work_dir, "export_A_%s" % stamp)
     made, note = S.export_settings(ui, export_a)
     if not made:
-        r.add(2, "Setting Export", "FAIL", export_a, note or "파일 생성 실패")
+        r.add(3, "Setting Export", "FAIL", export_a, note or "파일 생성 실패")
         return r.finalize()
     summary = vxs_mod.summary(made)
-    r.add(2, "Setting Export", "PASS", ".vxs 생성",
+    r.add(3, "Setting Export", "PASS", ".vxs 생성",
           "%s (%d bytes, 엔트리 %d개, DB백업 포함=%s)"
           % (os.path.basename(made), summary["size_bytes"],
              summary["entry_count"], summary["has_db_backup"]),
@@ -235,7 +371,15 @@ def run(ui, cfg, work_dir=None, evidence_dir=None, do_import=True,
                 % (summary["db_backup_bytes"], note)).strip())
     r.attach(made)
 
-    # --- Step 3: 변경 수행 --------------------------------------------
+    # Export 완료 확인 Info 팝업이 파일 생성 직후가 아니라 몇 초 더 지나서
+    # 뜨는 경우가 실측됐다(2026-08-19, export_settings() 자체의 dismiss도
+    # 놓친 사례 확인). 이 팝업을 닫지 않으면 Step 4의 모든 클릭이 무시되고
+    # "변경 0건"으로 조용히 실패하므로, Step 4 진입 전 한 번 더 넉넉하게
+    # 확인해 닫는다.
+    while ui.dismiss_info(timeout=3):
+        pass
+
+    # --- Step 4: 변경 수행 --------------------------------------------
     mutations = []
     S.collapse_all(ui)
     majors, _ = S.menu_items(ui)
@@ -251,6 +395,8 @@ def run(ui, cfg, work_dir=None, evidence_dir=None, do_import=True,
                 continue
             if scr == "Integration - Extra Tool":
                 mutations.append(mutate_extra_tool(ui, cfg, evidence_dir))
+            elif scr == "Registration - Physician":
+                mutations.append(mutate_physician_screen(ui, evidence_dir))
             else:
                 mutations.append(mutate_screen(ui, scr, evidence_dir))
         S.toggle_major(ui, mi)
@@ -258,7 +404,7 @@ def run(ui, cfg, work_dir=None, evidence_dir=None, do_import=True,
 
     changed = [m for m in mutations if m["changed"]]
     skipped = [m for m in mutations if not m["changed"]]
-    r.assert_true(3, "설정 변경 시도",
+    r.assert_true(4, "설정 변경 시도",
                   bool(changed),
                   expected="1건 이상 변경",
                   actual="변경 %d건 / 건너뜀 %d건" % (len(changed), len(skipped)),
@@ -266,12 +412,12 @@ def run(ui, cfg, work_dir=None, evidence_dir=None, do_import=True,
                                              m.get("skipped_reason"))
                                  for m in mutations)[:1500])
 
-    # --- Step 4: S1 스냅샷 + 변경 반영 확인 -----------------------------
+    # --- Step 5: S1 스냅샷 + 변경 반영 확인 -----------------------------
     s1 = snap.take(db, label="S1 (변경 후)")
     s1_path = snap.save(s1, os.path.join(work_dir, "snapshot_S1_%s.json" % stamp))
     r.attach(s1_path)
     diff_01 = snap.compare(s0, s1)
-    r.assert_true(4, "변경이 실제로 DB에 반영되었는지 (S1 != S0)",
+    r.assert_true(5, "변경이 실제로 DB에 반영되었는지 (S1 != S0)",
                   not diff_01["identical"],
                   expected="S0과 S1이 달라야 한다",
                   actual=snap.changed_names(diff_01),
@@ -279,28 +425,28 @@ def run(ui, cfg, work_dir=None, evidence_dir=None, do_import=True,
                        "통과해 헛된 PASS가 난다.")
 
     if not do_import:
-        r.manual(5, "Import 복원", "사용자 지시로 Import는 수행하지 않았다. "
+        r.manual(6, "Import 복원", "사용자 지시로 Import는 수행하지 않았다. "
                                   "export_A와 S0/S1 스냅샷은 보관되어 있어 나중에 이어서 검증할 수 있다.",
                  expected="Import 후 S2 == S0", actual="미수행")
         return r.finalize()
 
-    # --- Step 5: 안전 백업 + Import ------------------------------------
+    # --- Step 6: 안전 백업 + Import ------------------------------------
     try:
         safety = dbreset.backup(cfg.get("sql_server", r".\CHAMELEON"),
                                 cfg.get("database", "DRF"),
                                 prefix="PRE_SETTING_IMPORT",
                                 note="before Setting Import in %s" % TC_ID)
     except dbreset.DbResetError as exc:
-        r.add(5, "Import 전 안전 백업", "FAIL", "백업 생성", str(exc))
+        r.add(6, "Import 전 안전 백업", "FAIL", "백업 생성", str(exc))
         return r.finalize()
-    r.add(5, "Import 전 안전 백업", "PASS", "백업 생성", safety,
+    r.add(6, "Import 전 안전 백업", "PASS", "백업 생성", safety,
           note="Import는 DB 전체를 되돌리므로 실패 시 이 백업으로 복구한다.")
 
     ok, imp_note = S.import_settings(ui, made, confirm=True)
-    r.assert_true(6, "Setting Import 실행", ok,
+    r.assert_true(7, "Setting Import 실행", ok,
                   expected="Import 완료", actual=imp_note or ("성공" if ok else "실패"))
 
-    # --- Step 6: 재기동 + S2 ------------------------------------------
+    # --- Step 8: 재기동 + S2 ------------------------------------------
     if relaunch is None:
         def relaunch():
             v = cfg.get("viewer") or {}
@@ -315,7 +461,7 @@ def run(ui, cfg, work_dir=None, evidence_dir=None, do_import=True,
             return ui.login(lg.get("id"), lg.get("password"))
 
     relaunched = relaunch()
-    r.assert_true(7, "Import 후 뷰어 재기동 및 로그인", bool(relaunched),
+    r.assert_true(8, "Import 후 뷰어 재기동 및 로그인", bool(relaunched),
                   expected="재기동 후 로그인 성공",
                   actual="성공" if relaunched else "실패")
 
@@ -323,16 +469,42 @@ def run(ui, cfg, work_dir=None, evidence_dir=None, do_import=True,
     s2_path = snap.save(s2, os.path.join(work_dir, "snapshot_S2_%s.json" % stamp))
     r.attach(s2_path)
     diff_02 = snap.compare(s0, s2)
-    r.assert_true(8, "Export 당시 설정이 그대로 복원되었는지 (S2 == S0)",
+    r.assert_true(9, "Export 당시 설정이 그대로 복원되었는지 (S2 == S0)",
                   diff_02["identical"],
                   expected="S0과 S2가 완전히 같아야 한다",
                   actual=snap.changed_names(diff_02),
                   note="복원되지 않은 항목이 있으면 위 목록이 그 항목이다.")
 
     if diff_02["out_of_scope_diffs"]:
-        r.add(9, "판정 제외 항목(머신 단위 설정) 변화", "MANUAL",
+        r.add(10, "판정 제외 항목(머신 단위 설정) 변화", "MANUAL",
               "Viewer.xml 등은 .vxs에 포함되지 않아 복원 대상이 아님",
               ", ".join(os.path.basename(p) for p in diff_02["out_of_scope_diffs"]),
               note="사용자 확인(2026-08-18): 복원되지 않는 것이 정상이므로 판정에서 제외한다.")
+
+    # --- Step 11: UI 표시값 대조 (S2 vs S0) ----------------------------
+    # 사용자 확인(2026-08-19): "옵션 값이 기준과 완전히 같아야 PASS"인 정밀
+    # 회귀는 TC14가 아니라 이 TC의 책임이다. Import가 DB를 정확히 복원했어도,
+    # Setting 화면이 그 값을 제대로 다시 그려내지 못하면(렌더링 결함) DB
+    # 스냅샷 비교(Step 9)만으로는 못 잡는다 — 그래서 실제 화면 표시값도
+    # S0(Export 직전)과 대조한다.
+    ui2 = S.capture_all_screen_values(ui)
+    d = S.diff_all_screen_values(ui0, ui2)
+    ok = not (d["missing"] or d["added"] or d["struct_diffs"] or d["value_diffs"])
+    r.assert_true(11, "UI 표시값이 Export 당시와 완전히 같은지 (S2 화면 == S0 화면)",
+                  ok,
+                  expected="S0에서 캡처한 %d개 화면의 옵션 구성·표시값과 완전 일치"
+                           % len(ui0),
+                  actual=("일치 (Edit/콤보/라벨/체크박스 구성과 값 전부 동일)" if ok else
+                          "불일치 - 없어진 화면 %d / 새 화면 %d / 구성 차이 %d건 / "
+                          "값 차이 %d건%s"
+                          % (len(d["missing"]), len(d["added"]),
+                             len(d["struct_diffs"]), len(d["value_diffs"]),
+                             (" -> " + "; ".join(
+                                 (d["struct_diffs"] + d["value_diffs"])[:8]))
+                             if (d["struct_diffs"] or d["value_diffs"]) else "")),
+                  note="Setting 화면 진입 직후(변경 전) 캡처한 S0 표시값과, Import·"
+                       "재기동 후(S2) 같은 화면을 다시 순회해 얻은 표시값을 비교한다. "
+                       "여기서는 (TC14와 달리) 값이 다르면 FAIL이다 - 이 TC의 목적이 "
+                       "'Export 당시 값이 그대로 복원되는가'이기 때문이다.")
 
     return r.finalize()

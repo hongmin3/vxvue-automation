@@ -11,6 +11,8 @@
   python run.py mwl-ensure          VXvue 전용 DX 시험 처방을 오늘 날짜로 보장
   python run.py db-ae               Setting > DICOM 에 등록된 SCP 목록(DB 기준)
   python run.py report-sample       현재 환경 헤더만 넣은 빈 리포트 생성(형식 확인용)
+  python run.py run-regression      체크리스트 전체 회귀(구현된 TC는 실행, 나머지는
+                                     automation_scope.json 수준을 리포트에 그대로 표시)
 
 설계/진행 상황 문서: `지식/[자동화 설계] VXvue Windows Update 호환성 자동화 설계.md`
 """
@@ -23,6 +25,17 @@ from datetime import date
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+
+# 콘솔 코드페이지(CP949 등)가 못 담는 문자(예: em-dash '—')가 판정 문구에
+# 섞이면 print()가 UnicodeEncodeError로 죽는다(실측: 2026-08-19). 리포트
+# 파일은 이미 UTF-8로 저장된 뒤이므로, 콘솔 출력만 안전하게(대체 문자로)
+# 내보내도록 한다 — 판정 자체를 놓치는 것보다 낫다.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(errors="replace")
+        except Exception:                              # noqa: BLE001
+            pass
 
 from core import preflight as preflight_mod          # noqa: E402
 from core import result as result_mod                # noqa: E402
@@ -261,6 +274,32 @@ def cmd_vxs_info(cfg, args):
     return 0
 
 
+def cmd_run_regression(cfg, args):
+    """체크리스트 전체 회귀. automation_scope.json을 읽어 EXCLUDED는 건너뛰고,
+    의존 순서대로 실행한 뒤 모든 TC 결과를 리포트 1건으로 합친다.
+    아직 자동화 코드가 없는 TC는 automation_scope.json의 현재 수준(MANUAL/
+    PARTIAL/BLOCKED/EXCLUDED)을 리포트 항목으로 그대로 옮겨 "실행하지
+    않았음"이 리포트만 보고 구분되게 한다.
+    """
+    from core import regression as reg_mod
+    results = reg_mod.run(cfg, ui_factory=lambda: _ready_ui(cfg),
+                          approve_destructive=args.approve_destructive)
+    env = None if args.no_env else result_mod.collect_env(cfg)
+    paths = result_mod.write_reports(results, os.path.join(HERE, "Reports"), env=env)
+    print("\n%-26s %-8s" % ("TC ID", "판정"))
+    for r in results:
+        print("%-26s %-8s %s" % (r.tc_id, r.verdict, r.title))
+    total = dict((s, 0) for s in result_mod.STATUSES)
+    for r in results:
+        for k, v in r.counts.items():
+            total[k] = total.get(k, 0) + v
+    print("\n판정 합계: PASS %d / FAIL %d / MANUAL %d / SKIP %d / BLOCKED %d"
+          % tuple(total[s] for s in result_mod.STATUSES))
+    for k, v in paths.items():
+        print("%-5s %s" % (k, v))
+    return 2 if total[result_mod.FAIL] else 0
+
+
 def cmd_setting_export_import(cfg, args):
     from tests import tc_setting_export_import as tc
     ui = _ready_ui(cfg)
@@ -287,6 +326,7 @@ COMMANDS = {
     "snapshot-diff": cmd_snapshot_diff,
     "vxs-info": cmd_vxs_info,
     "setting-export-import": cmd_setting_export_import,
+    "run-regression": cmd_run_regression,
     "preflight": cmd_preflight,
     "scope": cmd_scope,
     "ui-probe": cmd_ui_probe,
@@ -313,6 +353,9 @@ def main(argv=None):
     p.add_argument("--b", help="비교 대상 B (snapshot-diff / vxs-info)")
     p.add_argument("--no-import", action="store_true",
                    help="setting-export-import에서 파괴적인 Import 단계를 생략한다")
+    p.add_argument("--approve-destructive", action="store_true",
+                   help="run-regression 맨 마지막의 Setting Import(DB 전체 복원)까지 "
+                        "실행한다. 지정하지 않으면 Export까지만 수행한다.")
     args = p.parse_args(argv)
 
     cfg = load_config(args.config)
