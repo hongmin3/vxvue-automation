@@ -28,7 +28,31 @@ OCR로 메뉴를 읽어야 할 것으로 봤다. 실측해 보니 **더 나은 �
 순서 인덱스(0~9)로 식별한다. 소분류(StepItem)만 ID가 1~55로 고유하다.
 """
 
+import os
 import time
+
+from . import dialogs
+
+# 이 모듈이 처리한 팝업 기록. TC 모듈이 판정 note에 넣을 수 있도록 남긴다 —
+# **팝업을 닫았다는 사실을 삼키지 않는다**(오류 팝업이면 판정에 반영해야 한다).
+# 각 TC 시작 시 `reset_dialog_log()`로 비운다.
+last_dialog_records = []
+
+
+def reset_dialog_log():
+    """팝업 기록을 비운다. TC 시작 시 호출한다."""
+    del last_dialog_records[:]
+
+
+def dialog_log_summary():
+    """지금까지 처리한 팝업의 한 줄 요약(판정 note용)."""
+    return dialogs.summarize(last_dialog_records)
+
+
+def blocking_dialogs():
+    """판정에 반영해야 하는 팝업(오류·경고·모르는 팝업)만."""
+    return dialogs.blocking_records(last_dialog_records)
+
 
 MENU_LIST_ID = 30894
 TITLE_STATIC_ID = 20000
@@ -97,8 +121,11 @@ def open_setting(ui, timeout=15):
     """
     if _item_wnd(ui) is not None:
         return True
-    if ui.dialog() is not None:
-        ui.drain_dialogs(max_iters=4, timeout=3)
+    if dialogs.present(ui):
+        # 분류해서 처리한다 — 성공 알림은 닫고, 확인 팝업은 남긴다.
+        # 무지성으로 닫으면 오류 팝업이 조용히 사라지고 확인 팝업의 선택이
+        # 제품 설정을 바꾼다(사용자 지적, 2026-08-20).
+        last_dialog_records.extend(dialogs.clear_blocking(ui))
         time.sleep(0.5)
         if _item_wnd(ui) is not None:
             return True
@@ -235,14 +262,27 @@ def visible_minor_ids(ui):
     return set(c.ctrl_id for c in minors if c.visible)
 
 
-def toggle_major(ui, index, settle=0.5):
+def toggle_major(ui, index, settle=0.5, verify=True):
     """대분류를 토글한다(펼침 <-> 접힘).
 
     이 메뉴는 아코디언이 아니라 **토글**이다 — System과 Integration이 동시에
     펼쳐진 상태를 실측으로 확인했다. 따라서 한 대분류를 펼쳐도 다른 대분류가
     저절로 접히지 않는다.
+
+    `verify=True`(기본)면 **소분류 노출 집합이 실제로 바뀌었는지 확인**하고,
+    바뀌지 않았으면 팝업이 클릭을 삼킨 것인지 보고 한 번 다시 누른다. 확인하지
+    않으면 "펼쳤다고 생각했는데 실은 안 펼쳐진" 상태로 다음 단계가 진행돼
+    엉뚱한 소분류를 열거나 같은 화면을 반복해 읽는다.
     """
-    return click_item(ui, index, is_major=True, settle=settle)
+    before = visible_minor_ids(ui) if verify else None
+    target = click_item(ui, index, is_major=True, settle=settle)
+    if target is None or not verify:
+        return target
+    if visible_minor_ids(ui) != before:
+        return target
+    if clear_blocking_dialogs(ui):
+        return click_item(ui, index, is_major=True, settle=settle)
+    return target
 
 
 def collapse_all(ui, rounds=2):
@@ -264,8 +304,36 @@ def collapse_all(ui, rounds=2):
     return not visible_minor_ids(ui)
 
 
-def open_screen(ui, minor_id, timeout=10, stable_reads=2, poll=0.12):
-    """소분류 화면을 연다. 열린 화면 제목을 반환한다(실패 시 None).
+def clear_blocking_dialogs(ui, cfg=None):
+    """조작을 막는 팝업을 걷어내고 기록을 누적한다.
+
+    실제 판독·분류·처리는 `core/dialogs.py`가 한다 — 이 저장소의 팝업 처리
+    경로는 그 모듈 하나다. 여기서는 기록을 모듈 버퍼에 쌓아 TC가 판정 note에
+    쓸 수 있게만 한다.
+
+    **왜 필요한가**: 이 제품은 모달 팝업이 떠 있으면 이후 클릭을 조용히
+    무시한다. 실측(2026-08-20): 앞선 `Update`가 남긴
+    `Info: "Study - General Update successfully."`를 닫지 않은 상태에서 좌측
+    메뉴를 9번 눌렀는데 화면 제목이 계속 `Study - General`이었다. 증상은
+    "메뉴 클릭이 안 먹는다"였지만 원인은 팝업이었다.
+    """
+    records = dialogs.clear_blocking(ui, cfg)
+    last_dialog_records.extend(records)
+    return records
+
+
+def blocking_dialogs_present(ui):
+    """지금 조작을 막는 팝업이 떠 있는가(닫지 않고 확인만 한다)."""
+    dlg = ui.dialog()
+    if dlg is None:
+        return False
+    info = dialogs.read(ui, dlg)
+    return dialogs.classify(info) in (dialogs.ERROR, dialogs.WARNING,
+                                      dialogs.UNKNOWN, dialogs.QUESTION)
+
+
+def open_screen(ui, minor_id, timeout=10, stable_reads=2, poll=0.12, _retry=True):
+    """소분류 화면을 연다. 열린 화면 제목을 반환한다(**실패 시 None**).
 
     전환 완료 신호를 두 가지로 본다.
 
@@ -276,7 +344,26 @@ def open_screen(ui, minor_id, timeout=10, stable_reads=2, poll=0.12):
        이미 그 화면이 열려 있던 상태에서 같은 항목을 다시 클릭하면 제목이
        변하지 않아 1번만으로는 매번 제한 시간(10초)을 소진한다. 실제로 화면
        하나 여는 데 13초가 걸리는 원인이었다(실측).
+
+    ## 전환 실패를 성공으로 위장하지 않는다 (2026-08-20 수정)
+
+    예전에는 마지막에 `return last or title(ui)`로 **현재 제목**을 돌려줬다.
+    전환이 실패하면 그 값은 *이전 화면의 제목*이므로, 호출부는 "열렸다"고 믿고
+    엉뚱한 화면의 값을 읽는다. 실측: 모달 팝업이 클릭을 삼킨 상태에서
+    Integration 소분류 9개를 여는 동안 전부 `'Study - General'`(직전 화면)이
+    반환됐고, 증상은 "메뉴가 안 눌린다"가 아니라 **"소분류 제목이 다 같다"**로
+    나타나 원인을 찾기 어려웠다.
+
+    그래서 지금은
+
+    - 클릭 **전에** 길을 막는 팝업을 걷어내고,
+    - 제한 시간 안에 전환 신호를 못 보면 팝업을 다시 확인해 **한 번만** 재시도하고,
+    - 그래도 제목이 그대로면 **None**(실패)을 돌려준다.
     """
+    # 이 제품은 모달 팝업이 떠 있으면 클릭을 조용히 무시한다. 확인하지 않으면
+    # "메뉴가 안 눌린다"는 엉뚱한 증상으로 나타난다(사용자 지적, 2026-08-20).
+    clear_blocking_dialogs(ui)
+
     before_title = title(ui)
     dlg = content_dialog(ui)
     before_hwnd = dlg.hwnd if dlg else None
@@ -301,14 +388,54 @@ def open_screen(ui, minor_id, timeout=10, stable_reads=2, poll=0.12):
             else:
                 last, streak = now, 1
         time.sleep(poll)
-    return last or title(ui)
+
+    if last:
+        # 제목이 바뀌긴 했다(안정화 확인만 못 했다). 그 값은 신뢰할 수 있다.
+        return last
+
+    # 전환 신호를 전혀 못 봤다. **팝업이 클릭을 삼킨 것이 가장 흔한 원인**이므로
+    # 확인하고, 팝업이 있었으면 한 번만 다시 시도한다(재귀하지 않는다 — 두 번째도
+    # 실패하면 원인이 다른 데 있다).
+    if _retry and clear_blocking_dialogs(ui):
+        return open_screen(ui, minor_id, timeout=timeout,
+                           stable_reads=stable_reads, poll=poll, _retry=False)
+
+    now = title(ui)
+    if now and now != before_title:
+        return now
+
+    # 제목이 그대로다. 두 가지 경우가 있다.
+    #
+    #   (가) 클릭이 먹지 않았다 — 이전 화면 제목을 돌려주면 호출부가 "열렸다"고
+    #        믿고 엉뚱한 화면의 값을 읽는다(위 docstring의 실측 사례).
+    #   (나) **이미 그 화면이 열려 있었다** — 클릭은 정상이고 바뀔 제목이 없다.
+    #        `walk()`가 첫 대분류의 첫 소분류를 열 때가 이 경우다. Setting 진입
+    #        직후 화면이 이미 `System - System Info.`이기 때문이다(실측
+    #        2026-08-20: 이것 때문에 TC14가 "열림 54 / 전체 55"로 잘못 FAIL했다).
+    #
+    # 팝업을 걷어내고 한 번 재시도한 뒤에도 제목이 그대로라면 (나)일 가능성이
+    # 높다 — (가)의 가장 흔한 원인인 팝업은 이미 배제했다. 그래서 현재 제목을
+    # 돌려준다.
+    #
+    # (가)를 놓치더라도 **호출부에서 드러난다.** 이 함수가 이전 화면 제목을
+    # 돌려주면 순회 결과에 같은 제목이 두 번 나오고, TC14의 "화면 제목 중복
+    # 없음" 판정이 그것을 FAIL로 잡는다. 즉 이 완화는 검증되지 않은 채로
+    # 남지 않는다.
+    if now and not blocking_dialogs_present(ui):
+        return now
+    return None
 
 
-def walk(ui, on_screen=None):
+def walk(ui, on_screen=None, screen_filter=None):
     """대분류를 하나씩 펼쳐 그 아래 소분류를 전부 열어본다.
 
     `on_screen(major_index, minor_index, minor_ctrl_id, screen_title)`가 있으면
     각 화면에서 호출된다(캡처·검증용).
+
+    `screen_filter(major_index, minor_index, minor_ctrl_id)`가 있으면 **False를
+    돌려준 화면은 열지 않는다.** 전 화면 순회는 실측 829초가 들어 회귀를 길게
+    만드는 가장 큰 항목이므로, 짧은 회귀에서 표본만 보게 하는 용도다. 건너뛴
+    화면은 `{"skipped": True}`로 결과에 남는다 — **줄인 사실을 감추지 않는다.**
 
     반환: [{'major': i, 'minor': j, 'ctrl_id': id, 'title': '...'}, ...]
     이 결과가 곧 Setting 트리 지도이며, 하드코딩한 목록이 아니라 실행 시점에
@@ -333,6 +460,10 @@ def walk(ui, on_screen=None):
             continue
 
         for mj, minor_id in enumerate(child_ids):
+            if screen_filter is not None and not screen_filter(mi, mj, minor_id):
+                visited.append({"major": mi, "minor": mj, "ctrl_id": minor_id,
+                                "title": None, "skipped": True})
+                continue
             scr = open_screen(ui, minor_id)
             row = {"major": mi, "minor": mj, "ctrl_id": minor_id, "title": scr}
             if scr is None:
@@ -466,8 +597,14 @@ def update(ui, ack_timeout=8, evidence_path=None):
     btns = [c for c in ui.controls(max_depth=6) if c.ctrl_id == UPDATE_BUTTON_ID]
     if not btns:
         return None
-    return ui.click_and_ack(btns[0], settle=0.8, ack_timeout=ack_timeout,
-                            evidence_path=evidence_path)
+    ui.click(btns[0], settle=0.8)
+    # Update 뒤 팝업을 **분류해서** 처리한다. 성공 알림이면 닫고 넘어가지만,
+    # 오류 팝업이면 기록의 blocking=True로 남아 호출부가 판정에 반영할 수 있다
+    # (사용자 지적, 2026-08-20: 무지성으로 닫으면 오류가 조용히 사라진다).
+    records = dialogs.clear_blocking(
+        ui, evidence_dir=os.path.dirname(evidence_path) if evidence_path else None)
+    last_dialog_records.extend(records)
+    return dialogs.summarize(records) or None
 
 
 _FRAME_CACHE = {}

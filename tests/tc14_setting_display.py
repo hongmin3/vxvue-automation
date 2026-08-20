@@ -83,7 +83,7 @@ from datetime import datetime
 from core import context as ctx_mod
 from core import screen as screen_mod
 from core import setting as S
-from core.result import MANUAL, PASS, TCResult
+from core.result import MANUAL, PASS, SKIP, TCResult
 
 TC_ID = "TC_WindowsUpdate_14"
 TC_TITLE = "Setting 전체 화면 표시 확인 (스크롤·목록 상세 포함)"
@@ -116,7 +116,27 @@ def _capture_dir(root, run_name):
     return os.path.join(root, "Evidence", "tc14", run_name)
 
 
-def run(ui, cfg, evidence_root=None, run_name="last"):
+def run(ui, cfg, evidence_root=None, run_name="last", sample=False, deep=False):
+    """Setting 각 탭을 순회해 화면이 정상 표시되는지 확인한다.
+
+    `deep=False`(기본)는 **체크리스트 원문 그대로** 한다 — 탭을 하나씩 열어
+    제목이 실제로 바뀌는지, 본문에 컨트롤이 그려지는지, 화면 1장을 증적으로
+    남긴다. 사용자 지시(2026-08-20): *"그냥 각 탭을 한번씩 클릭하고 각 탭의
+    내용이 문제없이 나온다, 이 정도만 테스트하면 되는 것 같은데."*
+
+    `deep=True`는 여기에 스크롤 전수 순회·SCP 상세 DB 대조·기준 트리 대조를
+    더한다(실측 1219초 / 55화면 / 캡처 76장). 이쪽이 잡아내는 것이 따로 있어
+    지우지 않고 옵션으로 남겼다 — Windows Update로 폰트·DPI가 바뀌면 컨트롤이
+    화면 밖으로 밀려 **조작할 수 없는 설정**이 생기는데(README 4.5절), 그것은
+    탭을 열어 보는 것만으로는 드러나지 않는다. 정밀 검증이 필요할 때 쓴다:
+    `python run.py tc14 --deep`.
+
+    `sample=True`면 **대분류마다 첫 소분류 하나만** 열어본다(짧은 회귀용).
+    전 화면 순회는 실측 829초로 회귀에서 가장 오래 걸리는 항목이다. 표본
+    모드는 "대분류 10개가 모두 펼쳐지고 그 아래 화면이 그려진다"는 것까지만
+    확인하며, **화면별 값 대조 범위가 줄어든다** — 그 사실을 판정 항목으로
+    남기므로 전체 순회 결과와 혼동되지 않는다.
+    """
     r = TCResult(TC_ID, TC_TITLE)
     root = evidence_root or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     out_dir = _capture_dir(root, run_name)
@@ -138,6 +158,22 @@ def run(ui, cfg, evidence_root=None, run_name="last"):
         def capture_fn(page_index, viewport):
             path = os.path.join(out_dir, "%s_p%02d.png" % (base, page_index + 1))
             return screen_mod.capture(path, bbox=viewport)
+
+        if not deep:
+            # 가벼운 확인: 화면 1장 캡처하고 본문 컨트롤 유무만 본다.
+            # 스크롤 순회·값 추출·목록 상세 클릭은 하지 않는다.
+            content_dlg = S.content_dialog(ui)
+            page = capture_fn(0, content_dlg.rect if content_dlg else None)
+            content = S.content_controls(ui)
+            rows.append({
+                "major": mi, "minor": mj, "ctrl_id": ctrl_id, "title": scr_title,
+                "pages": [page], "page_count": 1,
+                "controls": len(content), "unreached": [],
+                "hit_limit": False, "overflow_px": 0, "oversized": [],
+                "values": {}, "blank_pages": 0, "detail": None,
+            })
+            r.attach(page)
+            return
 
         walked = S.page_through(ui, capture_fn)
         controls = walked.get("controls") or []
@@ -171,10 +207,38 @@ def run(ui, cfg, evidence_root=None, run_name="last"):
             r.attach(p)
 
     started_wall, started_perf = datetime.now(), time.perf_counter()
-    S.walk(ui, on_screen=on_screen)
-    r.record_timing("Setting 전체 순회(스크롤·목록 포함)", started_wall, started_perf,
+    # 표본 모드는 대분류별 첫 소분류만 연다. `walk()`가 대분류를 펼치는 일 자체는
+    # 그대로 하므로 "대분류 10개가 모두 펼쳐진다"는 확인은 유지된다.
+    skipped = []
+
+    def _filter(mi, mj, minor_id):
+        if mj == 0:
+            return True
+        skipped.append((mi, mj, minor_id))
+        return False
+
+    walked = S.walk(ui, on_screen=on_screen,
+                    screen_filter=_filter if sample else None)
+    r.record_timing("Setting %s 순회(%s)"
+                    % ("표본" if sample else "전체",
+                       "스크롤·목록 포함" if deep else "탭 열기·표시 확인"),
+                    started_wall, started_perf,
                     "완료", "%d개 화면 / 캡처 %d장"
                     % (len(rows), sum(x["page_count"] for x in rows)), kind="walk")
+    if sample:
+        # **줄인 범위를 판정 항목으로 명시한다.** 그러지 않으면 리포트만 보고
+        # 전 화면을 확인한 것으로 오해한다.
+        r.add(len(r.checks) + 1, "짧은 회귀 — Setting 표본 순회 범위", MANUAL,
+              expected="전 화면 순회(기준 대조의 정식 범위)",
+              actual="대분류 %d개 / 확인한 화면 %d개 / 건너뛴 화면 %d개"
+                     % (len(set(x["major"] for x in walked)), len(rows),
+                        len(skipped)),
+              note="`--quick`으로 실행되어 **대분류마다 첫 소분류만** 열었다. "
+                   "대분류가 모두 펼쳐지는 것과 그 아래 화면이 그려지는 것까지는 "
+                   "확인했으나, **건너뛴 화면의 값 대조는 수행하지 않았다.** "
+                   "정식 판정은 `python run.py regression`(전체 순회)으로 받아야 "
+                   "한다. 건너뛴 화면 ctrl_id: %s"
+                   % (", ".join(str(c) for _mi, _mj, c in skipped) or "없음"))
 
     # --- 컨텍스트 확정 + 기준 폴더 결정 --------------------------------
     titles = [x["title"] for x in rows if x["title"]]
@@ -202,8 +266,40 @@ def run(ui, cfg, evidence_root=None, run_name="last"):
                   actual="고유 제목 %d개" % len(set(tl)),
                   note="중복은 클릭이 다른 항목에 먹지 않았다는 신호다.")
 
+    # 본문에 컨트롤이 실제로 그려졌는지 — 가벼운 확인의 핵심이다.
+    # "탭 내용이 문제없이 나온다"는 것을 이것으로 판정한다.
+    empty = [x for x in opened if not x["controls"]]
+    r.assert_true(4, "각 탭의 본문 내용이 표시됨",
+                  not empty,
+                  expected="본문 컨트롤 0개인 화면 없음",
+                  actual=("빈 화면 %d건: %s" % (len(empty), ", ".join(
+                      x["title"] for x in empty[:8])) if empty
+                      else "화면 %d개 모두 본문 표시 / 컨트롤 총 %d개"
+                           % (len(opened), sum(x["controls"] for x in rows))),
+                  note="탭을 열었는데 본문이 비어 있으면 화면이 그려지지 않은 것이다.")
+
+    if not deep:
+        # **확인하지 않은 것을 PASS로 적지 않는다.** 아래 세 항목은 깊은 검증
+        # 전용이므로, 가벼운 모드에서는 수행하지 않았다는 사실만 남긴다.
+        r.add(len(r.checks) + 1, "깊은 검증 항목 (이번 실행에서 미수행)", SKIP,
+              expected="스크롤 전수 노출 확인 / SCP 상세 DB 대조 / 옵션 구성 기준 대조",
+              actual="수행하지 않음 — 탭 열기·표시 확인까지만",
+              note="체크리스트 원문(각 탭 순회·정상 표시)은 위 항목으로 충족한다. "
+                   "폰트·DPI 변화로 컨트롤이 화면 밖으로 밀려 **조작할 수 없는 "
+                   "설정**이 생기는 경우는 탭을 여는 것만으로 드러나지 않으므로, "
+                   "그 확인이 필요하면 `python run.py tc14 --deep`으로 수행한다"
+                   "(실측 1219초 / 55화면).")
+        tree_path = _write_tree(rows, out_dir, context)
+        r.attach(tree_path)
+        r.add(len(r.checks) + 1, "Setting 트리 실측 목록 확보", PASS,
+              expected="대분류/소분류 목록",
+              actual="%d개 화면 / 구조서명 %s"
+                     % (len(rows), context["structure_signature"]),
+              note=ctx_mod.describe(context))
+        return r.finalize()
+
     bad_reach = [x for x in rows if x["unreached"]]
-    r.assert_true(4, "모든 컨트롤이 스크롤 순회 중 화면에 온전히 노출됨",
+    r.assert_true(5, "모든 컨트롤이 스크롤 순회 중 화면에 온전히 노출됨",
                   not bad_reach,
                   expected="노출되지 않은 컨트롤 0건 (컨트롤 총 %d개)"
                            % sum(x["controls"] for x in rows),
@@ -214,7 +310,7 @@ def run(ui, cfg, evidence_root=None, run_name="last"):
 
     limited = [x for x in rows if x["hit_limit"]]
     scrolled = [x for x in rows if x["page_count"] > 1]
-    r.assert_true(5, "스크롤이 필요한 화면을 끝까지 내렸는지",
+    r.assert_true(6, "스크롤이 필요한 화면을 끝까지 내렸는지",
                   not limited,
                   expected="페이지 상한에 걸린 화면 0건",
                   actual=("상한 도달 %d건: %s" % (len(limited), ", ".join(

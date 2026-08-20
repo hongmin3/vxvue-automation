@@ -67,9 +67,16 @@ S0 스냅샷 ──> Export(A) ──> 설정 변경 ──> S1 스냅샷 ──
 
 ```bash
 python run.py run-regression        # 전체 회귀 — 선행조건 → 라이선스 → DICOM 연동
-                                    #  → TC13 → TC14 → Setting Export/Import → 리포트
+                                    #  → 구현된 TC를 **번호순**으로 → 리포트 (실측 39분)
+python run.py run-regression --quick   # 짧은 회귀(범위 축소 — 정식 판정용이 아니다)
+python run.py tc02                  # MWL 조회 → Step 등록 → 촬영 → Send → Close → DB
+python run.py tc03                  # 영상 조작(Interpolation 설정 + 툴 적용 SSIM)
+python run.py tc04                  # Image Processing (촬영 처리 + Proc. + XIPL Studio)
+python run.py tc05                  # DICOM 전송 (수신 객체의 SOP Class UID로 판정)
+python run.py tc07                  # DICOM Print (받은 쪽 필름 목록으로 판정)
+python run.py tc08                  # Study Export (E 드라이브)
 python run.py tc13                  # 환자정보 Import 회귀 (TAB 구분자 결함 회귀 포함)
-python run.py tc14                  # Setting 55화면 전수 순회 + 값 추출 + 판정
+python run.py tc14                  # Setting 각 탭 순회·표시 확인 (--deep으로 전수 검증)
 python run.py setting-export-import # Export → 변경 → Import → 보존 검증 (3단 비교)
 python run.py vxvue-license         # VXvue 본체 라이선스(Demo/CAD/Live View) 확인
 python run.py xipl-license          # XIPL 영상처리 라이선스 4종 확인 (위와 다른 검증)
@@ -89,7 +96,9 @@ python run.py snapshot / snapshot-diff / vxs-info / db-ae / mwl-list / scope / e
 | Print가 성공했는가 | Print SCP의 **수신 필름 목록**(Calling AE로 다른 제품 필름과 구분) |
 | 툴이 영상에 적용됐는가 | 영상 영역 캡처 **SSIM 비교** (버튼 클릭 성공을 적용으로 인정하지 않는다) |
 | 라이선스가 등록됐는가 | 설치된 `.lic` **파일** ↔ 화면 목록 OCR 대조 |
-| 설정 55화면이 정상 표시되는가 | 실행 시점에 만든 **메뉴 지도** + 화면별 값 추출 |
+| 설정 55화면이 정상 표시되는가 | 실행 시점에 만든 **메뉴 지도** + 화면별 본문 표시 확인 (`--deep`이면 스크롤 전수 노출·값 추출까지) |
+| 촬영할 부위·Step을 제대로 골랐는가 | 인체도 **파란 점 검출 → 국소대비 OCR → 정답지 소거 → 클릭 후 Step 목록 대조** 4단계 (4.13절) |
+| 영상처리가 성공했는가 | XIPL 서버 로그(UTF-16LE)에 `Parameter file not found`가 없고 DB `INSTANCE`가 늘어남 |
 | Export/Import가 값을 보존하는가 | DB 62개 테이블 스냅샷 **3단 비교**(S1≠S0 확인 후 S2=S0) |
 
 리포트는 **TXT / CSV / JSON / HTML** 4종으로 생성되고, 모든 포맷 상단에 체크리스트
@@ -352,6 +361,192 @@ General 화면으로 이동하지 못했습니다"로 실패했는데, 진짜 �
 사라진다. **DB에서 직접 DELETE 하지 않았다** — 이 저장소는 DB 조회 전용이 원칙이고
 (7절 설계 규칙 ①), 그 원칙을 자기 실수를 덮는 데 쓰면 원칙이 무의미해진다.
 
+### 4.13 라벨을 색으로 찾으면 색이 바뀌는 순간 못 찾는다
+
+촬영 Step을 등록하려면 인체도에서 Projection(`Chest`)을 눌러야 한다. 라벨은
+컨트롤이 아니라 **그림 위에 그려진 글자**라 OCR로 찾는다. 처음 방식은 "밝기가
+245보다 큰 픽셀만 글자"였다. 잘 되는 듯했는데 회귀에서 **TC04/05/07/08이 전부
+Step 등록 실패로 FAIL**했다. 판독 결과를 찍어 보니
+
+```
+읽어낸 Projection 13개: Full-body, C-spine, Shoulder, Full-spine, Humerus,
+                        Elbow, Forearm, Wrist, Femur, Long-bone, Tibia, Ankle
+못 읽은 것: Skull, Chest, T-spine, L-spine, Abdomen, Hand, Pelvis, Hip, Knee, Foot
+```
+
+읽힌 것은 **어두운 배경 위** 라벨이고, 못 읽은 것은 **밝은 뼈 그림 위** 라벨이다.
+흰 글자와 밝은 뼈는 밝기가 비슷해 전역 임계값으로 갈라지지 않는다. 앞선 실행에서
+우연히 통과한 이유도 드러났다 — 그때는 `Chest`가 선택된 상태(파란 글자)여서
+다른 마스크에 걸렸을 뿐이다. **판정이 화면 상태에 따라 뒤집히고 있었다.**
+
+#### 색에 의존하지 않는 기준으로 바꾼다
+
+글자는 배경에 따라 읽히기도 안 읽히기도 하지만, 라벨마다 왼쪽에 붙은 **파란 점**은
+배경과 무관하게 색으로 구분된다. 그래서 순서를 뒤집었다.
+
+1. **점을 먼저 찾는다** — 실측: 22개 라벨에 점 22개 정확히 검출.
+2. 점 오른쪽 글자를 **국소 대비**로 읽는다. 전역 임계값이 아니라 *그 조각 안에서*
+   상대적으로 밝은 쪽을 글자로 본다. 배경 밝기가 무엇이든 성립한다.
+3. 읽은 문자열을 정답지(`GENERAL_PROJECTIONS`)와 **유사도**로 대조한다.
+   `'‘C-spine'`, `'“Ankle *'`처럼 잡음이 붙어도 잡힌다.
+
+여기까지 21/22가 읽혔다. 남은 하나는 **소거로 정한다** — 라벨 후보 목록이
+완전하고 점 개수가 라벨 개수와 같으므로, 21개를 확정하면 남은 라벨 1개와 남은
+점 1개는 추측이 아니라 **결정된다**. 개수가 정확히 일대일일 때만 하고, 하나라도
+어긋나면 버린다. 잘못 이어 붙이면 엉뚱한 부위를 촬영하는데, 그것은 판독 실패보다
+나쁘다.
+
+#### 사용자가 알려준 두 가지가 설계를 바꿨다
+
+*"근데 Chest가 아니라 다른 라벨이 글자색이 다를 수도 있는데 이런 것도 예외처리가
+되는 거야?"* — 맞는 지적이었다. 그래서 이진화를 **밝은 쪽 / 파란 쪽 / 어두운 쪽**
+세 방향으로 시도해 가장 정답지에 가깝게 읽힌 것을 택한다. 글자색을 미리 정해 두면
+그 가정이 깨지는 순간 라벨을 통째로 놓친다.
+
+*"마우스를 가까이했을 때 색깔이 바뀌는 거라 2개 이상이 색깔이 달라질 일이 없어."*
+— 색 변화가 **호버 효과**라는 정보였다. 두 가지가 따라왔다. 캡처 전에 **커서를
+인체도 밖으로 치우면** 22개가 모두 같은 색으로 그려진다. 그리고 색이 다른 라벨은
+어차피 하나뿐이므로 **소거가 구조적으로 안전하다** — 둘 이상 남아 소거를 포기할
+경우를 걱정할 필요가 없다.
+
+#### 선택된 항목은 점 색까지 바뀐다
+
+확대해 보니 선택 상태는 표시가 두 군데 바뀐다(실측).
+
+| | 선택 안 됨 | 선택됨 |
+|---|---|---|
+| 점 | 파란 점 | **흰 점** |
+| 글자 | 흰 글자 | **파란 글자** |
+
+점이 파랗지 않으니 1번 단계가 선택된 항목을 놓친다. 그래서 **파란 글자로 찾는
+경로**를 따로 둔다 — 선택은 한 번에 하나뿐이므로 이 경로로 찾을 것도 하나다.
+그리고 목표가 이미 선택돼 있으면 **다시 누르지 않는다**. 같은 항목을 다시 누를 때
+제품이 유지하는지 해제하는지 확정하지 않았고, 확인되지 않은 조작은 하지 않는다.
+
+#### 마지막으로, 눌러 본 결과로 검증한다
+
+판독을 아무리 다듬어도 `C-spine`/`T-spine`/`L-spine`처럼 비슷한 이름을 혼동할
+여지는 남는다. 그래서 클릭 뒤 나타난 **Step 목록을 정답지와 대조**한다. XIPL
+파라미터 파일명에서 얻은 정답지(`Chest → AP/Lat/PA`, `Knee → AP/Lat/Obl`)와
+화면이 맞지 않으면 다른 부위를 누른 것이므로 실패로 보고한다. 실측:
+
+```
+Chest  선택: ok=True verified=True steps=['PA','AP','Li']   기대=AP,Lat,PA
+Knee   선택: ok=True verified=True steps=['AP','OBL','Li']  기대=AP,Lat,Obl
+```
+
+`Li`는 `Lat`의 OCR 오인식이고 정답지로 교정된다(4.x절 교차검증). **판독 → 소거 →
+클릭 → 정답지 검증**의 네 단계를 거치므로, 어느 한 단계가 흔들려도 잘못된 부위를
+촬영하고 지나가지는 않는다.
+
+### 4.14 창 하나가 열린 채 남아 TC 7개를 연쇄로 죽였다
+
+회귀에서 FAIL이 10건 나왔다. 증상이 제각각이었다.
+
+```
+TC02  120s 안에 수신을 확인하지 못했다: 수신 파일 0건
+TC03  Setting 화면이 아닙니다(ItemWnd 없음)
+TC03  MWL 조회 결과가 없습니다(요약: 'Result: 0 / 0')
+TC04  MWL 조회 결과가 없습니다(요약: 'Result: 0 / 0')
+TC05  영상 0 → 0장 (0.0초)
+TC07  영상 0 → 0장
+TC08  영상 0 → 0장
+TC13  찾지 못함
+TC14  진입 실패
+```
+
+"MWL 서버에 처방이 없나", "촬영이 안 됐나", "Setting 메뉴 ID가 바뀌었나"로
+각각 볼 수도 있었다. 실제 원인은 하나였다 — **DICOM 대기열 창(Pending List /
+Storage Queue / Print Queue)이 열린 채 남아 있었다.** 제품이 Send 후 스스로
+띄우는 창이고, 이 제품은 모달 창이 떠 있으면 이후 클릭을 조용히 무시한다
+(4.2절). 그래서 그 뒤 모든 TC가 "각자 다른 이유로" 실패한 것처럼 보였다.
+
+왜 자동화가 닫지 못했나. `core/dialogs.py`는 **버튼이 2개 이상이면 확인 팝업
+(`QUESTION`)으로 보고 닫지 않는다** — 어느 버튼이 옳은지는 사양이 정하므로
+호출부가 결정해야 한다는 원칙이다(4.2절). 대기열 창에는 버튼이 2개(`30651`,
+`30642`) 있어서 그 원칙에 걸렸다. **원칙은 맞았고, 이 창이 예외였다.**
+확인을 묻는 창이 아니라 상태를 보여주는 창이다.
+
+고친 방식:
+
+- 제목이 없고 문구에 `Storage Queue` / `Print Queue` / `Pending List`가 보이면
+  `INTERACTION`(정상 상태 창)으로 분류해 닫는다.
+- **닫을 때 내부 버튼을 누르지 않는다.** `30651`/`30642` 중 어느 쪽이 무엇인지
+  확정하지 않았고, 대기열 창에서 잘못 누르면 **대기 중인 전송을 지울 수 있다.**
+  제목줄 닫기(`-4`)만 쓴다.
+- `dismiss_dialog()`를 먼저 부르지 않는다. 그 함수는 `ctrl_id` 500/1/2를 확인
+  버튼으로 보고 누르는데, 이 창에는 그 ID를 가진 **목록 항목과 스크롤**이
+  있어서(실측) 엉뚱한 것을 누른다.
+
+닫자마자 조작이 그대로 돌아왔다.
+
+```
+Setting 진입: True | 제목: System - System Info.
+MWL 조회: 'Range: 2026-08-20 ~ 2026-08-20, Result: 2 / 2' / 행 2개   ← 0/0 이었다
+```
+
+**교훈은 증상 수를 원인 수로 착각하지 않는 것이다.** 서로 다른 실패 9건이
+한 창에서 나왔다. 이 제품에서 "여러 곳이 동시에 깨졌다"는 거의 항상 "앞에서
+뭔가 하나가 화면을 막고 있다"는 뜻이다.
+
+### 4.15 회귀가 71분 걸린 이유는 제품이 느려서가 아니었다
+
+전체 회귀 실측이 71분이었다. "제품 응답을 기다리는 시간"이라고 생각해 대기값을
+줄이려 했는데, 사용자가 대기 시간을 줄여 달라고 했을 때 **추측하지 않고 먼저
+계측했다.** `time.sleep`, OCR, 화면 캡처, 컨트롤 열거, DB 조회를 각각 감싸
+TC 하나(TC03)의 소요를 쪼갰다.
+
+```
+=== tc03 소요 143.8초 ===
+④ 컨트롤 열거(children)   363.6초   852,593회   ← 재귀 중복 계산으로 100% 초과
+① 고정 대기(time.sleep)    36.9초       180회
+② OCR                       0.9초         2회
+③ 화면 캡처                 0.5초         2회
+```
+
+**한 TC에서 컨트롤 열거를 85만 번 하고 있었다.** 대기는 26%뿐이었다.
+
+원인은 `children()`이었다. Win32 `EnumChildWindows`는 직계 자식만이 아니라
+**모든 자손을 열거한다.** 그런데 코드가 열거된 창마다 다시 `children()`을 불러,
+이미 담은 창을 계속 다시 담았다. 메인 창에서 실측:
+
+| 호출 | 소요 | 반환 | 고유 | 최대 중복 |
+|---|---|---|---|---|
+| `children(main, 1)` | 0.27초 | 1,405 | 1,405 | 1배 |
+| `children(main, 4)` | 6.10초 | 24,689 | 1,405 | **64배** |
+| `children(main, 6)` | 5.60초 | 32,608 | 1,405 | **120배** |
+
+**깊이를 올려도 찾을 수 있는 컨트롤이 한 개도 늘지 않는다.** `max_depth`는
+탐색 범위를 넓힌 적이 없고, 중복과 소요만 늘렸다. 한 번만 열거하고 중복을
+없애도록 고쳤다 — 깊이는 부모 체인으로 계산해 트리 덤프의 들여쓰기는 오히려
+정확해졌다(실제 트리는 8단인데 예전에는 `max_depth`에서 잘려 보고됐다).
+
+`max_depth` 인자는 **남겨 두고 결과를 걸러내지 않는다.** 걸러내면 기존에
+`children(main, 2)`로 찾던 깊은 컨트롤이 사라져 호출부가 조용히 깨진다.
+반환 집합이 예전과 동일한지(1,405개, 주요 ctrl_id 전부 발견) 확인했다.
+
+그 다음에 대기를 손댔다. 남은 고정 대기의 대부분은 `ui.click(settle=N)`이었고,
+`N`은 "이 정도면 끝나 있겠지"로 잡은 상한이었다. 그런데 그 뒤에 이미
+`is_responsive()`로 멈춤을 확인하는 코드가 있었다 — **끝났는지 물어볼 수단이
+있는데 상한만큼 자고 있었다.** `SendMessageTimeoutW`(`SMTO_ABORTIFHUNG`)가 연속
+두 번 통과하면 방금 보낸 입력의 처리가 끝난 것이므로 거기서 빠져나온다.
+`N`은 그대로 상한으로 남겨, 응답이 없으면 예전과 똑같이 기다린다.
+
+| 단계 | TC03 소요 | 고정 대기 | 판정 |
+|---|---|---|---|
+| 원래 | 143.8초 | 36.9초 | PASS |
+| `children()` 수정 후 | 41.3초 | 20.9초 | PASS |
+| 조건 대기 도입 후 | **34.5초** | 10.5초 | PASS |
+
+**4.2배 빨라졌고 확인하는 범위는 그대로다.** 범위를 줄이는 `--quick`(5.3절)은
+이것을 다 하고 나서, 그래도 남는 반복을 줄이려고 따로 만든 것이다. 순서가
+중요하다 — 낭비를 먼저 없애지 않고 범위를 줄이면, 자동화가 스스로 만든 비용을
+검증 범위로 지불하는 셈이 된다.
+
+조건 대기가 이른 판독을 만들 여지는 남아 있다(MFC는 화면 갱신이 비동기다).
+그래서 `core.ui.ADAPTIVE_SETTLE = False` 한 줄로 예전 동작으로 되돌릴 수 있게
+두었다 — 판독이 이른 것으로 의심되면 이 스위치로 먼저 갈라 본다.
+
 ---
 
 ## 5. 실행 방법
@@ -423,11 +618,16 @@ Phase 순서대로 실행하고 **모든 결과를 리포트 1건으로 합친�
 | 1 | DB/폴더를 클린 baseline으로 복원 (라이선스·로그는 왕복 백업으로 보존) | **건너뜀** — `--reset-baseline` 필요 |
 | 2 | VXvue 자체 라이선스 확인 (Setting > System > License) | 항상 수행 |
 | 3 | DICOM SCP 등록 확인·구성 + C-ECHO (MWL / Storage / Print) | 항상 수행 |
-| 4 | TC13 → TC14 → (미구현 TC는 `automation_scope.json` 수준 표시) | 항상 수행 |
-| 5 | Setting Export/Import 회귀 (맨 마지막, 파괴적) | Export까지만 — Import는 `--approve-destructive` 필요 |
+| 4 | 구현된 TC 실행 → (미구현 TC는 `automation_scope.json` 수준 표시) | 항상 수행 |
 
 **파괴적 옵션은 기본으로 실행하지 않고, 실행하지 않았다는 사실을 리포트에
 `SKIP`으로 남긴다.**
+
+**Setting Export/Import는 이 회귀에 들어 있지 않다**(사용자 지시, 2026-08-20).
+성격이 다르다 — 이 회귀는 Windows Update 후 제품이 정상 동작하는지 보는 것이고,
+그쪽은 설정 백업·복원 기능 자체의 회귀로 DB를 통째로 되돌린다(실측 1021초로
+단일 항목 중 최장이었다). 회귀에 섞으면 뒤 TC의 시작 상태를 바꾸고 실행 시간도
+전체를 지배한다. 5.5절의 `setting-export-import`로 따로 돌린다.
 
 ```bash
 python run.py run-regression --reset-baseline
@@ -439,11 +639,17 @@ DB와 `data_dir` 폴더를 클린 설치 시점으로 되돌린 뒤 회귀를 �
 기준 백업에 값으로 남기지 않는다). `Bak/`(DB 백업 이력)은 절대 지우지 않는다.
 
 ```bash
-python run.py run-regression --reset-baseline --approve-destructive
+python run.py run-regression --quick
 ```
 
-체크리스트가 요구하는 전 범위. Phase 5의 실제 Import까지 수행하므로 DB가 마지막
-Export 시점으로 복원된다.
+**짧은 회귀.** 촬영을 TC02에서 한 번만 하고 뒤 TC는 그 영상을 재사용하며,
+TC14는 대분류별 첫 화면만 본다. **확인하는 범위가 줄어든다** — 무엇을 줄였는지는
+리포트의 `Quick_Mode` 항목과 각 TC의 해당 판정에 남는다. 빠른 이상 감지용이고,
+**체크리스트에 기록할 정식 판정은 전체 회귀로 받아야 한다.**
+
+`--quick`을 만들기 전에 먼저 한 일이 있다 — 4.15절 참고. 회귀가 71분이나 걸린
+주된 이유는 제품을 기다리는 시간이 아니라 자동화가 스스로 만든 낭비였고, 그쪽을
+고치는 것이 범위를 줄이는 것보다 먼저였다.
 
 ```bash
 python run.py run-regression --only TC_WindowsUpdate_14
@@ -476,14 +682,16 @@ python run.py run-regression --no-checklist
 
 | 명령 | 검증 내용 | 대략 소요 |
 |---|---|---|
-| `python run.py tc02` | **TC02 MWL 조회 워크플로우** — MWL 조회 → 목록 표시값 대조 → Study 등록 → F2 데모 촬영 → DICOM Send → **수신 파일 태그가 MWL 등록값과 일치하는지** → Close → DB 대조 | 약 4분 |
-| `python run.py tc03` | **TC03 영상 조작** — Interpolation Mode 변경·원복 + Select/Zoom/Pan/CW/CCW 툴 적용을 **영상 영역 캡처 SSIM으로 판정** | 약 3분 |
+| `python run.py tc02` | **TC02 MWL 조회 워크플로우** — MWL 조회 → 목록 표시값 대조 → Study 등록 → **Chest/PA Step 등록 후 촬영** → DICOM Send → **수신 파일 태그가 MWL 등록값과 일치하는지** → Close → DB 대조 | **173초** |
+| `python run.py tc03` | **TC03 영상 조작** — Interpolation Mode 변경·원복 + Select/Zoom/Pan/CW/CCW 툴 적용을 **영상 영역 캡처 SSIM으로 판정** | **219초** |
+| `python run.py tc04` | **TC04 Image Processing** — 정확한 MWL 대상 → Exposure 레이아웃 → Chest/PA Step → 촬영(DB INSTANCE) → XIPL 로그 → 확장 팔레트 → `Proc.` → `XIPL.STUDIO` → **Studio 정리** | **299초** |
 | `python run.py tc05` | **TC05 DICOM 전송** — 촬영 → Send → **수신 객체의 SOP Class UID로 Image/Dose SR 포함 여부 판정** | 약 4분 |
 | `python run.py tc07` | **TC07 DICOM Print** — Print SCP 가동 확인 → 촬영 → Print → **받은 쪽 서버의 필름 목록으로 판정**(Calling AE로 다른 제품 필름과 구분) | 약 4분 |
 | `python run.py tc08` | **TC08 Study Export** — E 드라이브로 Export → 산출물 DICOM 태그 대조 → QXLink 포함 확인. 알려진 결함 **#21049**(Win11 Export 에러) 회귀 | 약 3분 |
 | `python run.py tc13` | **TC13 Import Patient** — Study > Import Patient 설정 → 환자정보 txt/csv Import → Registration-Reserved 목록 표시까지. TAB 구분자 회귀(#22985) 포함 | 316초 |
 | `python run.py tc13 --with-folder-watch` | 위에 더해 "Import Patient Information From a Specific Folder"(폴더 자동 감지) 경로까지. Import Patient Order와 **상호 배타**라 기본은 끔 | — |
-| `python run.py tc14` | **TC14 Setting 전체 화면** — 좌측 메뉴 대분류 10개를 펼쳐 소분류 55개 화면을 전수 순회, 각 화면의 값·컨트롤 구성 추출 + 캡처 258장 | 963초 |
+| `python run.py tc14` | **TC14 Setting 각 탭 표시 확인** — 대분류 10개를 펼쳐 소분류 55개 화면을 열고, 제목이 실제로 바뀌는지·본문이 그려지는지 확인 + 화면별 캡처 1장 | **182초** |
+| `python run.py tc14 --deep` | 위에 더해 **스크롤 전수 노출 확인 + SCP 상세 DB 대조 + 옵션 구성 기준 대조**. 폰트·DPI 변화로 화면 밖으로 밀려 조작할 수 없게 된 설정을 잡아낸다 | 1219초 |
 | `python run.py setting-export-import` | **Setting Export/Import 회귀** — 3단 비교(S0 → Export → 변경 → S1 → Import → S2). 파괴적 | — |
 | `python run.py setting-export-import --no-import` | 위에서 Import 단계만 생략(Export까지) | — |
 | `python run.py vxvue-license` | **VXvue 자체 라이선스** — Setting > System > License의 Hardware Key / 목록 3행(Demo·CAD·Live View) / Add·Change·Delete 버튼을 확인하고 설치된 `.lic` 파일과 대조 | 약 30초 |
@@ -558,11 +766,33 @@ PASS·FAIL·MANUAL·SKIP·BLOCKED 건수 / 실패 항목 / 수동 확인 항목 
 | 실행 | 판정 합계 | 소요 | 비고 |
 |---|---|---|---|
 | 2026-08-19 1차 (18:47) | PASS 42 / FAIL 0 / MANUAL 17 / SKIP 5 / BLOCKED 0 | 72분 | 구현된 TC는 TC13·TC14·Setting Export/Import 3건 |
-| 2026-08-19 2차 (20:47) | **PASS 72 / FAIL 1 / MANUAL 18 / SKIP 5 / BLOCKED 2** | 72분 | TC02·03·05·07·08 추가 구현 후. 같은 시간에 판정 항목이 30건 늘었다 |
+| 2026-08-19 2차 (20:47) | PASS 72 / FAIL 1 / MANUAL 18 / SKIP 5 / BLOCKED 2 | 72분 | TC02·03·05·07·08 추가 구현 후. 같은 시간에 판정 항목이 30건 늘었다 |
+| 2026-08-20 (15:24) | **PASS 69 / FAIL 5 / MANUAL 14 / SKIP 5 / BLOCKED 0** | **39분 27초** | TC04 추가 + 4.13~4.15절 수정 반영. Setting Export/Import는 회귀에서 분리됨(5.3절) |
 
-TC별 소요(2차 실측): TC02 404초 · TC05 399초 · TC07 523초 · TC08 344초 ·
-TC13 343초 · TC03 260초 · TC14 829초 · Setting Export/Import 약 17분 ·
-DICOM 서버 연동 94초 · 라이선스 확인 57초.
+**2026-08-20 실행에서 소요가 72분 → 39분 27초로 줄었다.** 확인 범위를 줄여서가
+아니라 자동화가 스스로 만들던 낭비를 없앤 결과다(4.15절). TC14는 체크리스트 원문
+수준으로 되돌려 1219초 → 182초가 됐고, 깊은 검증은 `--deep`으로 남겼다.
+
+TC별 소요 비교(실측):
+
+| TC | 2026-08-19 | 2026-08-20 |
+|---|---|---|
+| TC02 MWL 워크플로우 | 404초 | **173초** |
+| TC03 영상 조작 | 260초 | **219초** |
+| TC04 Image Processing | (BLOCKED) | 299초 |
+| TC05 DICOM 전송 | 399초 | 355초 |
+| TC07 DICOM Print | 523초 | 458초 |
+| TC08 Study Export | 344초 | 23초(조기 실패) |
+| TC13 Import Patient | 343초 | 313초 |
+| TC14 Setting 화면 | 829초 | **182초** |
+| Setting Export/Import | 1021초 | 회귀에서 분리 |
+
+**2026-08-20 실행의 FAIL 5건은 그 뒤 원인이 규명됐다.** TC05·TC07·TC08은
+**TC04가 `XIPL.STUDIO.exe`를 닫지 않은 것**이 원인이었다 — Studio가 떠 있는 동안
+VXvue가 DICOM 전송을 아예 시도하지 않는다(Bunny 로그에 C-STORE 요청 0건, C-ECHO만
+기록). TC04에 Studio 정리 단계를 넣고 TC05를 다시 돌려 `PASS 4 / FAIL 0`을 확인했다.
+**이 수정을 반영한 전체 회귀는 아직 돌리지 않았다** — 위 표의 FAIL 수는 수정 이전
+값이다.
 
 **2차의 FAIL 1건과 BLOCKED 2건은 모두 원인이 규명돼 있다.**
 
@@ -570,7 +800,7 @@ DICOM 서버 연동 94초 · 라이선스 확인 57초.
 |---|---|---|
 | TC07 Step 6 — Print 필름 수신 | FAIL | Print 대상을 Database 목록에서 골라야 하는데 목록이 비어 있다(아래 공통 원인) |
 | TC08 Step 3 — Export 대상 선택 | BLOCKED | 같은 원인 |
-| TC04 — Image Processing | BLOCKED | XIPL 서버가 보는 파라미터 경로가 VXvue 하위 폴더를 가리키지 않는다(4.11절) |
+| TC04 — Image Processing | MANUAL 4 | 촬영 처리·Proc. 진입·Studio 기동까지 PASS 8/FAIL 0. 남은 수동 항목은 XIPL About, Image Process 내부 변경, Studio 내부 로드/재처리 |
 
 앞의 두 건은 **하나의 공통 원인**이다 — Procedure Mapping을 생략하면 Step이
 등록되지 않아 검사가 완료 처리되지 않고, Database는 완료된 검사만 표시한다
@@ -594,6 +824,19 @@ MANUAL 18건은 "자동화가 실패한 것"이 아니라 **판정 근거가 없
 | 화면 캡처 | 0.20s | **0.04s** | 가상 데스크톱 전체(5560×2297)를 잡고 자르던 것을 주 모니터만 캡처 |
 | 컨트롤 열거 | ~2.5s | **0.24s** | 전체 창 트리 재귀 탐색 → 프레임 창의 직속 자식만 조회 + hwnd 캐시 |
 | 화면 전환 | 13.1s | **1.7s** | 같은 화면 재진입 시 제목이 안 바뀌어 매번 타임아웃(10s)을 소진하던 것을, 본문 대화상자 교체를 전환 신호로 함께 인정 |
+
+그 뒤 전체 회귀를 다시 프로파일링해 더 큰 것을 찾았다(4.15절). **추측하지 않고
+`time.sleep`·OCR·캡처·컨트롤 열거·DB 조회를 각각 감싸 측정한 것이 핵심이었다** —
+느린 곳이 예상과 달랐다.
+
+| 항목 | 개선 전 | 개선 후 | 방법 |
+|---|---|---|---|
+| `children()` (depth=4) | 6.10s | **0.28s** | `EnumChildWindows`가 이미 전체 자손을 열거하는데 그 각각에 다시 재귀해 같은 창을 최대 64배 중복 담고 있었다. 한 번만 열거하고 중복 제거 |
+| TC03 1회 | 143.8s | **34.5s** | 위 수정 + 클릭 뒤 고정 대기를 조건 대기로(`ui.VXvueUi.wait_settle`) |
+| TC14 1회 | 1219s | **182s** | 체크리스트 원문 수준(탭 순회·표시 확인)으로 되돌리고 전수 검증은 `--deep`으로 분리 |
+| **전체 회귀** | **72분** | **39분 27초** | 위 전부. 확인 범위를 줄이지 않고 얻은 결과 |
+
+측정값은 모두 이 PC(1920×1080 / 100% DPI, 메모리 여유 3GB 안팎) 실측이다.
 
 ---
 
@@ -692,7 +935,7 @@ SSIM에 쓰고, 없으면 numpy 구현으로 대체한다.
 | Export Manager 창 내부 조작 | MANUAL | 별도 프로세스(`VX.EXPORT.MANAGER`)의 컨트롤 ID를 실측하지 못했다. 추측한 ID를 누르면 형식·익명화·Portable viewer 포함 여부를 바꾼다 |
 | Setting > DICOM - General 의 Send Dose SR | MANUAL | 어느 컨트롤인지 실측 확정 전 — 잘못 누르면 다른 전송 정책을 바꾼다 |
 | Export된 스터디의 역방향 Import | MANUAL | DB에 데이터를 추가하는 조작이라 자동 승인 없이 실행하지 않는다 |
-| XIPL Studio 재처리(TC04) | BLOCKED | XIPL 서버가 보는 파라미터 경로가 VXvue 하위 폴더를 가리키지 않아 촬영 직후 영상처리가 실패한다. 그 경로는 자매 프로젝트와 공유하는 설치라 자동화가 바꾸지 않는다 |
+| XIPL Studio 재처리(TC04) | MANUAL | `C:\XIPL\PARAMETER` 구성과 서버 재시작으로 촬영 처리 및 Studio 기동은 확인됐다. WPF 내부 컨트롤 실측 후 로드·Process 조작을 추가해야 한다 |
 
 UI를 조작하는 명령은 **관리자 권한**으로 실행해야 한다(제품이 관리자 권한으로
 동작하므로, 권한이 낮으면 Windows UIPI가 합성 입력을 차단한다). 또 실제 마우스

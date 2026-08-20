@@ -13,8 +13,7 @@ Phase 1  baseline 초기화 (--reset-baseline 필요, 파괴적)
            -> 뷰어 재기동 + 로그인
 Phase 2  라이선스 확인   core/license.check()  (Setting > System > License)
 Phase 3  서버 연동       dicom_settings.ensure_registered()  (MWL/Storage/Print + Echo)
-Phase 4  TC 실행         TC13 -> TC14 -> (그 외는 automation_scope 수준 표시)
-Phase 5  파괴적 TC       TC_Setting_ExportImport (맨 마지막, --approve-destructive 필요)
+Phase 4  TC 실행         구현된 TC -> (그 외는 automation_scope 수준 표시)
 리포트                   Reports/*.txt|html|json|csv + 체크리스트 xlsx 사본
 ```
 
@@ -77,6 +76,7 @@ _LEVEL_TO_VERDICT_WHEN_NOT_IMPLEMENTED = {
 IMPLEMENTED = {
     "TC_WindowsUpdate_02": ("tests.tc02_mwl_workflow", {}),
     "TC_WindowsUpdate_03": ("tests.tc03_image_display", {}),
+    "TC_WindowsUpdate_04": ("tests.tc04_image_processing", {}),
     "TC_WindowsUpdate_05": ("tests.tc05_dicom_send", {}),
     "TC_WindowsUpdate_07": ("tests.tc07_dicom_print", {}),
     "TC_WindowsUpdate_08": ("tests.tc08_study_export", {}),
@@ -85,23 +85,24 @@ IMPLEMENTED = {
 }
 
 
-# 실행 순서. **촬영이 필요한 TC를 먼저 묶는다** — 한 번 열어 둔 검사를 이어
-# 쓰는 것이 아니라, 각 TC가 자기 시작 상태를 스스로 정리하도록 만들었기 때문에
-# 순서 자체가 판정을 바꾸지는 않는다. 다만 Setting을 건드리는 TC(03/14)를
-# 촬영 TC 뒤에 두어, 설정 변경이 촬영 흐름에 영향을 주지 않게 한다.
-RUN_ORDER = [
-    "TC_WindowsUpdate_02",      # MWL 조회 -> 촬영 -> Send -> Close -> DB
-    "TC_WindowsUpdate_05",      # DICOM 전송 (Image + Dose SR)
-    "TC_WindowsUpdate_07",      # DICOM Print
-    "TC_WindowsUpdate_08",      # Study Export (E 드라이브)
-    "TC_WindowsUpdate_13",      # Import Patient
-    "TC_WindowsUpdate_03",      # 영상 조작 (Interpolation 설정 변경 포함)
-    "TC_WindowsUpdate_14",      # Setting 전체 화면
-    "TC_WindowsUpdate_06",      # Extra Tool/SBSC (미구현)
-    "TC_WindowsUpdate_04",      # XIPL (미구현)
-    "TC_WindowsUpdate_11",      # AI/CAD (미구현)
-    "TC_WindowsUpdate_12",      # 카메라/Live View (미구현)
-]
+# 실행 순서는 **TC 번호순(01, 02, 03 …)이다**(사용자 지시, 2026-08-20).
+#
+# 이렇게 두면 리포트 순서가 체크리스트 행 순서와 같아져 대조하기 쉽다. 예전에는
+# 촬영이 필요한 TC를 앞으로 묶고 Setting을 건드리는 TC를 뒤로 뺐는데, 그럴 필요가
+# 없다 — **각 TC가 자기 시작 상태를 스스로 정리하고**(열린 검사 닫기, Exposure
+# 레이아웃 복귀), 설정을 바꾸는 TC는 끝에서 원래 값으로 되돌린다(TC03의
+# Interpolation Mode). 그래서 순서가 판정을 바꾸지 않는다.
+def _tc_sort_key(tc_id):
+    """`TC_WindowsUpdate_07` -> (0, 7). 번호가 없는 자체 TC는 뒤로 보낸다."""
+    import re
+    m = re.search(r"_(\d+)$", tc_id or "")
+    return (0, int(m.group(1))) if m else (1, 0, tc_id)
+
+
+def run_order(tc_ids):
+    """번호순 실행 순서. 번호 없는 항목은 이름순으로 뒤에 붙인다."""
+    return sorted(tc_ids, key=_tc_sort_key)
+
 
 TC_LABELS = {
     "TC_WindowsUpdate_01": "TC01 패키지 설치 확인",
@@ -375,6 +376,68 @@ def _run_dicom_registration(cfg, ui):
 
 
 # --- Phase 4: TC 실행 --------------------------------------------------
+# --- 짧은 회귀(`--quick`) -----------------------------------------------
+#
+# ## 먼저: 시간을 잡아먹던 것은 대기가 아니었다
+#
+# 전체 회귀는 실측 71분(2026-08-19)이었다. 프로파일링(2026-08-20) 결과 원인은
+# 제품을 기다리는 시간이 아니라 **자동화가 스스로 만든 낭비**였다.
+#
+# 1. `ui.children()`이 `EnumChildWindows`(이미 모든 자손을 열거한다) 결과마다
+#    다시 재귀해, 같은 창을 최대 120번 중복 열거했다. TC 하나에서 85만 번
+#    호출됐다. 한 번만 열거하도록 고쳐 **depth=4 기준 6.10초 → 0.28초**.
+# 2. 클릭 뒤 안정화를 `time.sleep(상한)`으로 무조건 기다렸다. 화면이 준비됐는지
+#    물어보고 일찍 끝내도록 고쳤다(`ui.VXvueUi.wait_settle`).
+#
+# 두 수정으로 TC03이 **143.8초 → 34.5초(4.2배)**가 됐고 판정은 그대로다.
+# 범위를 줄이지 않고 얻은 것이므로 이쪽이 먼저다.
+#
+# ## 그래도 남는 것 — 범위를 줄이는 선택
+#
+# 위 수정 뒤에도 반복이 남는다. TC02/03/04/05/07/08이 각자 MWL 조회 → Step
+# 등록 → 촬영을 다시 하고, TC14가 Setting 55개 화면을 순회한다. `--quick`은
+# 그 **범위를 줄인다** — 빨라지는 대신 확인하는 것이 줄어든다.
+#
+# **무엇을 줄였는지는 반드시 리포트에 남긴다.** 짧은 회귀는 빠른 이상 감지
+# 용도이고, 체크리스트에 기록할 정식 판정은 전체 회귀로 받아야 한다.
+QUICK_KWARGS = {
+    # TC02는 촬영을 재사용할 수 없다 — MWL 조회부터 촬영·전송·Close·DB 확인까지가
+    # 이 TC 자체의 검증 대상이다. 그래서 여기서 촬영하고 뒤 TC가 그것을 쓴다.
+    "TC_WindowsUpdate_03": {"do_acquire": False},
+    "TC_WindowsUpdate_04": {"do_acquire": False},
+    "TC_WindowsUpdate_05": {"do_acquire": False},
+    "TC_WindowsUpdate_07": {"do_acquire": False},
+    "TC_WindowsUpdate_08": {"do_acquire": False},
+    "TC_WindowsUpdate_14": {"sample": True},
+}
+
+
+def _quick_notice(applied):
+    """짧은 회귀가 무엇을 줄였는지 리포트에 남긴다."""
+    r = result_mod.TCResult("Quick_Mode", "짧은 회귀 — 축소한 범위")
+    r.add(1, "촬영 재사용", result_mod.MANUAL,
+          expected="각 TC가 스스로 촬영해 자기 영상으로 검증(전체 회귀)",
+          actual="TC02에서 1회만 촬영하고 %s는 그 영상을 재사용"
+                 % ", ".join(sorted(k.replace("TC_WindowsUpdate_", "TC")
+                                    for k in applied if k in QUICK_KWARGS
+                                    and "do_acquire" in QUICK_KWARGS[k])),
+          note="**각 TC가 촬영을 독립적으로 수행하는지는 확인하지 않았다.** "
+               "촬영 경로 자체의 회귀는 TC02 결과로만 담보된다. 전송·인쇄·Export "
+               "대상 영상이 존재하는지는 그대로 확인한다.")
+    r.add(2, "Setting 화면 순회 범위", result_mod.MANUAL,
+          expected="전 화면 순회 후 기준 대조(전체 회귀)",
+          actual="TC14를 대분류별 첫 소분류만 보는 표본 모드로 실행",
+          note="건너뛴 화면 목록은 TC14 결과의 해당 항목에 있다.")
+    r.add(3, "정식 판정 경로", result_mod.MANUAL,
+          expected="체크리스트 기록은 전체 회귀 결과로 한다",
+          actual="이번 실행은 `--quick`(빠른 이상 감지용)",
+          note="정식 판정: `python run.py regression --reset-baseline "
+               "--approve-destructive`. 짧은 회귀에서 FAIL이 나오면 그것은 "
+               "실제 결함일 가능성이 높지만, **PASS는 전체 회귀의 PASS를 "
+               "대신하지 못한다.**")
+    return r.finalize()
+
+
 def _placeholder(tc_id, scope_by_id, override_note=None):
     row = scope_by_id.get(tc_id) or {}
     level = row.get("level", "확인 필요")
@@ -392,16 +455,33 @@ def _placeholder(tc_id, scope_by_id, override_note=None):
     return r
 
 
-def _run_tc(tc_id, cfg, ui, evidence_root):
+def _run_tc(tc_id, cfg, ui, evidence_root, extra_kwargs=None):
     """구현된 TC 모듈을 실행한다. 예외는 그 TC의 FAIL로 격리한다."""
     import importlib
     mod_name, kwargs = IMPLEMENTED[tc_id]
+    if extra_kwargs:
+        kwargs = dict(kwargs, **extra_kwargs)
     label = TC_LABELS.get(tc_id, tc_id)
     _log("%s 실행 시작" % label)
     started = time.time()
     try:
         mod = importlib.import_module(mod_name)
         r = mod.run(ui, cfg, **kwargs)
+        # 시험이 끝나면 열린 검사를 닫는다(사용자 지시, 2026-08-20) — 회귀에서는
+        # TC가 여러 개 이어 돌기 때문에 특히 중요하다. 쌓인 검사가 다음 TC의
+        # 촬영 대상 선택을 엉키게 한다.
+        try:
+            from . import workflow as W
+            if W.open_study_tabs(ui):
+                info = W.close_all_studies(ui, cfg)
+                r.add(len(r.checks) + 1, "시험 후 정리 — 열린 검사 닫기",
+                      result_mod.PASS if info["remaining"] == 0 else result_mod.MANUAL,
+                      expected="열린 검사 0개",
+                      actual="닫음 %d개 / 남음 %d개"
+                             % (info["closed"], info["remaining"]))
+                r.finalize(r.completed)
+        except Exception as exc:                          # noqa: BLE001
+            _log("%s 검사 정리 실패: %s" % (label, exc))
         _log("%s 완료: %s (%.0f초)" % (label, r.verdict, time.time() - started))
         return r
     except Exception as exc:                              # noqa: BLE001
@@ -413,15 +493,19 @@ def _run_tc(tc_id, cfg, ui, evidence_root):
 
 # --- 진입점 -------------------------------------------------------------
 def run(cfg, ui_factory, approve_destructive=False, reset_baseline=False,
-        evidence_root=None, only=None):
+        evidence_root=None, only=None, quick=False):
     """전체 회귀를 실행하고 TCResult 리스트를 반환한다.
 
     ui_factory: () -> VXvueUi. preflight를 통과했을 때만 호출한다.
                 Phase 1(baseline 복원)이 뷰어를 내리므로 그 뒤에 **다시** 호출해
                 재기동·로그인까지 맡긴다.
-    approve_destructive: Phase 5의 실제 Import 수행 여부.
+    approve_destructive: 남겨 둔 인자. Setting Export/Import를 이 회귀에서
+                         분리했으므로(사용자 지시 2026-08-20) 지금은 쓰이지
+                         않는다 — `run.py setting-export-import`가 담당한다.
     reset_baseline: Phase 1 수행 여부.
     only: 특정 TC만 돌릴 때의 tc_id 집합(디버깅용). None이면 전체.
+    quick: 짧은 회귀. 촬영을 TC02에서 한 번만 하고 TC14는 표본만 본다.
+           축소한 범위를 `Quick_Mode` 결과로 남긴다(QUICK_KWARGS 주석 참고).
     """
     scope = _load_scope()
     scope_by_id = dict((row["tc_id"], row) for row in scope)
@@ -476,43 +560,30 @@ def run(cfg, ui_factory, approve_destructive=False, reset_baseline=False,
     results.append(_run_dicom_registration(cfg, ui))
 
     # Phase 4
-    _log("Phase 4 — TC 실행")
-    ran = set()
-    for tc_id in RUN_ORDER:
+    _log("Phase 4 — TC 실행%s" % (" (짧은 회귀)" if quick else ""))
+    if quick:
+        results.append(_quick_notice(set(QUICK_KWARGS)))
+    # 구현된 TC와 미구현 TC를 **한 루프에서 번호순으로** 처리한다. 예전에는
+    # 실행 목록을 먼저 돌고 남은 것을 뒤에 붙여서, 리포트에서 미구현 TC가
+    # 뒤로 몰려 체크리스트 행 순서와 어긋났다.
+    for tc_id in run_order(set(all_ids) | set(IMPLEMENTED)):
         if only and tc_id not in only:
             continue
         if tc_id in IMPLEMENTED:
-            results.append(_run_tc(tc_id, cfg, ui, evidence_root))
+            results.append(_run_tc(tc_id, cfg, ui, evidence_root,
+                                   QUICK_KWARGS.get(tc_id) if quick else None))
         else:
             results.append(_placeholder(tc_id, scope_by_id))
-        ran.add(tc_id)
 
-    for tc_id in all_ids:
-        if tc_id in ran or (only and tc_id not in only):
-            continue
-        results.append(_placeholder(tc_id, scope_by_id))
-
-    # Phase 5 — 파괴적 조작은 항상 맨 마지막.
-    if only and "TC_Setting_ExportImport" not in only:
-        return results
-    _log("Phase 5 — Setting Export/Import (%s)"
-         % ("Import 포함" if approve_destructive else "Export까지만"))
-    try:
-        from tests import tc_setting_export_import as tc_ei
-        r = tc_ei.run(ui, cfg, do_import=approve_destructive)
-        if not approve_destructive:
-            r.add(len(r.checks) + 1, "Import(파괴적 조작) 실행 여부",
-                  result_mod.SKIP,
-                  expected="Import 후 3단 비교까지",
-                  actual="Export까지만 수행",
-                  note="--approve-destructive 없이 실행되어 Import(DB 전체 복원) "
-                       "단계는 건너뛰었다.")
-            r.finalize(r.completed)
-        results.append(r)
-    except Exception as exc:                              # noqa: BLE001
-        r = result_mod.TCResult("TC_Setting_ExportImport",
-                                "Setting Export/Import 회귀")
-        _fail_from_exception(r, 1, "Setting Export/Import 실행", exc, cfg)
-        results.append(r.finalize())
-
+    # Setting Export/Import는 **이 회귀에 넣지 않는다**(사용자 지시 2026-08-20:
+    # "Export/Import 테스트는 전체 회귀랑 별개야 (...) 아예 다르게 관리해주라").
+    #
+    # 성격이 다르다. 이 회귀는 제품이 Windows Update 후에도 정상 동작하는지
+    # 보는 것이고, Export/Import는 **설정 백업·복원 기능 자체의 회귀**로 DB를
+    # 통째로 되돌린다(실측 1021초, 단일 항목 중 최장). 회귀에 섞으면 뒤 TC의
+    # 시작 상태를 바꾸고, 실행 시간도 회귀 전체를 지배한다.
+    #
+    #     python run.py setting-export-import                # Export까지만
+    #     python run.py setting-export-import --approve-destructive   # Import 포함
     return results
+

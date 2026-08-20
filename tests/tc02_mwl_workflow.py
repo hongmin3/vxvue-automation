@@ -107,7 +107,8 @@ def _norm(s):
     return "".join(ch for ch in str(s or "").upper() if ch.isalnum())
 
 
-def run(ui, cfg, evidence_dir=None, do_send=True, map_procedure=None):
+def run(ui, cfg, evidence_dir=None, do_send=True, map_procedure=None,
+        projection="Chest", exam_step="PA"):
     r = TCResult(TC_ID, TC_TITLE)
     evidence_dir = evidence_dir or os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Evidence", "tc02")
@@ -220,13 +221,39 @@ def run(ui, cfg, evidence_dir=None, do_send=True, map_procedure=None):
         r.finalize()
         return r
 
+    # **Step을 먼저 등록한다**(사용자 지시 2026-08-20): 그냥 F2를 누르지 않고
+    # General(카테고리) > Chest(Projection) > PA(Step)를 골라 Step을 만든 뒤
+    # 촬영한다. Step이 있으면 그 Step의 영상처리 파라미터가 지정되므로 촬영 직후
+    # 파라미터 오류가 나지 않는다.
+    W.goto(ui, "exposure")
+    time.sleep(1.0)
+    added = W.add_step(ui, cfg, projection=projection, step=exam_step,
+                       evidence_dir=evidence_dir)
+    r.add(5, "촬영 Step 등록 (General > %s > %s)" % (projection, exam_step),
+          PASS if added["ok"] else FAIL,
+          expected="Step이 등록된다",
+          actual="카테고리=%r / Projection=%s / Step=%r / 항목 %s→%s"
+                 % ((added["category"] or {}).get("category"),
+                    (added["projection"] or {}).get("ok"),
+                    (added["step"] or {}).get("label"),
+                    added["steps_before"], added["steps_after"]),
+          note="인체도 라벨(Projection)은 그림 위에 그려져 표준 API로 읽을 수 없어 "
+               "캡처+OCR로 찾고, Step 박스 라벨은 **XIPL 파라미터 파일명에서 얻은 "
+               "정답지와 대조해 OCR 오인식을 교정**한다(사용자 제안, 2026-08-20 — "
+               "`LAT`이 `Li`로 읽히던 것을 정답지로 확정). 카테고리가 General이 "
+               "아니면 상단 화살표로 되돌린다.")
+    if not added["ok"]:
+        r.finalize()
+        return r
+
     acq = W.acquire(ui, cfg, evidence_dir=evidence_dir)
     known = acq.get("known_warning")
     r.add(5, "Demo(가상) 촬영 — %s" % acq["key"],
           PASS if acq["acquired"] else FAIL,
           expected="영상이 1장 이상 획득된다",
-          actual="영상 %d → %d장 (%.1f초) / 상태=%r"
-                 % (acq["before"], acq["after"], acq["seconds"], acq["state"]),
+          actual="INSTANCE %s → %s / 썸네일 %d → %d / %.1f초 / 상태=%r"
+                 % (acq.get("instances_before"), acq.get("instances_after"),
+                    acq["before"], acq["after"], acq["seconds"], acq["state"]),
           note="사양서1 p.86 VP-526 — 데모 촬영은 VXvue Demo License 등록이 선행 "
                "조건이다(`run.py vxvue-license`로 확인). "
                + ("촬영 중 뜬 팝업: %s" % acq["dialogs"] if acq["dialogs"] else "팝업 없음"))

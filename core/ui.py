@@ -65,6 +65,11 @@ KEYEVENTF_UNICODE = 0x0004
 u32.SendInput.argtypes = (w.UINT, ctypes.POINTER(_INPUT), ctypes.c_int)
 u32.SendInput.restype = w.UINT
 
+# HWND는 64비트 포인터다. ctypes 기본 반환형(c_int)으로 두면 상위 비트가 잘려
+# 부모 창을 잘못 짚을 수 있으므로 명시한다(`children()`의 깊이 계산에 쓴다).
+u32.GetParent.argtypes = (w.HWND,)
+u32.GetParent.restype = w.HWND
+
 
 def send_unicode(ch):
     sent = 0
@@ -151,18 +156,71 @@ def top_windows(pid):
 
 
 def children(hwnd, max_depth=4, _depth=1):
-    out = []
+    """`hwnd` 아래의 모든 자손 컨트롤. 같은 창은 한 번만 담긴다.
+
+    ## 왜 재귀하지 않는가 (실측 2026-08-20)
+
+    `EnumChildWindows`는 직계 자식만이 아니라 **모든 자손을 열거한다**(Win32
+    문서상 동작). 그래서 열거된 창마다 다시 `children()`을 부르면 이미 담은
+    창을 계속 다시 담는다. 메인 창에서 실측한 결과:
+
+    | 호출 | 소요 | 반환 | 고유 | 최대 중복 |
+    |---|---|---|---|---|
+    | `children(main, 1)` | 0.27초 | 1,405 | 1,405 | 1배 |
+    | `children(main, 4)` | 6.10초 | 24,689 | 1,405 | 64배 |
+    | `children(main, 6)` | 5.60초 | 32,608 | 1,405 | 120배 |
+
+    **깊이를 올려도 찾을 수 있는 컨트롤이 늘지 않는다** — 1,405개는 그대로고
+    중복과 소요만 늘었다. 한 TC(TC03)에서 이 함수가 85만 번 호출됐고, 그것이
+    회귀 시간의 지배적 요인이었다(고정 대기는 26%에 불과).
+
+    그래서 **한 번만 열거하고 중복을 없앤다.** `max_depth`는 그 재귀의 깊이였을
+    뿐 탐색 범위를 넓힌 적이 없으므로, 호출부를 고치지 않아도 되도록 인자는
+    남기되 **결과를 걸러내지 않는다** — 걸러내면 기존에 찾던 컨트롤이 사라진다.
+
+    `depth`는 부모 체인으로 실제 깊이를 계산한다(`ui-probe` 트리 덤프의 들여쓰기
+    용도이며 판정 로직에는 쓰이지 않는다).
+    """
+    found = []
 
     def cb(child, _):
-        out.append(Control(child, u32.GetDlgCtrlID(child), _class_of(child),
-                           _text_of(child), _rect_of(child),
-                           bool(u32.IsWindowVisible(child)), _depth))
-        if _depth < max_depth:
-            out.extend(children(child, max_depth, _depth + 1))
+        found.append(child)
         return True
 
     u32.EnumChildWindows(hwnd, _EnumProc(cb), 0)
+
+    # 부모 체인으로 깊이를 계산한다. 같은 조상을 여러 번 거슬러 올라가지 않도록
+    # 계산 결과를 메모한다.
+    depth_of = {hwnd: 0}
+
+    def _depth_for(win):
+        chain = []
+        cur = win
+        while cur and cur not in depth_of:
+            chain.append(cur)
+            cur = u32.GetParent(cur)
+        base = depth_of.get(cur, 0) if cur else 0
+        for i, w in enumerate(reversed(chain)):
+            base += 1
+            depth_of[w] = base
+        return depth_of.get(win, 1)
+
+    out, seen = [], set()
+    for child in found:
+        if child in seen:
+            continue
+        seen.add(child)
+        out.append(Control(child, u32.GetDlgCtrlID(child), _class_of(child),
+                           _text_of(child), _rect_of(child),
+                           bool(u32.IsWindowVisible(child)), _depth_for(child)))
     return out
+
+
+# 조작 뒤 안정화 대기를 조건 대기로 바꾼다(`VXvueUi.wait_settle` 참고).
+# 문제가 의심되면 `core.ui.ADAPTIVE_SETTLE = False`로 예전 동작으로 되돌린다.
+ADAPTIVE_SETTLE = True
+_ADAPTIVE_MIN = 0.15      # 조건을 묻기 전에 최소한 이만큼은 기다린다
+_ADAPTIVE_FROM = 0.5      # 이보다 짧은 대기는 그대로 잔다
 
 
 class VXvueUi:
@@ -400,6 +458,43 @@ class VXvueUi:
         return bool(ok)
 
     # --- 조작 ----------------------------------------------------------
+    def wait_settle(self, seconds):
+        """조작 뒤 안정화를 기다린다. 화면이 이미 준비됐으면 일찍 끝낸다.
+
+        원래는 `time.sleep(seconds)`로 무조건 기다렸다. 그런데 이 값은 "이 정도면
+        끝나 있겠지"로 잡은 상한이고, 실제로는 대부분 훨씬 빨리 끝난다 — 실측
+        (2026-08-20) TC03 한 번에 고정 대기가 19.8초로 전체 39.6초의 절반이었다.
+
+        그래서 **끝났는지 물어본다.** `SendMessageTimeoutW`(`SMTO_ABORTIFHUNG`)는
+        대상 창의 UI 스레드가 메시지를 실제로 처리했을 때만 돌아오므로, 이것이
+        연속 두 번 통과하면 방금 보낸 입력의 처리가 끝난 것이다. `seconds`는
+        그대로 **상한**으로 쓴다 — 응답이 없으면 예전과 똑같이 그만큼 기다린다.
+
+        짧은 대기(`_ADAPTIVE_FROM` 미만)는 그대로 잔다. 입력 사이의 짧은 간격은
+        측정 비용이 절약분보다 크고, 마우스 down/up 사이처럼 조건으로 바꿀 수
+        없는 것도 있다.
+
+        **되돌리는 방법**: `core.ui.ADAPTIVE_SETTLE = False`로 두면 예전처럼
+        전부 고정 대기한다. 화면 갱신이 비동기라 판독이 이른 것으로 의심되면
+        이 스위치로 먼저 갈라 본다.
+        """
+        if not ADAPTIVE_SETTLE or seconds < _ADAPTIVE_FROM:
+            time.sleep(seconds)
+            return seconds
+        started = time.time()
+        time.sleep(_ADAPTIVE_MIN)
+        deadline = started + seconds
+        ready = 0
+        while time.time() < deadline:
+            if self.is_responsive(timeout_ms=200):
+                ready += 1
+                if ready >= 2:
+                    break
+            else:
+                ready = 0                      # 멈춤이 감지되면 다시 센다
+            time.sleep(0.04)
+        return time.time() - started
+
     def click(self, target, settle=0.4):
         x, y = target.center if isinstance(target, Control) else target
         u32.SetCursorPos(int(x), int(y))
@@ -407,7 +502,7 @@ class VXvueUi:
         u32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
         time.sleep(0.06)
         u32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
-        time.sleep(settle)
+        self.wait_settle(settle)
 
     def click_button(self, hwnd):
         u32.SendMessageW(hwnd, BM_CLICK, 0, 0)
@@ -517,7 +612,7 @@ class VXvueUi:
         u32.keybd_event(vk, 0, 0, 0)
         time.sleep(0.05)
         u32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
-        time.sleep(settle)
+        self.wait_settle(settle)
 
     def activate(self):
         win = self.main_window()

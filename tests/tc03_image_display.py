@@ -68,7 +68,8 @@ IMAGE_AREA = (820, 330, 1650, 960)
 SAME_SSIM = 0.999
 
 
-def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None):
+def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
+        projection="Chest", exam_step="PA"):
     r = TCResult(TC_ID, TC_TITLE)
     evidence_dir = evidence_dir or os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Evidence", "tc03")
@@ -124,11 +125,14 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None):
     # --- Step 2: 영상 준비 ---------------------------------------------
     if do_acquire and W.thumbnail_count(ui) == 0:
         try:
-            W.open_mwl_study(ui, cfg,
-                             patient_id=(cfg.get("test_data") or {}).get("mwl_patient_id"),
-                             evidence_dir=evidence_dir,
-                             map_procedure_name=map_procedure)
-            acq = W.acquire(ui, cfg, evidence_dir=evidence_dir)
+            flow = W.open_and_acquire(
+                ui, cfg,
+                patient_id=(cfg.get("test_data") or {}).get("mwl_patient_id"),
+                projection=projection, step=exam_step,
+                evidence_dir=evidence_dir, map_procedure_name=map_procedure)
+            acq = flow["acquire"] or {"acquired": False, "before": 0, "after": 0,
+                                      "seconds": 0, "dialogs": [],
+                                      "note": "Step 등록 실패로 촬영하지 않았다"}
         except Exception as exc:                          # noqa: BLE001
             r.add(step, "툴을 적용할 영상 준비", FAIL, actual=str(exc))
             _restore(ui, r, step + 1, original, changed_to)

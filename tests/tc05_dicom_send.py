@@ -69,7 +69,8 @@ SOP_DOSE_SR = "1.2.840.10008.5.1.4.1.1.88.67"
 SEND_DOSE_SR_CHECK_ID = None
 
 
-def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None):
+def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
+        projection="Chest", exam_step="PA"):
     r = TCResult(TC_ID, TC_TITLE)
     evidence_dir = evidence_dir or os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Evidence", "tc05")
@@ -101,16 +102,20 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None):
     # --- Step 2: 촬영 → 영상 선택 → Send -------------------------------
     if do_acquire:
         try:
-            opened = W.open_mwl_study(ui, cfg,
-                                      patient_id=(cfg.get("test_data") or {}).get(
-                                          "mwl_patient_id"),
-                                      evidence_dir=evidence_dir,
-                                      map_procedure_name=map_procedure)
+            flow = W.open_and_acquire(
+                ui, cfg,
+                patient_id=(cfg.get("test_data") or {}).get("mwl_patient_id"),
+                projection=projection, step=exam_step,
+                evidence_dir=evidence_dir, map_procedure_name=map_procedure)
         except Exception as exc:                          # noqa: BLE001
-            r.add(step, "전송할 영상 준비 (MWL 오픈 + 촬영)", FAIL, actual=str(exc))
+            r.add(step, "전송할 영상 준비 (MWL 오픈 + Step 등록 + 촬영)",
+                  FAIL, actual=str(exc))
             r.finalize()
             return r
-        acq = W.acquire(ui, cfg, evidence_dir=evidence_dir)
+        opened = flow["opened"]
+        acq = flow["acquire"] or {"acquired": False, "before": 0, "after": 0,
+                                  "seconds": 0, "state": "", "dialogs": [],
+                                  "note": "Step 등록 실패로 촬영하지 않았다"}
         r.add(step, "전송할 영상 준비 (MWL 오픈 + Demo 촬영)",
               PASS if acq["acquired"] else FAIL,
               expected="영상 1장 이상 획득",

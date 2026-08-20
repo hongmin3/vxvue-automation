@@ -88,7 +88,8 @@ def _export_cfg(cfg):
             ex.get("exe") or r"C:\Program Files\Vxvue\VX.EXPORT.MANAGER.exe")
 
 
-def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None):
+def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
+        projection="Chest", exam_step="PA"):
     r = TCResult(TC_ID, TC_TITLE)
     evidence_dir = evidence_dir or os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Evidence", "tc08")
@@ -128,11 +129,14 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None):
     # --- Step 1: Export 대상 스터디 준비 -------------------------------
     if do_acquire:
         try:
-            W.open_mwl_study(ui, cfg,
-                             patient_id=(cfg.get("test_data") or {}).get("mwl_patient_id"),
-                             evidence_dir=evidence_dir,
-                             map_procedure_name=map_procedure)
-            acq = W.acquire(ui, cfg, evidence_dir=evidence_dir)
+            flow = W.open_and_acquire(
+                ui, cfg,
+                patient_id=(cfg.get("test_data") or {}).get("mwl_patient_id"),
+                projection=projection, step=exam_step,
+                evidence_dir=evidence_dir, map_procedure_name=map_procedure)
+            acq = flow["acquire"] or {"acquired": False, "before": 0, "after": 0,
+                                      "seconds": 0, "dialogs": [],
+                                      "note": "Step 등록 실패로 촬영하지 않았다"}
             W.close_study(ui, cfg, evidence_dir=evidence_dir)
         except Exception as exc:                          # noqa: BLE001
             r.add(step, "Export 대상 스터디 준비", FAIL, actual=str(exc))
@@ -183,13 +187,16 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None):
         r.finalize()
         return r
 
-    dialogs = W.pending_dialogs(ui, evidence_dir=evidence_dir, cfg=cfg)
+    popups = W.pending_dialogs(ui, evidence_dir=evidence_dir, cfg=cfg)
     mgr_up, mgr_note = _wait_manager(proc_name, timeout=25)
-    defect_hit = [d for d in dialogs if "error" in d.lower()]
+    # **팝업을 분류해서 본다** — 성공 알림과 오류를 같이 취급하면 #21049 재발을
+    # 놓친다(core/dialogs.py). blocking=True인 것만 결함 신호로 센다.
+    defect_hit = [d for d in popups if d.blocking]
     r.add(step, "Export 실행 — Export Manager 창 표시",
           PASS if mgr_up else (FAIL if defect_hit else MANUAL),
           expected="%s 창이 열린다" % proc_name,
-          actual="%s / Export 클릭 직후 팝업=%s" % (mgr_note, dialogs or "없음"),
+          actual="%s / Export 클릭 직후 팝업=%s"
+                 % (mgr_note, [str(d) for d in popups] or "없음"),
           note=("Export Manager는 별도 최상위 프로세스다(실측: %s). "
                 % exe)
                + ("**에러 팝업이 떴다 — 알려진 결함 %s의 재발 가능성이 있다.** "

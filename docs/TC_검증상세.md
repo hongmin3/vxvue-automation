@@ -27,7 +27,45 @@
 | 2 | `VXvue_License` | Setting > System > License 확인 | 항상 |
 | 3 | `DICOM_Servers` | MWL/Storage/Print 등록 확인 + C-ECHO | 항상 |
 | 4 | `TC_WindowsUpdate_*` | 구현된 TC 실행, 미구현은 scope 수준 표시 | 항상 |
-| 5 | `TC_Setting_ExportImport` | Export(→Import) 보존 회귀 | Export까지만 |
+
+**Setting Export/Import는 이 회귀에 포함하지 않는다**(사용자 지시, 2026-08-20).
+검증 목적이 다르다 — 이 회귀는 Windows Update 후 제품 동작을 보고, 그쪽은 설정
+백업·복원 기능 자체의 회귀로 DB를 통째로 되돌린다(실측 1021초, 단일 항목 중
+최장). 회귀에 섞으면 뒤 TC의 시작 상태를 바꾸고 실행 시간도 전체를 지배한다.
+따로 돌린다: `python run.py setting-export-import [--approve-destructive]`.
+
+**짧은 회귀(`--quick`)** — 촬영을 TC02에서 1회만 하고 뒤 TC는 그 영상을
+재사용하며, TC14는 대분류별 첫 소분류만 본다. **확인 범위가 줄어들므로**
+`Quick_Mode` 항목과 각 TC의 해당 판정에 무엇을 줄였는지 남긴다. 정식 판정은
+전체 회귀로 받는다.
+
+**실행 순서는 TC 번호순이다**(01 → 02 → 03 …, 사용자 지시 2026-08-20). 리포트
+순서가 체크리스트 행 순서와 같아져 대조하기 쉽다. 순서가 판정을 바꾸지 않도록
+각 TC가 자기 시작 상태를 스스로 정리하고(열린 검사 닫기, Exposure 레이아웃 복귀),
+설정을 바꾸는 TC는 끝에서 원래 값으로 되돌린다(TC03의 Interpolation Mode).
+
+## 인체도 Projection·Step 선택 (`core/workflow`)
+
+촬영 TC(02/03/04/05/07/08)가 공통으로 쓴다. 라벨이 컨트롤이 아니라 그림 위
+글자이므로 판독이 필요하고, **판독을 신뢰하지 않는 것이 설계의 핵심이다.**
+
+| 단계 | 하는 일 | 근거 |
+|---|---|---|
+| 1 | 캡처 전에 **커서를 인체도 밖으로** 옮긴다 | 커서가 얹힌 라벨은 색이 바뀐다(사용자 확인 2026-08-20). 치우면 22개가 같은 색으로 그려진다 |
+| 2 | **파란 점**을 찾는다 | 점은 배경 밝기와 무관하게 색으로 구분된다. 실측 22개 라벨 = 점 22개 |
+| 3 | 점 오른쪽 글자를 **국소 대비**로 읽고 정답지와 유사도 대조 | 전역 밝기 임계값은 밝은 뼈 위 라벨을 놓친다(실측 13/22) |
+| 4 | 선택된 라벨은 **파란 글자**로 따로 찾는다 | 선택 시 점은 흰색, 글자는 파란색으로 바뀐다(실측) |
+| 5 | 남은 라벨 1개 ↔ 남은 점 1개면 **소거로 확정** | 후보 목록이 완전하고 개수가 같으므로 결정된다. 일대일이 아니면 버린다 |
+| 6 | 이미 선택된 부위면 **다시 누르지 않는다** | 같은 항목 재클릭의 제품 동작(유지/해제)을 확정하지 않았다 |
+| 7 | 클릭 후 나타난 **Step 목록을 정답지와 대조** | 비슷한 이름 혼동(C/T/L-spine)을 눌러 본 결과로 잡는다 |
+
+Step 정답지는 XIPL 파라미터 파일명에서 얻는다(`{Projection} {Step}_{강도}_H.hs8`,
+실측 135개 조합). `Chest → AP/Lat/PA`, `Knee → AP/Lat/Obl`. 화면 OCR이 `Lat`을
+`Li`로 읽어도 이 정답지로 교정한다.
+
+판독이 실패하면 **Step 등록이 실패하고, 그러면 촬영·전송·인쇄·Export가 모두
+막힌다** — 실측(2026-08-20): `Chest`를 못 읽어 TC04/05/07/08이 연쇄 FAIL했다.
+그래서 이 경로는 촬영 TC 전체의 선행 조건이다.
 
 **미구현 TC를 어떻게 다루는가** — 자동화 코드가 없는 TC는 추정 PASS를 내지
 않고 `automation_scope.json`의 수준을 그대로 옮긴다: `EXCLUDED`→SKIP,
@@ -129,9 +167,11 @@ TC02/03/05/07/08은 앞부분(MWL 처방 열기 → 촬영)이 같다. 각 TC가
 |---|---|---|
 | 화면 전환 | `goto(ui, name)` | 메인 네비 Tab `31197` 아래 TabItem `8`=Registration `9`=Exposure `10`=Database `11`=Viewer `12`=Print `13`=Setting `14`=Exit. **전환 전에 팝업을 걷어낸다** — 모달이 떠 있으면 클릭이 조용히 무시된다 |
 | MWL 조회 | `query_mwl(ui, cfg)` | Registration 탭 `31201`=Scheduled, Search `30689`, 결과 목록 `31119`, 요약 Static `30013`(평문 판독 가능) |
-| 행 판독 | `row_cell_text()` | 목록 셀은 owner-draw → 행 rect를 캡처해 OCR |
+| 열 자동 확장 | `expand_truncated_columns()` | `SysHeader32`의 실제 열 경계를 읽고 목록 전체를 1회 OCR한다. `...`가 검출된 열만 헤더 경계를 우측으로 드래그한다. 실측: Patient ID 열 109px→249px |
+| 행 판독 | `row_cell_text()` / `find_row()` | 목록 셀은 owner-draw → 행 rect를 캡처해 OCR. Patient ID가 잘리면 열을 먼저 확장하고 Accession을 보조 키로 교차 확인한다. 둘 다 없으면 첫 행으로 대체하지 않는다 |
 | Study 등록 | `start_study()` | Scheduled 탭 Start `30371`. 사양서1 p.37~38 `VP-460`의 Yes/No/Cancel 팝업을 처리하고 기본은 **매핑하지 않는 쪽**을 택한다 |
-| 촬영 | `acquire(ui, cfg)` | `viewer.demo_exposure_key`(F2). 썸네일 패널 `30887`의 항목 수 증가로 획득을 확인하고, **획득 뒤에도 늦게 뜨는 팝업을 한 번 더 훑는다** |
+| 촬영 레이아웃 | `ensure_exposure_mode()` | Viewer Tools 패널(`30403`)이 보이면 복귀 버튼 `30331`을 누른다(Exposure→Viewer는 `30330`). 인체도 `CUIBodypartDlg`가 표시돼야 Step 등록을 시작한다 |
+| 촬영 | `acquire(ui, cfg)` | `viewer.demo_exposure_key`(F2). Step 등록 후 미촬영 항목을 선택하고 DB `INSTANCE` 증가로 획득을 확인한다. **획득 뒤에도 늦게 뜨는 팝업을 한 번 더 훑는다** |
 | 촬영 상태 | `acquisition_state()` | `31093` `AcquisitionState` — 캡처+OCR. 실측 문구: `Not Exposure mode`(검사 없음) / `Ready`(촬영 준비 완료) |
 | 영상 선택 | `select_first_image()` | 선택 전에는 Send가 동작하지 않는다 |
 | 전송 | `send(ui, scope)` | Send `30294`(Exposure·Database 공통). 팝업 `All Images 27002` / `Selected 27001` / `Cancel 27000` |
@@ -203,6 +243,28 @@ Statistics · `30378` Multi-Study · `30348` QXLink · `30471` Report · `30473`
 실측 SSIM(2026-08-19): Select `1.00000`(변화 없음) / Zoom `0.36874` /
 Pan `0.67934` / CW `0.11371` / CCW `0.48457` — 툴이 실제로 영상을 바꾼다는 것이
 수치로 확인된다.
+
+---
+
+## TC_WindowsUpdate_04 — Image Processing / XIPL
+
+코드: `tests/tc04_image_processing.py` · 실행: `python run.py tc04 --no-env`
+
+2026-08-20 최종 실측: **PASS 8 / FAIL 0 / MANUAL 4**
+(`Reports/Result_20260820_121234.*`).
+
+| Step | 코드가 하는 일 | Expected Result(판정 기준) | 판정 |
+|---|---|---|---|
+| 1 | XIPL 라이선스 4종 확인 | PureGrid / Deep denoising / VXCAD CXR / Bone Suppression. About 창이 닫혀 있으면 추정하지 않는다 | PASS/MANUAL |
+| 2 | Viewer 최대화 해제 → General > Chest > PA Step 등록 | 인체도 표시 + Step 항목 0→1 | PASS/FAIL |
+| 3 | F2 데모 촬영 | 대상 환자 `INSTANCE` 증가. 최종 실측 17→18, 18.1초 | PASS/FAIL |
+| 4~5 | 촬영 팝업 분류 + XIPL UTF-16LE 로그 | 오류·경고 0건, 처리 요청 존재, `Parameter file not found` 0건, `Chest PA_normal_H.hs8` 로드 | PASS/FAIL/MANUAL |
+| 6 | Viewer > Tools ≡ 즉시 캡처 + 다중 OCR | 환경에 실제 노출된 툴만 판독. 최종 실측 27개, `Proc.`/`XIPL` 포함 | PASS/FAIL |
+| 7 | `Proc.` 클릭 | `Image Process [HS8]` 진입. 정상 기능 창은 `INTERACTION`으로 분류 | PASS/FAIL |
+| 8 | Image Process 파라미터 변경·Process | 내부 컨트롤 미실측 | MANUAL |
+| 9 | 팔레트를 새로 판독해 `XIPL` 클릭 | `XIPL.STUDIO.exe` 기동 | PASS/FAIL |
+| 10~11 | Studio 영상/파라미터 로드·재처리 | WPF 내부 컨트롤 미실측 | MANUAL |
+| 12 | 열린 Study 정리 + Viewer 최대화 해제 | 열린 Study 0개, 다음 TC가 Step 등록 가능한 레이아웃 | PASS/MANUAL |
 
 ---
 

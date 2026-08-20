@@ -14,6 +14,7 @@
   python run.py vxvue-license       VXvue 자체 라이선스(Demo/CAD/Live View) 확인
   python run.py tc02                TC02 MWL 조회 워크플로우(조회→촬영→Send→Close→DB)
   python run.py tc03                TC03 영상 조작(Interpolation + 툴 적용, 화면 변화 판정)
+  python run.py tc04                TC04 Image Processing(XIPL 로그로 처리 성공 판정)
   python run.py tc05                TC05 DICOM 전송(Image + Dose SR 수신 객체 판정)
   python run.py tc07                TC07 DICOM Print(수신 필름 목록으로 판정)
   python run.py tc08                TC08 Study Export(E 드라이브 기준, #21049 회귀)
@@ -207,6 +208,39 @@ def _print_result(result):
     print("합계: " + " / ".join("%s %d" % (k, v) for k, v in result.counts.items()))
 
 
+def _cleanup_studies(cfg, ui, result=None):
+    """시험이 끝나면 열려 있는 검사를 모두 닫는다.
+
+    사용자 지시(2026-08-20): *"지금 테스트중이라고 해도 열려있는 스터디가 너무
+    많거든? 이걸 잘 닫을 수 있도록 해줘, 테스트가 끝나면."*
+
+    열린 검사가 쌓이면 다음 시험이 어느 검사를 보고 있는지 불분명해지고, 사람이
+    화면을 봤을 때 시험 흔적과 실제 상태를 구분하기 어렵다. 정리 결과는 판정에
+    Step으로 남긴다 — **조용히 치우지 않는다.**
+    """
+    try:
+        from core import workflow as W
+        before = len(W.open_study_tabs(ui))
+        if not before:
+            return
+        info = W.close_all_studies(ui, cfg)
+        # 다음 TC가 Step을 등록할 수 있도록 Viewer 최대화 레이아웃을 남기지 않는다.
+        W.restore_exposure_layout(ui, cfg)
+        if result is not None:
+            from core.result import MANUAL, PASS
+            ok = info["remaining"] == 0
+            result.add(len(result.checks) + 1, "시험 후 정리 — 열린 검사 닫기",
+                       PASS if ok else MANUAL,
+                       expected="열린 검사 0개",
+                       actual="닫음 %d개 / 남음 %d개" % (info["closed"], info["remaining"]),
+                       note="열린 검사가 쌓이면 다음 시험의 시작 상태가 불분명해진다"
+                            "(사용자 지시, 2026-08-20). 처리한 팝업: %s"
+                            % ("; ".join(str(d) for d in info["dialogs"]) or "없음"))
+            result.finalize(result.completed)
+    except Exception as exc:                              # noqa: BLE001
+        print("검사 정리 실패: %s: %s" % (type(exc).__name__, exc))
+
+
 def _ready_ui(cfg, login=True):
     """VXvue 드라이버를 준비한다(필요하면 기동·로그인까지)."""
     from core.ui import VXvueUi
@@ -261,6 +295,7 @@ def _run_tc_module(cfg, args, mod_name, **kwargs):
     mod = importlib.import_module(mod_name)
     ui = _ready_ui(cfg)
     result = mod.run(ui, cfg, **kwargs)
+    _cleanup_studies(cfg, ui, result)
     env = None if args.no_env else result_mod.collect_env(cfg)
     paths = result_mod.write_reports([result], os.path.join(HERE, "Reports"), env=env)
     _print_result(result)
@@ -273,35 +308,48 @@ def cmd_tc02(cfg, args):
     """TC02 MWL 조회 워크플로우 — 조회 → 촬영 → Close → DB 대조 → Send → 수신 확인."""
     return _run_tc_module(cfg, args, "tests.tc02_mwl_workflow",
                           do_send=not args.no_send,
-                          map_procedure=args.map_procedure)
+                          map_procedure=args.map_procedure,
+                          projection=args.projection, exam_step=args.step)
 
 
 def cmd_tc03(cfg, args):
     """TC03 영상 조작 — Interpolation 변경 + Zoom/Pan/Rotation 툴 적용(화면 변화로 판정)."""
     return _run_tc_module(cfg, args, "tests.tc03_image_display",
                           do_acquire=not args.no_acquire,
-                          map_procedure=args.map_procedure)
+                          map_procedure=args.map_procedure,
+                          projection=args.projection, exam_step=args.step)
+
+
+def cmd_tc04(cfg, args):
+    """TC04 Image Processing — 촬영 시 처리 성공(XIPL 로그 근거) + Image Process/Studio."""
+    return _run_tc_module(cfg, args, "tests.tc04_image_processing",
+                          do_acquire=not args.no_acquire,
+                          map_procedure=args.map_procedure,
+                          projection=args.projection, exam_step=args.step)
 
 
 def cmd_tc05(cfg, args):
     """TC05 DICOM 전송 — Send Dose SR 확인 → 촬영 → Send → 수신 객체 종류 판정."""
     return _run_tc_module(cfg, args, "tests.tc05_dicom_send",
                           do_acquire=not args.no_acquire,
-                          map_procedure=args.map_procedure)
+                          map_procedure=args.map_procedure,
+                          projection=args.projection, exam_step=args.step)
 
 
 def cmd_tc07(cfg, args):
     """TC07 DICOM Print — Print SCP 가동 확인 → 촬영 → Print → 수신 필름 확인."""
     return _run_tc_module(cfg, args, "tests.tc07_dicom_print",
                           do_acquire=not args.no_acquire,
-                          map_procedure=args.map_procedure)
+                          map_procedure=args.map_procedure,
+                          projection=args.projection, exam_step=args.step)
 
 
 def cmd_tc08(cfg, args):
     """TC08 Study Export — E 드라이브로 Export → 산출물 DICOM 태그 검증 → 역방향 Import."""
     return _run_tc_module(cfg, args, "tests.tc08_study_export",
                           do_acquire=not args.no_acquire,
-                          map_procedure=args.map_procedure)
+                          map_procedure=args.map_procedure,
+                          projection=args.projection, exam_step=args.step)
 
 
 def cmd_tc13(cfg, args):
@@ -325,7 +373,7 @@ def cmd_tc13(cfg, args):
 def cmd_tc14(cfg, args):
     from tests import tc14_setting_display as tc14
     ui = _ready_ui(cfg)
-    result = tc14.run(ui, cfg)
+    result = tc14.run(ui, cfg, deep=getattr(args, "deep", False))
     env = result_mod.collect_env(cfg) if not args.no_env else None
     paths = result_mod.write_reports([result], os.path.join(HERE, "Reports"), env=env)
     print("\n판정: %s" % result.verdict)
@@ -404,7 +452,7 @@ def cmd_run_regression(cfg, args):
                           approve_destructive=args.approve_destructive,
                           reset_baseline=args.reset_baseline,
                           evidence_root=os.path.join(HERE, "Evidence"),
-                          only=only)
+                          only=only, quick=getattr(args, "quick", False))
     env = None if args.no_env else result_mod.collect_env(cfg)
     paths = result_mod.write_reports(results, os.path.join(HERE, "Reports"), env=env)
 
@@ -472,6 +520,7 @@ COMMANDS = {
     "env": cmd_env,
     "tc02": cmd_tc02,
     "tc03": cmd_tc03,
+    "tc04": cmd_tc04,
     "tc05": cmd_tc05,
     "tc07": cmd_tc07,
     "tc08": cmd_tc08,
@@ -508,6 +557,12 @@ def main(argv=None):
     p.add_argument("--label", help="snapshot 라벨")
     p.add_argument("--a", help="비교 대상 A (snapshot-diff / vxs-info)")
     p.add_argument("--b", help="비교 대상 B (snapshot-diff / vxs-info)")
+    p.add_argument("--projection", default="Chest",
+                   help="촬영할 Projection(인체도 라벨). 기본 Chest. "
+                        "General 카테고리의 부위명을 쓴다.")
+    p.add_argument("--step", default="PA",
+                   help="촬영할 Step(Projection 옆 네모 박스). 기본 PA. "
+                        "Chest는 PA/AP/Lat 중 하나(XIPL 파라미터 파일명 기준).")
     p.add_argument("--map-procedure", nargs="?", const="Chest PA", default=None,
                    metavar="PROCEDURE",
                    help="MWL 처방의 Procedure Code를 지정한 Procedure(기본 'Chest PA')에 "
@@ -528,6 +583,19 @@ def main(argv=None):
     p.add_argument("--approve-destructive", action="store_true",
                    help="run-regression 맨 마지막의 Setting Import(DB 전체 복원)까지 "
                         "실행한다. 지정하지 않으면 Export까지만 수행한다.")
+    p.add_argument("--deep", action="store_true",
+                   help="tc14를 깊게 검증한다. 기본은 체크리스트 원문대로 각 탭을 "
+                        "열어 제목 변화·본문 표시만 확인한다(빠름). --deep을 주면 "
+                        "스크롤 전수 노출 확인, SCP 상세 DB 대조, 옵션 구성 기준 "
+                        "대조까지 한다(실측 1219초 / 55화면). 폰트·DPI 변화로 "
+                        "컨트롤이 화면 밖으로 밀려 조작할 수 없게 된 설정을 "
+                        "잡아내려면 이쪽이 필요하다.")
+    p.add_argument("--quick", action="store_true",
+                   help="run-regression을 짧게 돈다. 촬영을 TC02에서 1회만 하고 "
+                        "뒤 TC는 그 영상을 재사용하며, TC14는 대분류별 첫 화면만 "
+                        "보고, Setting Export/Import는 생략한다. 축소한 범위는 "
+                        "리포트의 Quick_Mode 항목에 남는다 — 빠른 이상 감지용이고 "
+                        "체크리스트 정식 판정은 전체 회귀로 받아야 한다.")
     p.add_argument("--reset-baseline", action="store_true",
                    help="run-regression 시작 시 DB와 data_dir 폴더를 baseline "
                         "(config.json의 baseline.db_backup / folder_backup) 상태로 "

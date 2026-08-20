@@ -110,21 +110,27 @@ def log_size(cfg, calling_ae=None, day=None):
 
 
 def log_since(cfg, offset, calling_ae=None, day=None):
-    """`offset` 바이트 이후에 새로 기록된 로그 구간만 돌려준다."""
+    """`offset` 바이트 이후에 새로 기록된 로그 구간만 돌려준다.
+
+    **바이트 단위로 직접 읽는다.** 예전에는 전체를 텍스트로 읽고 인코딩해서
+    자르는 방식이었는데, 그 과정에서 오프셋이 어긋나 새 구간을 빈 문자열로
+    돌려주는 일이 있었다(실측 2026-08-20: 파일은 정상 수신됐고 태그 대조도
+    통과했는데 "C-STORE 응답 Status=기록 없음"으로 FAIL이 났다).
+
+    파일이 오프셋보다 작아졌으면(로그 회전) 전체를 돌려준다 — 새 파일이므로
+    그 안의 기록이 모두 이번 실행 것이다.
+    """
     p = log_path(cfg, calling_ae, day)
     if not p or not os.path.isfile(p):
         return ""
     try:
-        with io.open(p, encoding="utf-8", errors="replace") as f:
-            f.seek(0)
-            text = f.read()
+        size = os.path.getsize(p)
+        with open(p, "rb") as f:
+            if offset and 0 < offset <= size:
+                f.seek(offset)
+            raw = f.read()
     except OSError:
         return ""
-    # 문자 오프셋이 아니라 바이트 오프셋이므로 보수적으로 처리한다 — 크기가
-    # 줄었으면(로그 회전) 전체를 돌려준다.
-    if offset <= 0 or offset >= len(text.encode("utf-8", "replace")):
-        return text if offset <= 0 else ""
-    raw = text.encode("utf-8", "replace")[offset:]
     return raw.decode("utf-8", "replace")
 
 
