@@ -110,6 +110,43 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
         r.add(step, "Print 화면의 전송 설정 확인", MANUAL, actual=str(exc))
     step += 1
 
+    # --- Print Overlay 설정 보장 (사양서4 VP-714 / 사양서5 VP-786) --------
+    # 회귀 초기 설정 단계(core/regression.py Phase 3)에서 이미 구성해 두는 것이
+    # 기본 경로다(사용자 지시, 2026-08-21: "처음 전체 자동화 셋팅 설정할 때
+    # 자동으로 설정되게 해주고"). 여기서도 같은 함수를 호출하는 이유는 `python
+    # run.py tc07`을 단독 실행할 때도 이 검증이 항상 유효하게 하기 위함이다 —
+    # 이미 설정돼 있으면 즉시 확인만 하고 지나간다(재구성 없음, `ensure_*`
+    # 함수의 idempotent 설계).
+    print_scp_name = None
+    for spec in ((cfg.get("dicom") or {}).get("servers_to_register") or []):
+        if spec.get("kind") == "Print":
+            print_scp_name = spec.get("name")
+    if not print_scp_name:
+        r.add(step, "Print Overlay 설정 보장", MANUAL,
+              note="config.json의 dicom.servers_to_register에 Print 서버 name이 없어 "
+                   "Print Overlay 프로파일을 어느 SCP에 연결해야 할지 알 수 없다.")
+    else:
+        try:
+            prof = W.ensure_print_overlay_profile(ui, cfg, print_scp_name,
+                                                   evidence_dir=evidence_dir)
+            link = W.link_print_overlay_to_scp(ui, cfg, print_scp_name, print_scp_name)
+            r.add(step, "Print Overlay 설정 보장 (프로파일 %d개 항목 + SCP 연결)"
+                       % len(W.PRINT_OVERLAY_DEFAULT_ITEMS),
+                  PASS if (prof.get("ok") and link.get("ok")) else MANUAL,
+                  expected="Setting > DICOM - Print Overlay에 %s 프로파일이 있고, "
+                           "Setting > DICOM - Print의 Overlay 콤보가 그 프로파일을 가리킨다"
+                           % print_scp_name,
+                  actual="프로파일: %s / 연결: %s" % (prof.get("note"), link.get("note")),
+                  note="사양서4(260820) p.100-108 VP-714, 사양서5(260820) p.94-97 "
+                       "VP-786 근거. 프로파일 화면에서 Update만 해서는 실제 인쇄물에 "
+                       "반영되지 않고, DICOM - Print 화면의 Overlay 콤보로 SCP와 "
+                       "명시적으로 연결해야 한다(사용자 제보로 실측 확인, 2026-08-21). "
+                       "이 Step은 매 실행마다 재구성하지 않는다 — 이미 구성돼 있으면 "
+                       "그 사실만 확인한다.")
+        except Exception as exc:                          # noqa: BLE001
+            r.add(step, "Print Overlay 설정 보장", MANUAL, actual=str(exc))
+    step += 1
+
     # --- Step 3: 전송할 영상 준비 --------------------------------------
     if do_acquire:
         try:
@@ -168,6 +205,32 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
                   actual="; ".join("id=%s size=%s at=%s"
                                    % (j.get("id"), j.get("film_size_id"),
                                       j.get("received_at")) for j in fresh))
+            step += 1
+
+            # --- Print Overlay 실제 픽셀 반영 확인 (받은 쪽 OCR) ------------
+            # 'Print 성공'과 같은 원리로 판정한다 — 제품 UI가 아니라 **받은
+            # 쪽의 실제 필름 이미지**를 본다. `/api/jobs/<id>/preview`는
+            # 문서화되지 않은 엔드포인트였지만 `/api/jobs/<id>` 응답의
+            # `preview_url` 필드로 실존을 확인했다(2026-08-21, 사용자 지시:
+            # "실제 너가 프린트 서버에 접근해서 실제 인쇄물에 반영되는지까지
+            # 확인해주라").
+            try:
+                newest = max(fresh, key=lambda j: j.get("id"))
+                ocr_text = server.preview_ocr_text(newest.get("id"))
+                found = [t for t in W.PRINT_OVERLAY_CHECK_TEXTS if t.lower() in ocr_text.lower()]
+                missing = [t for t in W.PRINT_OVERLAY_CHECK_TEXTS if t not in found]
+                r.add(step + 1, "Print Overlay가 수신 필름 픽셀에 실제로 반영됨",
+                      PASS if not missing else FAIL,
+                      expected="필름에 %s 전부 표시" % ", ".join(W.PRINT_OVERLAY_CHECK_TEXTS),
+                      actual="확인됨: %s / 못 찾음: %s"
+                             % (found or "없음", missing or "없음"),
+                      note="받은 쪽(Print SCP)의 실제 필름 이미지를 OCR로 읽었다 — "
+                           "제품 UI를 신뢰하지 않고 픽셀 자체를 본다. OCR 원문(600자): "
+                           "%s" % " ".join(ocr_text.split())[:600])
+                r.attach("preview job id=%s" % newest.get("id"))
+            except Exception as exc:                      # noqa: BLE001
+                r.add(step + 1, "Print Overlay가 수신 필름 픽셀에 실제로 반영됨",
+                      MANUAL, actual="%s: %s" % (type(exc).__name__, exc))
             step += 1
     step += 1
 

@@ -265,22 +265,24 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
 
     # --- Step 3: XIPL Studio ---------------------------------------------
     studio_exe = (cfg.get("xipl") or {}).get("studio_exe")
+    # 코드 결함 수정(2026-08-21, 사용자 실측 제보): Image Process 창을 열고
+    # 닫으면 Viewer가 다시 그려져 팔레트 좌표가 바뀐다(Result_20260821_094303 —
+    # 팔레트 25개를 읽었는데도 "XIPL을 찾지 못했다"고 오판했던 원인). 재판독은
+    # 이전까지 `else` 분기 안에만 있어서, 판정 자체는 Step 2 진입 전에 캡처한
+    # **낡은** 팔레트를 보고 있었다. XIPL 판정 직전에 팔레트를 다시 읽는다 —
+    # 실제로는 Studio가 정상 기동한다(사용자 확인, 2026-08-21).
+    W.viewer_mode(ui, cfg)
+    palette = W.read_tool_palette(ui, cfg, evidence_dir=evidence_dir, refresh=True)
     if "XIPL" not in palette:
         r.add(step, "XIPL 버튼 → Studio 오픈", MANUAL,
               expected="팔레트의 XIPL 버튼",
-              actual="팔레트에서 XIPL을 찾지 못했다",
-              note="이 환경에 노출되지 않았거나 라벨 판독 실패. XIPL 라이선스가 "
-                   "없으면 툴이 나타나지 않을 수 있다(툴 노출은 라이선스·옵션에 "
-                   "따라 달라진다 — 사용자 확인).")
+              actual="재판독한 팔레트에서도 XIPL을 찾지 못했다(읽어낸 툴: %s)"
+                     % (", ".join(sorted(palette)) or "없음"),
+              note="이 환경에 노출되지 않았거나 라벨 판독에 실패했다. 증적 캡처"
+                   "(Evidence/tc04)를 확인할 것.")
         step += 1
     else:
         before_up = _process_running("XIPL.STUDIO")
-        # Image Process 모달을 닫은 뒤 Viewer 레이아웃/팔레트가 다시 그려진다.
-        # 첫 캡처의 좌표 캐시를 그대로 쓰지 않고 이 시점의 팔레트를 다시 읽어
-        # XIPL 좌표를 확보한다.
-        W.viewer_mode(ui, cfg)
-        palette = W.read_tool_palette(
-            ui, cfg, evidence_dir=evidence_dir, refresh=True)
         xipl_click = W.click_tool(ui, cfg, "XIPL", evidence_dir=evidence_dir)
         time.sleep(5)
         popups = dialogs.clear_blocking(ui, cfg, evidence_dir=evidence_dir)

@@ -195,6 +195,95 @@ Statistics · `30378` Multi-Study · `30348` QXLink · `30471` Report · `30473`
 
 ---
 
+## 표 목록을 열 이름·셀 값으로 읽기 (`core/listgrid.py`)
+
+사용자 지시(2026-08-21): *"각 열의 정보가 export 한 정보와 동일하게 나오면 될 것
+같은데, 만약 열의 크기가 좁아서 `...`으로 개행이 되는 건 행의 크기를 넓히도록
+해줘. 이건 core 함수로 구현해서 어디 탭이든지 사용할 수 있도록 해줘 —
+레지스트레이션이나 데이터베이스나 어떤 팝업이든지."*
+
+VXvue의 목록은 행이 `ListItem`이라는 **텍스트 없는 자식 창**이라 셀 값은 캡처+OCR로만
+읽을 수 있다. 그런데 열 폭이 좁으면 제품이 값을 `ACC_VX_AUT...`로 잘라 그리고, 그
+상태로 OCR하면 잘린 값을 진짜 값으로 착각해 잘못된 FAIL이 난다.
+
+핵심은 목록 헤더가 **표준 `SysHeader32`** 라는 점이다. 실측(Database 목록)에서
+`HDM_GETITEMCOUNT`가 14를 돌려주고 열 이름·x 범위를 전부 정확히 읽었다.
+
+```
+Column(0, 'Study Key', w=39, x=18..57)       Column(7, 'Acc. No.', w=85, x=618..703)
+Column(2, 'Patient ID', w=143, x=174..317)   Column(8, 'Study Description', w=138, ...)
+```
+
+| 하는 일 | 방법 | 왜 이렇게 |
+|---|---|---|
+| 열 식별 | `HDM_GETITEMW` / `HDM_GETITEMRECT` (메시지) | **OCR을 쓰지 않는다** — 헤더 라벨이 잘려 보여도 이름을 아는 데 지장이 없고, 헤더를 미리 넓힐 이유도 없다 |
+| 셀 값 읽기 | 열 경계로 잘라 낸 한 칸만 OCR(`--psm 7`) | 행 전체를 한 번에 읽으면 열 구분이 사라진다 |
+| 잘린 값 | **헤더 경계선을 마우스로 드래그**해 넓히고, 다시 읽은 뒤 **원래 폭으로 되돌린다** | `HDM_SETITEMW`로 폭 값만 바꾸면 owner-draw 목록이 셀을 다시 안 그릴 수 있다. 드래그는 제품 자신의 재배치 로직을 타므로 반영이 보장된다(사용자 선택) |
+| 빈 값 | 판정에 쓸 열이 빈 문자열로 읽히면 그 열도 넓혀 다시 읽는다 | 실측: `Age`(폭 30)는 잘린 표시 없이 그냥 빈 문자열로 읽혔다 — 빈 판독을 믿으면 잘못된 FAIL이 난다 |
+| 끝까지 잘린 열 | `_truncated`로 표시하고, `compare_row()`가 **일치로 세지 않고** `partial`로 따로 담는다 | 잘린 값을 완전한 값처럼 판정에 쓰지 않는다 |
+
+넓히는 시점은 **검색이 끝나 목록이 채워진 뒤**이고, 한 번에 한 열씩만 넓힌다 —
+여러 열을 동시에 넓히면 오른쪽 열이 화면 밖으로 밀려 못 읽힌다. 폭 복원은 실측으로
+확인했다(`폭이 되돌아오지 않은 열: 없음`).
+
+`ListCtrl` + `SysHeader32` 조합이면 화면 종류를 가리지 않는다 — Registration/Database
+목록, Import Study 팝업 목록에서 같은 코드로 쓴다.
+
+---
+
+## 실행마다 구분되는 시험 처방 (`core/testdata.py`)
+
+사용자 지적(2026-08-21): *"patient id가 다 너무 똑같아서 실제 import가 잘되었는지
+확인이 불가능한데, 날짜 시간 이런 걸 id에 넣는 건 불가능할까? 각 patient 생성할 때
+출생일 성별 이런 걸 랜덤으로 설정해서 등록하게 해주는 것도 좋은 것 같아."*
+
+판정의 신뢰도 문제였다. 시험 처방이 고정값(`VXVUE_MWL_DX_01` / `ACC_VX_AUTO_001`)
+이라 Database에 같은 Patient ID의 스터디가 수십 건 쌓였고, TC08의 역방향 Import
+판정이 "Export한 그 스터디가 들어왔다"가 아니라 **"같은 ID를 가진 어떤 스터디가
+있다"** 밖에 확인하지 못했다.
+
+| 필드 | 처리 | 이유 |
+|---|---|---|
+| `mwl_patient_id` / `mwl_patient_name` / `mwl_accession` / `mwl_sps_id` | 실행 시각 각인(`VXVUE_260821_150157`) | 그 실행의 스터디를 목록에서 유일하게 지목 |
+| `mwl_patient_sex` / `mwl_patient_birthdate` | 각인을 시드로 선택 | 열 값이 실제로 그 처방에서 왔는지 구분 |
+| `mwl_procedure_id` / `*_description` / `mwl_modality` | **고정** | Procedure Code 매핑(`--map-procedure`)의 대상이다. 매 실행 바뀌면 제품 매핑 표에 항목이 쌓이고 매번 다시 매핑해야 한다 |
+
+성별·생년월일은 **난수가 아니라 각인을 시드로** 뽑는다. 완전 난수면 리포트에 남은
+값으로도 같은 조건을 재현할 수 없다. 각인을 시드로 쓰면 ID만 보고 그 실행의
+성별·생년월일을 그대로 되짚을 수 있다.
+
+새 값을 뽑는 시점은 **MWL 처방을 만드는 순간 하나뿐**이다(`new_for_mwl()`).
+`python run.py mwl-ensure`와 `python run.py tc08`은 서로 다른 프로세스라, 실행마다
+새로 뽑으면 tc08이 존재하지 않는 환자를 찾다 실패한다. 그래서 만든 처방을
+`Cache/current_testdata.json`에 기록하고 다른 명령은 `load()`로 그것을 읽는다
+(`Cache/`는 `.gitignore` 대상 — 환자 식별자가 공개 저장소로 나가지 않는다).
+
+지난 실행의 처방은 `prune_auto_orders()`가 지운다(사용자 지시: *"기존 환자는
+삭제하고"*). **`patient_id`가 `VXVUE_`로 시작하는 것만** 지우므로 다른 제품의 시험
+처방(`DATA_FLOW_MWL_01` 등 14건)은 건드리지 않는다 — 실측으로 확인했다. VXvue DB의
+스터디는 지우지 않는다(그건 `core/dbreset.py`의 백업/복원 담당).
+
+끄려면 `config.json`에 `"test_data": {"unique_per_run": false}`.
+
+---
+
+## Database 조회는 `Clear` 프리셋으로 시작한다
+
+사용자 지시(2026-08-21): *"검색할 때 default를 clear로 바꾸고 search를 누르게 해줘."*
+`database_search()`가 조회 전에 프리셋 스플릿 버튼(`30935`)의 드롭다운에서
+`Clear`(`30941`)를 고르고 Search(`30689`)를 누른다. `Clear`는 날짜 범위 등 조회
+조건을 비워 **전체 범위로 조회**하게 한다 — Import로 들어온 스터디처럼 검사일이
+오늘이 아닐 수 있는 건을 날짜 필터가 걸러 버리는 것을 막는다. `Clear`는 결과 목록도
+비우므로 **반드시 그 뒤에 Search를 눌러야** 한다.
+
+실측 확정: 이 컨트롤은 `TextSplitButton`이고 자식이 둘이다 — `1`은 라벨(누르면 그
+프리셋을 즉시 적용), `2`가 드롭다운 화살표다. 화살표를 누르면 `ItemList`라는 별도
+최상위 창이 뜨고 그 안에 `30940`=Default, `30941`=Clear가 있다(각 버튼을 캡처+OCR해
+라벨 확정). 처음에 라벨 쪽(`1`)을 눌러 메뉴가 열리지 않고 Default가 적용되는
+헛걸음을 했다.
+
+---
+
 ## TC_WindowsUpdate_02 — MWL 조회 워크플로우
 
 코드: `tests/tc02_mwl_workflow.py` · 실행: `python run.py tc02`
@@ -305,12 +394,26 @@ TC02와 다른 점: TC02는 "정보 일치"를, 이 TC는 **"전송된 객체의
 | Step | 코드가 하는 일 | Expected Result(판정 기준) | 판정 |
 |---|---|---|---|
 | 1 | Print SCP 가동 확인(`GET /api/scp-status`) | `running=true`. Precondition에 해당하며 가동하지 않으면 이후 판정이 무의미 | PASS/FAIL |
-| 2 | **VXvue가 보낸 기존 필름 id를 기준선으로 뜬다** | 기존 필름을 지우지 않고 id로 걸러낸다 — 같은 시험 서버를 자매 프로젝트와 공유하므로(실측: 다른 제품 필름 8건) 전체 목록으로 판정하면 남의 필름을 자기 결과로 착각한다 | PASS |
+| 2 | **VXvue가 보낸 기존 필름 id를 기준선으로 뜬다** | 기존 필름을 지우지 않고 id로 걸러낸다 — 같은 시험 서버를 자매 프로젝트와 공유하므로 전체 목록으로 판정하면 남의 필름을 자기 결과로 착각한다 | PASS |
 | 3 | Print 화면의 서버/필름 크기/방향 콤보 판독(`30955`/`30956`/`30957`) | 서버 콤보가 등록된 Print SCP를 가리킨다. 콤보 텍스트가 잘려 표시되므로 접두만 대조 | PASS/MANUAL |
-| 4 | MWL 오픈 + 촬영 | 영상 1장 이상 | PASS/FAIL |
-| 5 | Print 실행 — Database 목록이 있으면 Database `Print`(30293), 없으면 Print 화면에서 직접 | **두 번의 확인이 필요하다**(실측 2026-08-21). ① Database `Print`를 누르면 뜨는 확인 팝업('Do you want to print all images...')을 `confirm_scope_popup(scope="all")`로 넘긴다(Send 팝업과 같은 버튼 구성). ② 그러면 필름 구성 화면(`CUIFilmManager`)으로 전환되는데, 여기서 **다시 Print(`30718`)를 눌러야**(`finish_print()`) 실제로 Print SCP에 전송된다 — 이 두 번째 클릭이 빠지면 필름 구성만 되고 아무것도 전송되지 않는다(이전 버전의 거짓양성 원인) | PASS/FAIL |
-| 6 | `GET /api/jobs`에서 **Calling AE=VXVUE의 신규 필름**을 기다린다 | 1건 이상 신규 수신. 'Print 성공'의 유일한 객관적 근거 | PASS/FAIL |
-| 7 | 수신 필름의 속성(id / film_size / received_at) 기록 | 증적으로 남긴다 | PASS |
+| 4 | **Print Overlay 설정 보장** — `Setting > DICOM - Print Overlay`에 프로파일(6개 항목, 4구역 분배)을 만들고, `Setting > DICOM - Print`의 Overlay 콤보로 그 SCP와 연결 | 두 화면 다 저장돼야 실제 인쇄물에 반영된다(사용자 제보로 실측 확인). 이미 구성돼 있으면 재구성하지 않고 확인만 한다 — 계획에 없는 항목이 섞여 있으면 빼낸다 | PASS/MANUAL |
+| 5 | MWL 오픈 + 촬영 | 영상 1장 이상 | PASS/FAIL |
+| 6 | Print 실행 — Database `Print`(30293) → 확인 팝업 → 필름 구성 화면의 Print(`30718`) | **두 번의 확인이 필요하다**(실측 2026-08-21). 두 번째 클릭이 빠지면 필름 구성만 되고 아무것도 전송되지 않는다(이전 버전의 거짓양성 원인) | PASS/FAIL |
+| 7 | `GET /api/jobs`에서 **Calling AE=VXVUE의 신규 필름**을 기다린다 | 1건 이상 신규 수신. 'Print 성공'의 유일한 객관적 근거 | PASS/FAIL |
+| 8 | 수신 필름의 속성(id / film_size / received_at) 기록 | 증적으로 남긴다 | PASS |
+| 9 | **수신 필름의 픽셀을 OCR해 Overlay 반영 확인** — `/api/jobs/<id>/preview`(JPEG)를 받아 네 모서리 띠만 잘라 확대해 읽는다 | `E.I.` / `DOI` / `Acc. No` / `Performing Physician`이 필름에 전부 그려져 있다. 제품 UI가 아니라 **받은 쪽 픽셀**로 판정한다 | PASS/FAIL |
+| 10 | 시험 후 정리 — 열린 검사 닫기 | 열린 검사 0개. 남으면 다음 시험의 시작 상태가 불분명해진다 | PASS/FAIL |
+
+### Print Overlay 판정에서 실제로 틀렸던 것 (2026-08-21)
+
+세 가지가 겹쳐 "제품은 정상인데 자동화가 FAIL"을 만들었다. 필름을 직접 받아 눈으로
+확인해 보니 6개 항목이 전부 정상 인쇄돼 있었다.
+
+| 문제 | 원인 | 고친 방법 |
+|---|---|---|
+| Step 9에서 `DOI`만 검출, 나머지 3개 누락 | 1318x1600 필름을 통째로 OCR하면 X-ray 픽셀에 둘러싸인 모서리 흰 글씨를 Tesseract가 글자로 보지 않는다(`50 qi E DOI : 2026-08-21 EI. j 1115`만 나왔다) | `core/printscp.preview_ocr_text()`가 **네 모서리 띠(세로 12%)만 잘라 확대**해 psm 6·11 + 임계값 이진화의 합집합으로 읽는다. 띠 크기·psm 조합은 저장된 필름 3장으로 비교 측정해 골랐다 |
+| Step 4가 항목이 있는데도 MANUAL | 목록이 폭에 맞춰 라벨을 잘라 그리는데(`Accession Num...`) 코드가 `항목명 in 행텍스트` 방향으로만 비교했다 | `_overlay_row_has()` — **행 텍스트가 항목명의 앞부분인 경우도 인정**한다(4글자 미만 조각은 우연 일치 위험이 있어 거부) |
+| 계획에 없는 `Exposure Time`이 Bottom Left에 끼어들어 필름에 `TOI`가 인쇄됨 | 위 오판으로 매번 재추가를 시도했고, OCR 줄 번호와 행 번호를 **인덱스로 맞추던** 로직이 한 칸 밀려 엉뚱한 행을 클릭했다 | `_ocr_lines_with_rows()` — 단어 좌표(`image_to_data`)로 각 줄의 y 중심을 구해 **그 y를 품는 행 rect와 짝짓는다**. 그리고 `_print_overlay_strip_extras()`가 계획 외 항목을 빼낸다 |
 
 Print SCP는 체크리스트 Precondition대로 **다른 PC**에 있다 — Storage와 달리 이
 조건은 충족한다.
@@ -363,19 +466,83 @@ IMG(Import 전제조건)를 함께 선택**한다 — 실측: 한 번의 Export�
 |---|---|---|---|
 | 0 | 대상 드라이브 확인. 설정된 드라이브가 없으면 D로 대체 | 사용 가능한 드라이브 확보. 대체 시 **PASS로 올리지 않고 MANUAL**로 남겨 "외부 매체 대신 내장 드라이브로 대체했다"는 사실을 표시 | PASS/MANUAL/BLOCKED |
 | 1 | 대상 폴더 준비, **기존 파일 목록을 먼저 뜬다** | 대상 사용 가능. 기준선이 없으면 이전 산출물을 이번 결과로 착각한다 | PASS/FAIL |
-| 2 | MWL 오픈 + 촬영 + Close | 영상 획득 후 검사 종료 | PASS/FAIL/SKIP |
-| 3 | Database에서 Export 대상 선택 | 목록에 스터디가 있어야 한다. `database_search()` 재시도까지 실패하면 BLOCKED | PASS/BLOCKED |
+| 2 | MWL 오픈 + 촬영 + **Close(닫힘 확인)** | 영상 획득 후 **검사가 실제로 닫혀야** 한다 — 열린 검사 탭 수가 줄었는지 센다. 닫히지 않으면 스터디가 DB에 커밋되지 않아 이후 Export가 다른 스터디를 대상으로 삼는다 | PASS/FAIL/SKIP |
+| 3 | Database에서 **이번 실행의 Patient ID로 대상 행을 지목**(`ListGrid.find_row()`) | 첫 행을 그대로 쓰지 않는다. 못 찾으면 첫 행으로 대체하지 않고 FAIL — 대체하는 순간 "무엇을 검증했는지"를 잃는다 | PASS/FAIL |
 | 4 | Export(`30300`, 확인 팝업 처리) → Export Manager 창 확인 | 별도 프로세스 `VX.EXPORT.MANAGER` 창이 열린다. **에러 팝업이 뜨면 #21049 재발 가능성으로 표시** | PASS/FAIL/MANUAL |
 | 5 | 위 표대로 드라이브·폴더·형식(DICOM+IMG) 지정 후 Start, 완료까지 대기 | Export Path가 요청한 대상과 일치 + Current State=Done | PASS/FAIL/MANUAL |
 | 6 | 대상 폴더의 신규 파일 확인 | 산출물 생성 | PASS/MANUAL |
 | 7 | IMG 형식 산출물 확인 | `S{Series}I{Instance}.img` 1개 이상 — 이게 있어야 Step 9(역방향 Import)가 원칙적으로 가능하다 | PASS/MANUAL |
 | 8 | 산출물의 DICOM 태그 대조(가장 큰 DICOM 파일 기준) | PatientID 일치. **같은 검사에서 Dose SR(수 KB)도 함께 Export되므로 크기순으로 골라 실제 영상 파일을 본다** — 안 그러면 SR 객체를 잘못 골라 태그가 비어 보일 수 있다(2026-08-21 실측 재현) | PASS/FAIL |
-| 9 | QXLink portable viewer 포함 확인 | 산출물에 포함. **실행 여부는 사람이 확인**한다(외부 실행 파일을 자동으로 띄우지 않는다) | PASS/MANUAL |
-| 10 | 역방향 Import | **수행하지 않는다** — DB에 데이터를 추가하는 조작이라 자동 승인 없이 실행하지 않는다(Setting Import와 같은 원칙). 버튼은 실측 확인됨(`30315`) | MANUAL |
+| 9 | 포터블 뷰어 포함 확인 — 대상 폴더 전체에서 `PV.Loader.exe` / `PortView\QXL.PV.exe`를 찾는다 | 산출물에 포함. **실행 여부는 사람이 확인**한다(외부 실행 파일을 자동으로 띄우지 않는다). 파일명에 `qxlink`가 들어가지 않고(실측), 뷰어는 매체에 한 번만 기록되므로 '이번 실행의 신규 파일'에서 찾으면 두 번째 실행부터 못 찾는다 | PASS/MANUAL |
+| 10 | **역방향 Import** — `Database > Import`(`30315`) → Location 지정 → 목록 열 값 대조 → Import → 결과 팝업 → 창 닫힘 확인 → Database 재조회 | 아래 "역방향 Import 자동화" 절 참고. `--no-import`로 끄면 MANUAL로 남는다 | PASS/FAIL/MANUAL |
+| 11 | **매체 정리** — Export 대상 폴더 안을 비운다 | 사용자 지시(2026-08-21). 남기면 다음 실행의 Import 목록에 이전 스터디가 섞여 판정 근거가 흐려진다. 삭제 범위는 설정된 Export 폴더 안뿐이고, 드라이브 루트이거나 설정과 다른 경로면 아무것도 지우지 않는다. `--keep-export`로 끔 | PASS/MANUAL/SKIP |
 
-2026-08-21 재검증: **PASS 8 / FAIL 0 / MANUAL 2**(이전 BLOCKED에서 대폭 향상).
-남은 MANUAL 2건(Step 9 QXLink 실행 확인, Step 10 Import)은 설계상 의도된
-것이다 — 외부 실행 파일 구동과 DB 쓰기는 자동 승인 없이 하지 않는다.
+2026-08-21 재검증: **PASS 11 / FAIL 0 / MANUAL 0 / SKIP 0 (FULL)**.
+
+### 실측으로 드러난 것 — Database 화면의 Close가 검사를 닫지 않는다
+
+Step 2의 닫힘 확인을 넣자 곧바로 드러났다. `Database > Close`(`30275`)를 눌러도
+**열린 검사 탭이 그대로 남았고**, 뒤이은 `close_all_studies()`(Close All 툴
+`30274`)에서 비로소 닫혔다 — 리포트에 `열린 탭 1 → 0 (database_close(무효) →
+close_all_button)`으로 남는다.
+
+체크리스트 TC02 Step 4가 *"스터디를 Close 하고 Database 에서 스터디 정보를
+확인한다"* 이므로 이 버튼의 의미를 확정해야 한다. 지금 확인된 것은 "이 버튼을
+눌러도 열린 검사 탭이 줄지 않았다"는 사실뿐이고, **그것이 제품 결함인지, 이
+버튼이 원래 다른 대상(예: Database 목록에서 선택한 항목)에 대한 것인지는 문서로
+확정하지 못했다** — `사양 확인 필요`로 남긴다. 자동화는 어느 경로로 닫혔는지
+`method`에 남기므로 판정이 가려지지 않는다.
+
+## 역방향 Import 자동화 (2026-08-21 신규 실측)
+
+사용자 지시: *"Export 실행부터 산출물 검증, 역방향 Import까지 전부 자동 판정되게."*
+이전까지는 "DB에 데이터를 추가하는 조작"이라 고정 MANUAL로 남겨 뒀지만, 이것이
+체크리스트 Step 2 자체(*CD/USB에 Export된 스터디를 선택 후 뷰어로 import 한다*)라
+지시대로 자동 수행한다. 되돌리기가 필요하면 `core/dbreset.py`의 백업/복원을 쓴다.
+
+**Import Study 창은 제목이 빈 최상위 팝업이다.** 제목("Import Study")을
+owner-draw로 그리기 때문에 (1) 메인 윈도우의 자식 트리에 없고 (2) 제목으로 창을
+거를 수도 없다. 그래서 `top_windows()`를 훑어 **필요한 컨트롤 ID를 모두 가진
+창**으로 확정한다(`W.find_import_dialog()`). 이걸 몰라서 두 번 헛돌았다.
+
+| 컨트롤 | ID | 확정된 사실 |
+|---|---|---|
+| Location Edit | `30116` | **표시 전용** — `type_text()`가 통하지 않는다(Export Manager 경로 Edit과 같은 성질) |
+| Browse `...` | `30515` | 표준 `SHBrowseForFolder`("폴더 찾아보기")를 띄운다 |
+| 스터디 목록 | `31118` | Patient Name / Patient ID / Acc. No. / Birth Date / Age / Sex / Study Date Time |
+| Import | `30685` | 누르면 범위 확인 팝업(`27002` All Studies / `27001` Selected / `27000` Cancel — Print·Export와 같은 구성) |
+| Close | `30467` | |
+
+판정 근거는 셋을 함께 본다.
+
+1. **결과 팝업** — `Info: Succeed to import the studies.` 단, **먼저 뜨는
+   `Importing files 1/1 ...` 진행 팝업을 결과로 읽으면 안 된다.** 실제로 그것을
+   결과로 읽어 잘못 FAIL이 났다(`Result_20260821_145739`) — 진행 문구는 건너뛰고
+   종료 팝업을 기다린다.
+2. **목록 각 열의 값이 Export한 DICOM 태그와 일치** — 사용자 지시: *"각 열의
+   정보가 export 한 정보와 동일하게 나오면 될 것 같은데."* `core/listgrid.py`가
+   담당한다(아래 절).
+3. **Database 재조회 건수 증가** — 단, **창이 닫힌 것을 확인한 뒤에만** 이
+   근거를 쓴다. 이 창이 모달로 남아 있으면 Close와 조회 클릭이 조용히 무시돼
+   "건수 70 → 70"이라는 의미 없는 근거가 리포트에 남는다(실제 사고, 사용자 제보:
+   *"지금 import study 창이 켜져 있어서 네가 클릭한 다른 버튼들이 다 먹히지
+   않았어"*). `_close_import_dialog()`가 Close를 누른 뒤 **창이 사라진 것을
+   확인**하고, 안 닫히면 제목줄 닫기(`-4`)까지 시도한다.
+
+### 폴더 선택 — 트리를 OCR로 읽지 않는다 (`core/shelltree.py`)
+
+Location은 `...`의 폴더 찾아보기 트리에서만 정할 수 있다. 그 트리를 OCR로 읽으면
+한글 노드가 `바탕 화면` → `'mvs sa'`로 깨지고 영문조차 `VXvue1 (E:)` →
+`'me VXvuel (E)'`로 읽혀, 부분 문자열로 맞추다 **엉뚱한 노드
+(`VXvue1.0.11.015(SMZ)`)를 선택하는 사고가 실제로 났다.**
+
+`SysTreeView32`는 표준 컨트롤이므로 `TVM_*` 메시지로 노드 라벨을 정확히 읽고
+선택·펼침까지 할 수 있다. 다른 프로세스의 컨트롤이라 문자열 버퍼를 그 프로세스
+주소공간에 만들어야 하고(`core/winmsg.RemoteMem`), 셸 트리는 노드를 펼치면 폴더를
+**비동기로** 열거하므로 자식이 채워질 때까지 기다린다(`expand_and_wait()`).
+이동식 드라이브는 바탕 화면 루트에 바로 보이지만 내장 드라이브는 `내 PC` 아래에
+있어, 로케일에 의존하지 않도록 **루트 → 루트의 자식 한 단계**까지 `(X:)`로 끝나는
+노드를 찾는다.
 
 ### 부수 발견 — `core/dicomlite.py` DICOM 파서 버그 수정 (2026-08-21)
 

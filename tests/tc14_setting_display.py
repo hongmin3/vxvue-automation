@@ -288,7 +288,10 @@ def run(ui, cfg, evidence_root=None, run_name="last", sample=False, deep=False):
                    "폰트·DPI 변화로 컨트롤이 화면 밖으로 밀려 **조작할 수 없는 "
                    "설정**이 생기는 경우는 탭을 여는 것만으로 드러나지 않으므로, "
                    "그 확인이 필요하면 `python run.py tc14 --deep`으로 수행한다"
-                   "(실측 1219초 / 55화면).")
+                   "(실측 1219초 / 55화면). 이 Step은 사용자 확정(2026-08-21)에 "
+                   "따라 PASS를 막지 않는 예외다 — 체크리스트 원문 범위는 위에서 "
+                   "이미 충족했고 `--deep`은 그 위의 정밀 검증이기 때문이다.",
+              blocks_verdict=False)
         tree_path = _write_tree(rows, out_dir, context)
         r.attach(tree_path)
         r.add(len(r.checks) + 1, "Setting 트리 실측 목록 확보", PASS,

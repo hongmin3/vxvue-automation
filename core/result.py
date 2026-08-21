@@ -32,18 +32,27 @@ DOC_NUMBER = "R-25-774"
 
 
 class Check:
-    def __init__(self, step, title, status, expected="", actual="", note=""):
+    def __init__(self, step, title, status, expected="", actual="", note="",
+                 blocks_verdict=True):
         self.step = step
         self.title = title
         self.status = status
         self.expected = expected
         self.actual = actual
         self.note = note
+        # 기본은 True — MANUAL/SKIP/BLOCKED 어느 것이든 그 TC를 PASS로 올리지
+        # 못하게 막는다("완전 자동화"는 모든 Step이 PASS/FAIL인 상태, TODO_전체
+        # 자동화.md 0절). 사용자가 명시적으로 확정한 예외 하나만 False를 쓴다 —
+        # TC14의 "--deep 미수행" Step(체크리스트 원문 범위는 가벼운 모드로 이미
+        # 충족되고 --deep은 그 위의 정밀 검증이라 미수행이 PASS를 막을 이유가
+        # 아니다, 사용자 확정 2026-08-21). 다른 TC에서 새로 False를 쓰려면 같은
+        # 수준의 명시적 사용자 확정이 있어야 한다.
+        self.blocks_verdict = blocks_verdict
 
     def as_dict(self):
         return {"step": self.step, "title": self.title, "status": self.status,
                 "expected": str(self.expected), "actual": str(self.actual),
-                "note": self.note}
+                "note": self.note, "blocks_verdict": self.blocks_verdict}
 
 
 class TCResult:
@@ -59,7 +68,8 @@ class TCResult:
         self.evidence = []
 
     # --- 등록 헬퍼 -----------------------------------------------------
-    def add(self, step, title, status, expected="", actual="", note=""):
+    def add(self, step, title, status, expected="", actual="", note="",
+            blocks_verdict=True):
         now_wall = datetime.now()
         now = time.perf_counter()
         self.timings.append({
@@ -70,7 +80,8 @@ class TCResult:
             "outcome": status, "detail": "check recorded",
         })
         self._step_cursor_wall, self._step_cursor = now_wall, now
-        self.checks.append(Check(step, title, status, expected, actual, note))
+        self.checks.append(Check(step, title, status, expected, actual, note,
+                                 blocks_verdict=blocks_verdict))
         return self.checks[-1]
 
     def record_timing(self, name, started_wall, started_perf, outcome, detail="",
@@ -103,14 +114,15 @@ class TCResult:
         return self.add(step, title, PASS if cond else FAIL,
                         expected, actual if actual is not None else cond, note)
 
-    def manual(self, step, title, note, expected="", actual=""):
-        return self.add(step, title, MANUAL, expected, actual, note)
+    def manual(self, step, title, note, expected="", actual="", blocks_verdict=True):
+        return self.add(step, title, MANUAL, expected, actual, note,
+                        blocks_verdict=blocks_verdict)
 
-    def skip(self, step, title, note):
-        return self.add(step, title, SKIP, note=note)
+    def skip(self, step, title, note, blocks_verdict=True):
+        return self.add(step, title, SKIP, note=note, blocks_verdict=blocks_verdict)
 
-    def blocked(self, step, title, note):
-        return self.add(step, title, BLOCKED, note=note)
+    def blocked(self, step, title, note, blocks_verdict=True):
+        return self.add(step, title, BLOCKED, note=note, blocks_verdict=blocks_verdict)
 
     def attach(self, path):
         self.evidence.append(path)
@@ -135,7 +147,12 @@ class TCResult:
         # SKIP도 MANUAL과 마찬가지로 PASS를 막는다 — "완전 자동화"는 모든 Step이
         # PASS/FAIL로만 판정되는 상태를 뜻하고(TODO_전체자동화.md 0절, 사용자 확정
         # 2026-08-20), SKIP 1건이라도 있으면 그 TC는 완전 자동화된 것이 아니다.
-        return MANUAL if (c[MANUAL] or c[BLOCKED] or c[SKIP]) else PASS
+        # 예외: `blocks_verdict=False`로 등록된 Check(현재는 TC14의 `--deep`
+        # 미수행 Step 1건뿐, 사용자 확정 2026-08-21)는 이 계산에서 빠진다 —
+        # 비고에는 남지만 PASS를 막지 않는다.
+        blocking_bad = any(chk.status in (MANUAL, BLOCKED, SKIP) and chk.blocks_verdict
+                           for chk in self.checks)
+        return MANUAL if blocking_bad else PASS
 
     def as_dict(self):
         return {
@@ -217,9 +234,21 @@ body{font-family:'Malgun Gothic',sans-serif;margin:24px;color:#1a1a1a;background
 h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:22px 0 6px}
 .meta{color:#666;font-size:12px;margin-bottom:18px}
 table{border-collapse:collapse;width:100%;font-size:12.5px;margin-bottom:8px}
-th,td{border:1px solid #d8d8d8;padding:6px 8px;text-align:left;vertical-align:top}
+th,td{border:1px solid #d8d8d8;padding:6px 8px;text-align:left;vertical-align:top;
+     word-break:break-word;overflow-wrap:anywhere}
 th{background:#f3f4f6;font-weight:600}
 td.s{font-weight:700;text-align:center;width:80px}
+/* 기대값/실제값을 넓히고 비고를 좁힌다(사용자 지시, 2026-08-21) — 기본 표는
+   내용 길이에 따라 열 너비가 정해져 비고(자유 서술)가 기대값/실제값(핵심
+   판정 근거)보다 넓어지기 쉽다. table-layout:fixed + colgroup으로 비율을
+   고정한다. */
+table.steps{table-layout:fixed}
+table.steps col.c-step{width:4%}
+table.steps col.c-title{width:16%}
+table.steps col.c-status{width:7%}
+table.steps col.c-expected{width:27%}
+table.steps col.c-actual{width:27%}
+table.steps col.c-note{width:19%}
 .PASS{color:#0a7f3f}.FAIL{color:#c62828}.MANUAL{color:#a06000}
 .SKIP{color:#777}.BLOCKED{color:#6a1b9a}
 .sum td.s{font-size:13px}
@@ -388,8 +417,12 @@ def write_reports(results, out_dir, run_name=None, env=None):
     for r in results:
         parts.append("<h2>%s - %s <span class='%s'>[%s]</span></h2>"
                      % (e(r.tc_id), e(r.title), r.verdict, r.verdict))
-        parts.append("<table><tr><th style='width:46px'>Step</th><th>확인 항목</th>"
-                     "<th style='width:80px'>판정</th><th>기대값</th><th>실제값</th>"
+        parts.append("<table class='steps'><colgroup>"
+                     "<col class='c-step'><col class='c-title'><col class='c-status'>"
+                     "<col class='c-expected'><col class='c-actual'><col class='c-note'>"
+                     "</colgroup>"
+                     "<tr><th>Step</th><th>확인 항목</th>"
+                     "<th>판정</th><th>기대값</th><th>실제값</th>"
                      "<th>비고</th></tr>")
         for c in r.checks:
             parts.append("<tr><td>%s</td><td>%s</td><td class='s %s'>%s</td>"

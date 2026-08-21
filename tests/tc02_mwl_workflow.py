@@ -358,12 +358,24 @@ def run(ui, cfg, evidence_dir=None, do_send=True, map_procedure=None,
 
     # --- Step 4: Close -> Database 대조 ---------------------------------
     closed = W.close_study(ui, cfg, evidence_dir=evidence_dir)
-    r.add(step, "검사 Close",
-          PASS if closed.get("clicked") else FAIL,
-          expected="Database 화면의 Close 실행",
-          actual="처리한 팝업=%s / 상태=%r"
-                 % (closed.get("dialogs") or "없음", closed.get("state")),
-          note=closed.get("error", ""))
+    # **버튼을 눌렀다는 사실이 아니라 검사가 닫혔는지로 판정한다.** 실측
+    # 2026-08-21: `Database > Close`(30275)를 눌러도 열린 검사 탭이 줄지 않아
+    # (`database_close(무효)`) Close All 툴에서 비로소 닫혔다. 닫히지 않으면
+    # 스터디가 DB에 커밋되지 않아 바로 다음 Step의 DB 대조가 근거를 잃는다.
+    # 이 버튼이 원래 다른 대상(Database 목록의 선택 항목)에 대한 것인지 제품
+    # 결함인지는 문서로 확정하지 못했다 — `사양 확인 필요`로 남긴다.
+    r.add(step, "검사 Close (닫힘 확인)",
+          PASS if closed.get("ok") else FAIL,
+          expected="검사가 실제로 닫힘(열린 검사 탭 감소)",
+          actual="열린 탭 %d → %d (%s) / 처리한 팝업=%s / 상태=%r"
+                 % (closed.get("tabs_before", -1), closed.get("tabs_after", -1),
+                    closed.get("method") or "?",
+                    closed.get("dialogs") or "없음", closed.get("state")),
+          note=(closed.get("error", "") + " "
+                + ("체크리스트 Step은 'Database 화면의 Close'지만, 실측에서 그 "
+                   "버튼만으로는 닫히지 않아 Close All 툴로 닫았다(method 참고) "
+                   "— 그 버튼의 대상이 무엇인지는 `사양 확인 필요`."
+                   if "무효" in (closed.get("method") or "") else "")).strip())
     step += 1
 
     db = VXvueDb(cfg.get("sql_server", r".\CHAMELEON"), cfg.get("database", "DRF"))

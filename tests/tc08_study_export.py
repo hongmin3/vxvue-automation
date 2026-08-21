@@ -104,6 +104,7 @@ import time
 
 from core import dicomlite
 from core import workflow as W
+from core.listgrid import ListGrid
 from core.result import BLOCKED, FAIL, MANUAL, PASS, SKIP, TCResult
 from core.ui import VXvueUi
 
@@ -128,6 +129,8 @@ EXPORT_CANCEL_BUTTON = 30684    # OCR: "Cancel"
 EXPORT_DONE_STATES = ("done", "complete", "completed")
 EXPORT_ERROR_STATES = ("error", "fail", "failed")
 BROWSE_TREE_CLASS = "SysTreeView32"
+# 포터블 뷰어 산출물(실측 2026-08-21, E 드라이브 Export 결과에서 확인).
+PORTABLE_VIEWER_FILES = ("pv.loader.exe", "qxl.pv.exe")
 BROWSE_OK_ID = 1
 BROWSE_CANCEL_ID = 2
 
@@ -387,7 +390,8 @@ def _export_cfg(cfg):
 
 
 def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
-        projection="Chest", exam_step="PA"):
+        projection="Chest", exam_step="PA", do_import=True,
+        purge_export=True):
     r = TCResult(TC_ID, TC_TITLE)
     evidence_dir = evidence_dir or os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Evidence", "tc08")
@@ -451,17 +455,27 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
             acq = flow["acquire"] or {"acquired": False, "before": 0, "after": 0,
                                       "seconds": 0, "dialogs": [],
                                       "note": "Step 등록 실패로 촬영하지 않았다"}
-            W.close_study(ui, cfg, evidence_dir=evidence_dir)
+            closed = W.close_study(ui, cfg, evidence_dir=evidence_dir)
         except Exception as exc:                          # noqa: BLE001
             r.add(step, "Export 대상 스터디 준비", FAIL, actual=str(exc))
             r.finalize()
             return r
+        # **Close가 실제로 됐는지 판정에 넣는다.** 실측 2026-08-21
+        # (`Result_20260821_150508`): 버튼을 눌렀다는 사실만 믿었더니 검사가 닫히지
+        # 않았고, 닫히지 않으면 **DB에 커밋되지 않아** 이 뒤의 Export가 이전 실행의
+        # 오래된 스터디를 대상으로 삼았다(사용자 제보로 확인).
         r.add(step, "Export 대상 스터디 준비 (MWL 오픈 + 촬영 + Close)",
-              PASS if acq["acquired"] else FAIL,
-              expected="영상 1장 이상 획득 후 검사 종료",
-              actual="영상 %d → %d장 / 처리한 팝업=%s"
-                     % (acq["before"], acq["after"], acq["dialogs"] or "없음"))
-        if not acq["acquired"]:
+              PASS if (acq["acquired"] and closed.get("ok")) else FAIL,
+              expected="영상 1장 이상 획득 후 **검사가 실제로 닫힘**",
+              actual="영상 %d → %d장 / 처리한 팝업=%s / 검사 닫기: 열린 탭 %d → %d "
+                     "(%s)"
+                     % (acq["before"], acq["after"], acq["dialogs"] or "없음",
+                        closed.get("tabs_before", -1), closed.get("tabs_after", -1),
+                        closed.get("method") or "?"),
+              note="검사를 닫지 않으면 스터디가 Database에 커밋되지 않아 Export 대상"
+                   "으로 고를 수 없다(Operation Manual 3.6/6.8). Database의 Close가"
+                   " 먹지 않으면 Close All 툴로 확실히 닫고 그 사실을 method에 남긴다.")
+        if not acq["acquired"] or not closed.get("ok"):
             r.finalize()
             return r
     else:
@@ -488,9 +502,42 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
                    "실행으로는 판단할 수 없다." % KNOWN_DEFECT)
         r.finalize()
         return r
-    W.click_row(ui, rows[0])
-    r.add(step, "Database에서 Export 대상 스터디 선택", PASS,
-          actual="%s / 첫 행 선택" % summary)
+    # **첫 행을 그대로 쓰지 않는다.** 사용자 지시(2026-08-21): "실제 export 를 할
+    # 때도 내가 원하는 Study를 export 하는지 확인하는 것도 step에 추가해 주고 확인해
+    # 주라. 그냥 무지성으로 제일 상단에 있는 거 export 하지 말고." 이번 실행의
+    # Patient ID(`core/testdata.py`가 실행 시각으로 각인한 값)를 목록 열에서 찾아
+    # 그 행을 고른다 — 잘려 보이면 그 열을 넓혀 확정한다(`core/listgrid.py`).
+    want_pid = (cfg.get("test_data") or {}).get("mwl_patient_id")
+    picked = None
+    if want_pid:
+        try:
+            grid = ListGrid(ui, W.by_id(ui, W.DB_LIST)[0])
+            picked = grid.find_row("Patient ID", want_pid)
+        except Exception as exc:                          # noqa: BLE001
+            picked = {"row": None, "note": "목록 판독 실패: %s" % exc, "read": []}
+    if picked is None:
+        W.click_row(ui, rows[0])
+        r.add(step, "Database에서 Export 대상 스터디 선택", MANUAL,
+              expected="이번 실행의 Patient ID를 가진 행 선택",
+              actual="%s / config에 test_data.mwl_patient_id가 없어 첫 행을 선택" % summary,
+              note="어느 스터디를 Export했는지 확정할 수 없다.")
+    elif picked.get("row") is None:
+        r.add(step, "Database에서 Export 대상 스터디 선택", FAIL,
+              expected="Patient ID=%s 인 행" % want_pid,
+              actual="%s / %s" % (summary, picked.get("note")),
+              note="이번 실행에서 촬영한 스터디가 목록에 없다. 촬영 직후 검사가 "
+                   "닫혔는지(Step 2)와 제품 인덱싱 지연을 먼저 볼 것 — 첫 행을 "
+                   "대신 쓰면 **이전 실행의 스터디를 Export**하게 되므로 그렇게 "
+                   "하지 않는다.")
+        r.finalize()
+        return r
+    else:
+        W.click_row(ui, picked["row"])
+        r.add(step, "Database에서 Export 대상 스터디 선택 (Patient ID로 지목)", PASS,
+              expected="Patient ID=%s 인 행" % want_pid,
+              actual="%s / %s" % (summary, picked.get("note")),
+              note="목록 정렬이나 인덱싱 지연에 관계없이 **이번 실행의 스터디**를 "
+                   "대상으로 삼는다.")
     step += 1
 
     # --- Step 3: Export 실행 -------------------------------------------
@@ -608,11 +655,26 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
         r.attach(dicoms[0])
         step += 1
 
-        qx = [p for p in added if "qxlink" in os.path.basename(p).lower()]
+        # 실측 2026-08-21: 이 매체에 실제로 들어간 포터블 뷰어는 아래 두 파일이다.
+        #   E:\VXvue_QA_Export\PV.Loader.exe        (루트 로더, 140KB)
+        #   E:\VXvue_QA_Export\PortView\QXL.PV.exe  (뷰어 본체, 25MB)
+        # **파일명에 'qxlink'가 들어가지 않는다** — 그 이름으로 찾던 이전 판정은
+        # 뷰어가 정상 포함돼 있어도 항상 MANUAL이었다(Result_20260821_145739).
+        # 그리고 뷰어는 매체에 **한 번만** 기록되므로 '이번 실행의 신규 파일'에서
+        # 찾으면 두 번째 실행부터 못 찾는다 → 대상 폴더 전체에서 확인한다.
+        viewer_all = _walk(actual_dir) if os.path.isdir(actual_dir) else []
+        qx = [p for p in viewer_all
+              if os.path.basename(p).lower() in PORTABLE_VIEWER_FILES
+              or os.path.basename(p).lower().startswith("qxl.")]
+        fresh_qx = [p for p in qx if p in added]
         r.add(step, "Portable viewer(QXLink) 포함 확인",
               PASS if qx else MANUAL,
-              expected="Export 산출물에 QXLink portable viewer 포함",
-              actual="%d개: %s" % (len(qx), [os.path.basename(p) for p in qx[:3]]),
+              expected="Export 산출물에 포터블 뷰어(%s) 포함"
+                       % ", ".join(sorted(PORTABLE_VIEWER_FILES)),
+              actual="%d개: %s%s"
+                     % (len(qx), [os.path.basename(p) for p in qx[:4]],
+                        "" if fresh_qx else " (이번 실행의 신규 파일은 아니다 — "
+                                           "뷰어는 매체에 한 번만 기록된다)"),
               note="체크리스트 Test Data: 'CD 안의 QXlink portable viewer 가 정상 "
                    "실행되는지 확인할것.' — **실행 여부는 사람이 확인해야 한다**"
                    "(외부 실행 파일을 자동으로 띄우지 않는다). 자동화는 포함 여부까지 "
@@ -621,18 +683,140 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
         step += 1
 
     # --- Step 6: 역방향 Import (Expected Result 2) ----------------------
-    r.add(step, "Export된 스터디를 뷰어로 Import", MANUAL,
-          expected="Database > Import(30315)로 되읽기 성공",
-          actual="수행하지 않음 (IMG 파일 %d개 확보됨)" % len(imgs),
-          note="Import는 **DB에 데이터를 추가하는 조작**이라 자동 승인 없이 "
-               "실행하지 않는다(Setting Import와 같은 원칙). Export 산출물(IMG)이 "
-               "확보된 뒤 사람이 승인하거나 별도 옵션으로 수행하도록 남긴다. 버튼은 "
-               "실측 확인됨(Database 화면 Import=30315). 매뉴얼상 절차(Operation "
-               "Manual 8.14): Import Study 버튼 → 폴더 선택 → 검사 선택 → "
-               "All Image/Selected로 가져오기.")
+    # 사용자 지시(2026-08-21): "Export 실행부터 산출물 검증, 역방향 Import까지
+    # 전부 자동 판정되게." 이전 세션까지는 "DB에 데이터를 추가하는 조작"이라
+    # 고정 MANUAL로 남겨 뒀지만, 이것이 체크리스트 Step 2 자체(`CD/USB에 Export
+    # 된 스터디를 선택 후 뷰어로 import 한다`)이므로 지시대로 자동 수행한다.
+    # 되돌리기가 필요하면 `core/dbreset.py`의 백업/복원을 쓴다.
+    #
+    # 판정 근거 세 가지를 함께 본다(실측 2026-08-21):
+    #  1. 결과 팝업 문구 `Succeed to import the studies.`
+    #  2. Import Study 목록의 **각 열 값이 Export한 DICOM 태그와 일치**
+    #     (사용자 지시: "각 열의 정보가 export 한 정보와 동일하게 나오면")
+    #  3. Database 조회 건수 증가
+    if not do_import:
+        r.add(step, "Export된 스터디를 뷰어로 Import", MANUAL,
+              expected="Database > Import로 되읽기 성공",
+              actual="--no-import로 실행되어 수행하지 않음 (IMG %d개 확보됨)"
+                     % len(imgs),
+              note="Import를 건너뛰면 체크리스트 Expected Result 2를 확인하지 "
+                   "못한다 — 반복 디버깅용 옵션이다.")
+    else:
+        want_cols = {}
+        if dicoms:
+            src = dicomlite.read_tags(dicoms[0],
+                                      ["PatientID", "PatientName",
+                                       "AccessionNumber", "PatientBirthDate",
+                                       "PatientSex"])
+            want_cols = {"Patient ID": str(src.get("PatientID") or ""),
+                         "Patient Name": str(src.get("PatientName") or ""),
+                         "Acc. No.": str(src.get("AccessionNumber") or ""),
+                         "Birth Date": str(src.get("PatientBirthDate") or ""),
+                         "Sex": str(src.get("PatientSex") or "")}
+            want_cols = {k: v for k, v in want_cols.items() if v}
+        try:
+            imp = W.import_studies(ui, cfg, actual_dir, expected=want_cols,
+                                   scope="selected", evidence_dir=evidence_dir)
+        except Exception as exc:                          # noqa: BLE001
+            r.add(step, "Export된 스터디를 뷰어로 Import", FAIL,
+                  actual="%s: %s" % (type(exc).__name__, exc))
+        else:
+            m = imp.get("match") or {}
+            r.add(step, "Export된 스터디를 뷰어로 Import (열 값 대조 포함)",
+                  PASS if imp.get("ok") else FAIL,
+                  expected=("Location=%s / 목록 열 값이 Export 태그와 일치(%s) / "
+                            "결과 팝업이 성공" % (actual_dir, sorted(want_cols)))
+                           if want_cols else
+                           "Location=%s / 결과 팝업이 성공" % actual_dir,
+                  actual=imp.get("note"),
+                  note="Location은 표시 전용 Edit이라 타이핑이 통하지 않아 "
+                       "`...`의 표준 폴더 찾아보기 트리에서 지정한다 — 그 트리는 "
+                       "OCR이 한글·잘린 라벨에서 틀리므로 `core/shelltree.py`가 "
+                       "`TVM_*` 메시지로 노드를 정확히 읽는다. 목록 열 값은 "
+                       "`core/listgrid.py`가 헤더(`SysHeader32`)에서 열 경계를 "
+                       "얻어 셀 단위로 읽고, 값이 `...`로 잘려 보이면 그 열의 "
+                       "경계선을 드래그해 넓혀 다시 읽은 뒤 원래 폭으로 "
+                       "되돌린다(사용자 지시, 2026-08-21). 읽은 값: %s"
+                       % (imp.get("row_values") or "(못 읽음)"))
+            if m.get("partial"):
+                r.attach("열이 끝까지 잘려 접두만 대조한 항목: %s"
+                         % sorted(m["partial"]))
+        step += 1
+
+    # --- Step 7: 매체 정리 — Export 산출물 삭제 -------------------------
+    # 사용자 지시(2026-08-21): *"export/import 테스트가 완료되면 실제 E드라이브에
+    # export 했던 파일은 삭제까지 해주라."* 남겨 두면 (1) 매체가 계속 차고
+    # (2) 다음 실행의 Import 목록에 이전 스터디가 섞여 "어느 것이 이번 것인지"가
+    # 흐려진다(오늘 실제로 그 혼란이 있었다).
+    #
+    # 파괴적 조작이므로 범위를 좁게 못 박는다 — 지우는 대상은 **config의
+    # `export.dest_dir` 그 폴더 안**뿐이고, 드라이브 루트이거나 설정된 폴더 이름과
+    # 다르면 아무것도 지우지 않는다. `--keep-export`로 끌 수 있다.
+    if not purge_export:
+        r.add(step, "매체 정리 — Export 산출물 삭제", SKIP,
+              note="--keep-export로 실행되어 %s를 그대로 남겼다." % actual_dir)
+    else:
+        purge = _purge_export_dir(actual_dir, dest)
+        r.add(step, "매체 정리 — Export 산출물 삭제",
+              PASS if purge["ok"] else MANUAL,
+              expected="%s 안의 Export 산출물 삭제" % actual_dir,
+              actual=purge["note"],
+              note="사용자 지시(2026-08-21). 남겨 두면 다음 실행의 Import 목록에 "
+                   "이전 스터디가 섞여 판정 근거가 흐려진다. **삭제 범위는 설정된 "
+                   "Export 대상 폴더 안뿐**이며, 드라이브 루트이거나 설정과 다른 "
+                   "경로면 아무것도 지우지 않는다.")
 
     r.finalize()
     return r
+
+
+def _purge_export_dir(actual_dir, configured_dest):
+    """Export 대상 폴더 **안의 내용만** 지운다(폴더 자체는 남긴다).
+
+    안전장치:
+      * 경로에 폴더명이 없으면(드라이브 루트) 거부한다.
+      * 설정된 `export.dest_dir`의 폴더명과 다르면 거부한다 — 엉뚱한 경로를
+        지우지 않기 위한 최소 조건이다.
+
+    반환: {"ok", "files", "bytes", "note"}
+    """
+    import shutil
+    want_name = os.path.basename(os.path.normpath(configured_dest or ""))
+    have_name = os.path.basename(os.path.normpath(actual_dir or ""))
+    if not have_name or len(os.path.normpath(actual_dir)) <= 3:
+        return {"ok": False, "files": 0, "bytes": 0,
+                "note": "대상이 드라이브 루트로 보여 삭제하지 않았다(%r)." % actual_dir}
+    if want_name and have_name.lower() != want_name.lower():
+        return {"ok": False, "files": 0, "bytes": 0,
+                "note": ("실제 대상(%s)이 설정된 Export 폴더명(%s)과 달라 "
+                         "삭제하지 않았다." % (have_name, want_name))}
+    if not os.path.isdir(actual_dir):
+        return {"ok": True, "files": 0, "bytes": 0,
+                "note": "폴더가 없어 지울 것이 없었다(%s)." % actual_dir}
+    files = _walk(actual_dir)
+    total = 0
+    for path in files:
+        try:
+            total += os.path.getsize(path)
+        except OSError:
+            pass
+    errors = []
+    for name in os.listdir(actual_dir):
+        target = os.path.join(actual_dir, name)
+        try:
+            if os.path.isdir(target):
+                shutil.rmtree(target)
+            else:
+                os.remove(target)
+        except OSError as exc:
+            errors.append("%s: %s" % (name, exc))
+    left = _walk(actual_dir)
+    ok = not left
+    return {"ok": ok, "files": len(files), "bytes": total,
+            "note": ("%s 안 %d개 파일(%.1fMB) 삭제%s"
+                     % (actual_dir, len(files), total / 1048576.0,
+                        "" if ok else " — 남은 파일 %d개 %s"
+                                     % (len(left), errors[:3])))}
 
 
 def _walk(root):

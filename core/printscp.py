@@ -29,8 +29,13 @@ GET    /api/storage-usage  저장 사용량
 """
 
 import json
+import os
 import time
 import urllib.request
+
+# Tesseract 설치 경로(이 QA PC 실측). 없으면 PATH의 tesseract를 쓴다.
+TESSERACT_EXE = os.path.join("C:", os.sep, "Program Files", "Tesseract-OCR",
+                             "tesseract.exe")
 
 
 class PrintScpError(RuntimeError):
@@ -101,3 +106,70 @@ class PrintServer:
     def delete_job(self, job_id):
         self._req("/api/jobs/%s" % job_id, method="DELETE")
         return True
+
+    def preview_bytes(self, job_id):
+        """수신 필름의 실제 픽셀(JPEG)을 받아온다.
+
+        `/api/jobs/<id>` 응답의 `preview_url` 필드로 실존을 확인했다(문서화된
+        4개 엔드포인트에는 없었다, 2026-08-21 실측 — 사용자 제보로 Print
+        Overlay가 실제 필름에 반영되는지 픽셀로 확인해야 해서 찾아냈다).
+        """
+        req = urllib.request.Request(self.base + "/api/jobs/%s/preview" % job_id)
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            return resp.read()
+
+    # 필름 전체를 한 장으로 OCR하면 오버레이 라벨을 거의 못 읽는다(실측
+    # 2026-08-21: 1318x1600 필름에서 `50 qi E DOI : 2026-08-21 EI. j 1115`만
+    # 나오고 Acc. No / Performing Physician은 통째로 누락됐다). 라벨이 X-ray
+    # 픽셀에 둘러싸인 **네 모서리의 작은 흰 글씨**라서, 큰 이미지 하나로는
+    # Tesseract의 레이아웃 분석이 그 줄을 글자로 보지 않는다. 그래서 오버레이가
+    # 그려지는 네 모서리 띠만 잘라 확대해 각각 OCR하고 결과를 합친다 — 같은
+    # 필름에서 4개 라벨 전부가 평문으로 읽힌다(job 86/89/91 3장으로 확인).
+    #
+    # 띠 크기와 전처리·psm 조합은 추측이 아니라 3장으로 실측해 고른 값이다:
+    #  - 세로 12%: bottom_left에 3줄(Acc. No / Performing Physician / TOI)이
+    #    들어가므로 7%로는 맨 윗줄(Acc. No)이 잘려 나갔다.
+    #  - psm 6(균일 블록)과 psm 11(희소 텍스트)의 결과가 서로 달랐다 —
+    #    top_right는 psm 6에서 빈 문자열, psm 11에서만 `DOI : 2026-08-21`이
+    #    읽혔다. 어느 하나로 정하지 않고 둘 다 돌려 합집합을 쓴다.
+    #  - 반전(invert)은 오히려 나빠져 쓰지 않는다. 임계값 150 이진화는 psm 6에서
+    #    top_right를 살려 주므로 세 번째 조합으로 넣었다.
+    OVERLAY_BAND_RATIO = 0.12
+    OVERLAY_SIDE_RATIO = 0.60
+
+    def preview_ocr_text(self, job_id, tesseract_exe=None):
+        """수신 필름 이미지를 OCR해 텍스트를 돌려준다(Print Overlay 판정용).
+
+        실측(2026-08-21): 오버레이 라벨은 사양서의 항목명과 다르게 그려진다
+        (예: "Exposure Index" -> `E.I. : 1115`, "Exposure Date" ->
+        `DOI : 2026-08-21`, "Accession Number" -> `Acc. No : ...`).
+        """
+        import io
+        import pytesseract
+        from PIL import Image
+
+        exe = tesseract_exe or TESSERACT_EXE
+        if os.path.exists(exe):
+            pytesseract.pytesseract.tesseract_cmd = exe
+        img = Image.open(io.BytesIO(self.preview_bytes(job_id))).convert("L")
+        w, h = img.size
+        bh = max(1, int(h * self.OVERLAY_BAND_RATIO))
+        bw = max(1, int(w * self.OVERLAY_SIDE_RATIO))
+        corners = [(0, 0, bw, bh), (w - bw, 0, w, bh),
+                   (0, h - bh, bw, h), (w - bw, h - bh, w, h)]
+        chunks = []
+        for box in corners:
+            crop = img.crop(box)
+            big = crop.resize((crop.width * 3, crop.height * 3), Image.LANCZOS)
+            binz = crop.point(lambda v: 0 if v > 150 else 255).resize(
+                (crop.width * 4, crop.height * 4), Image.LANCZOS)
+            for im, psm in ((big, 6), (big, 11), (binz, 6)):
+                try:
+                    chunks.append(pytesseract.image_to_string(
+                        im, config="--psm %d" % psm))
+                except Exception:                             # noqa: BLE001
+                    pass
+        # 필름 전체 OCR도 덧붙인다 — 모서리 띠 밖(중앙 Scale 등)에 그려지는
+        # 것까지 놓치지 않으려는 것이다. 이것만으로는 부족하다는 것이 위 주석.
+        chunks.append(pytesseract.image_to_string(img))
+        return "\n".join(chunks)

@@ -176,6 +176,15 @@ def _run_precondition(cfg):
                   note="config의 dicom.mwl_server_url 이 비어 있어 건너뜀")
         else:
             m = MwlServer(url)
+            # 회귀의 MWL 단계가 **이 실행의 처방을 새로 뽑는 시점**이다
+            # (`core/testdata.py`). 실행마다 Patient ID·Acc. No.·성별·생년월일이
+            # 달라지므로, 뒤따르는 TC들이 "이번 실행의 스터디"를 목록에서 유일하게
+            # 지목할 수 있다. 지난 실행의 처방은 접두로 골라 지운다(사용자 지시).
+            from . import testdata
+            fresh = testdata.new_for_mwl(cfg)
+            td = cfg.get("test_data") or {}
+            pruned = testdata.prune_auto_orders(
+                m, keep_patient_id=td.get("mwl_patient_id"))
             fields = make_dx_order(
                 patient_id=td.get("mwl_patient_id", "VXVUE_MWL_DX_01"),
                 patient_name=td.get("mwl_patient_name", "AUTO^VXVUE^^^"),
@@ -193,7 +202,15 @@ def _run_precondition(cfg):
             item, how, removed = m.ensure_order(date.today().isoformat(), **fields)
             r.add(step, "mwl-ensure (당일 DX 처방 보장)", result_mod.PASS,
                   expected="오늘 날짜의 VXvue 전용 DX 처방 1건",
-                  actual="%s (지난 처방 삭제 %d건)" % (how, removed))
+                  actual="%s / %s / 지난 처방 삭제 %d건(당일 %d건)"
+                         % (how, testdata.describe(cfg), pruned["deleted"],
+                            removed),
+                  note="이 실행의 시험 처방은 여기서 새로 뽑는다 — Patient ID에 "
+                       "실행 시각을 각인하고 성별·생년월일은 그 각인을 시드로 "
+                       "정한다(사용자 지시, 2026-08-21: 같은 ID가 쌓여 import "
+                       "검증이 불가능했다). 지운 처방: %s / 다른 제품 처방은 "
+                       "건드리지 않았다: %s"
+                       % (pruned["deleted_ids"], pruned["kept"]))
     except Exception as exc:                              # noqa: BLE001
         _fail_from_exception(r, step, "mwl-ensure", exc, cfg)
     step += 1

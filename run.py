@@ -153,9 +153,15 @@ def cmd_mwl_ensure(cfg, args):
     같은 patient_id의 처방이 오늘 것이면 재사용하고, 지난 날짜면 지우고 다시
     만든다. 다른 제품(Bellalun 등)의 처방은 건드리지 않는다.
     """
+    from core import testdata
+    fresh = testdata.new_for_mwl(cfg)
+    print("[시험 처방] %s" % fresh.get("note"))
     td = cfg.get("test_data") or {}
     m = _mwl(cfg)
     today = args.date or date.today().isoformat()
+    pruned = testdata.prune_auto_orders(m, keep_patient_id=td.get("mwl_patient_id"))
+    print("[기존 처방 정리] 삭제 %d건 %s / 건드리지 않음 %s"
+          % (pruned["deleted"], pruned["deleted_ids"], pruned["kept"]))
     fields = make_dx_order(
         patient_id=td.get("mwl_patient_id", "VXVUE_MWL_DX_01"),
         patient_name=td.get("mwl_patient_name", "AUTO^VXVUE^^^"),
@@ -256,8 +262,16 @@ def _cleanup_studies(cfg, ui, result=None):
 
 
 def _ready_ui(cfg, login=True):
-    """VXvue 드라이버를 준비한다(필요하면 기동·로그인까지)."""
+    """VXvue 드라이버를 준비한다(필요하면 기동·로그인까지).
+
+    여기서 **이번 실행이 쓸 시험 처방을 확정**한다 — `core/testdata.load()`가
+    가장 최근에 만든(각인된) 처방을 얹는다. 새로 뽑는 것은 MWL 처방을 만드는
+    `mwl-ensure`/회귀의 MWL 단계뿐이다(`core/testdata.py` docstring 참고).
+    """
+    from core import testdata
     from core.ui import VXvueUi
+    loaded = testdata.load(cfg)
+    print("[시험 처방] %s" % loaded.get("note"))
     v = cfg.get("viewer") or {}
     ui = VXvueUi(v.get("process_name", "VXvue"))
     if not ui.pid:
@@ -363,7 +377,9 @@ def cmd_tc08(cfg, args):
     return _run_tc_module(cfg, args, "tests.tc08_study_export",
                           do_acquire=not args.no_acquire,
                           map_procedure=args.map_procedure,
-                          projection=args.projection, exam_step=args.step)
+                          projection=args.projection, exam_step=args.step,
+                          do_import=not args.no_import,
+                          purge_export=not args.keep_export)
 
 
 def cmd_tc13(cfg, args):
@@ -594,7 +610,13 @@ def main(argv=None):
                    help="tc02에서 마지막 DICOM Send 단계를 생략한다(조회·촬영·DB "
                         "대조까지만 수행).")
     p.add_argument("--no-import", action="store_true",
-                   help="setting-export-import에서 파괴적인 Import 단계를 생략한다")
+                   help="Import 단계를 생략한다. setting-export-import의 설정 "
+                        "Import와 tc08의 역방향 스터디 Import 둘 다에 적용된다 "
+                        "— 둘 다 DB를 바꾸는 조작이다.")
+    p.add_argument("--keep-export", action="store_true",
+                   help="tc08이 시험 후 Export 대상 폴더를 비우지 않고 그대로 "
+                        "남긴다. 기본은 지운다(사용자 지시, 2026-08-21) — 남기면 "
+                        "다음 실행의 Import 목록에 이전 스터디가 섞인다.")
     p.add_argument("--approve-destructive", action="store_true",
                    help="run-regression 맨 마지막의 Setting Import(DB 전체 복원)까지 "
                         "실행한다. 지정하지 않으면 Export까지만 수행한다.")

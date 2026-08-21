@@ -108,6 +108,12 @@ REG_SPS_LIST = 31120
 RESULT_SUMMARY_STATIC = 30013
 REG_SEARCH_BUTTON = 30689
 REG_DEFAULT_BUTTON = 30935
+# 검색 조건 프리셋 스플릿 버튼(= REG_DEFAULT_BUTTON, `TextSplitButton`).
+# 실측 2026-08-21: 자식이 둘이다 — `1`은 라벨(누르면 그 프리셋을 바로 적용),
+# `2`는 드롭다운 화살표. 화살표를 누르면 `ItemList`라는 **별도 최상위 창**이
+# 뜨고 그 안에 항목 버튼 둘이 있다(각각 캡처+OCR로 라벨 확정).
+REG_PRESET_ARROW_CHILD = 2
+REG_PRESET = {"default": 30940, "clear": 30941}
 
 # Scheduled 탭 전용 (탭마다 구성이 다르다 — docstring 참고)
 SCHEDULED_START = 30371
@@ -2253,6 +2259,414 @@ def finish_print(ui, button="print", timeout=8, settle=2.5):
     return {"clicked": None}
 
 
+# --- Print Overlay (Setting > DICOM - Print Overlay / DICOM - Print) -----
+#
+# 체크리스트 원문에는 없지만 사양서4(260820) p.100-108 `VP-714`("07-80-80 Print
+# Overlay")·사양서5(260820) p.94-97 `VP-786`("10-20-70 Print")에 실존하는 기능이라
+# 사용자 지시로 TC07에 추가했다(2026-08-21). 실측으로 확정한 것:
+#
+# 1. `Setting > DICOM - Print Overlay` 화면에 **별도의 SCP List**(`31158`)가
+#    있고, Add(`30440`)를 누르면 기본 이름 "Print Overlay"인 새 프로파일이
+#    바로 추가된다(별도 팝업 없음). Overlay Name(`30190`)을 실제 등록된 Print
+#    SCP 이름과 **똑같이** 지어야 그 SCP에 연결할 수 있다(아래 3번).
+# 2. Layout Composition의 Top/Bottom 행에서 배치를 고르면(`30859`=Top 단일
+#    영역, `30869`=Bottom 단일 영역) 그 아래 Top Left/Top Right/Bottom Left/
+#    Bottom Right 4개 목록(`31159`~`31162`)이 활성화된다. 가운데 "Item"
+#    마스터 목록(`31163`, 총 30여 개, 스크롤 필요)에서 항목을 선택하고 화살표
+#    버튼으로 옮긴다 — 화살표는 구역마다 (추가, 제거) 쌍으로 `30755`/`30756`
+#    (Top Left), `30757`/`30758`(Top Right), `30759`/`30760`(Bottom Left),
+#    `30761`/`30762`(Bottom Right)이다(실측 확정 — 대칭이라고 추측한 최초
+#    배정은 Top Right·Bottom Right가 반대였다).
+# 3. **이 화면에서 설정하고 Update하는 것만으로는 실제 인쇄물에 반영되지
+#    않는다**(사용자 제보, 2026-08-21 실측으로 재현). `Setting > DICOM -
+#    Print`(SCP 등록 화면)에서 그 SCP 행을 선택하면 상세 패널에 "Overlay"
+#    콤보(`30942`, y=496으로 화면의 다른 동일 ID 콤보와 구분)가 있고 기본값이
+#    "None"이다 — 이 콤보에서 위에서 만든 프로파일 이름을 **선택하고
+#    Update**해야 그 SCP로 보내는 필름에 실제로 그려진다. 두 화면 다 저장한
+#    뒤 Print SCP 서버의 `/api/jobs/<id>/preview`(JPEG, 문서화되지 않은
+#    엔드포인트지만 `/api/jobs/<id>` 응답의 `preview_url` 필드로 실존 확인)로
+#    받은 필름을 OCR해 실제 픽셀 반영을 확인했다(`core/printscp.py`).
+# 4. 항목 이름과 필름에 실제로 그려지는 라벨은 다르다 — 예: "Exposure Index"는
+#    `E.I. : 1115`, "Exposure Date"는 `DOI : 2026-08-21`, "Accession Number"는
+#    `Acc. No : ...`로 그려진다. "Dose kVp"는 라벨 없이 값만("50") 그려져
+#    OCR 근거로 쓰기엔 모호하고, "Institutional Name"은 이 시험 데이터가 그
+#    값을 비워 둬서 아무것도 그려지지 않았다(빈 값은 렌더링하지 않는 것으로
+#    보인다) — 그래서 판정에는 값이 항상 채워지는 나머지만 쓴다.
+PRINT_OVERLAY_ITEM_LIST_ID = 31163
+PRINT_OVERLAY_SLOT_LIST = {"top_left": 31159, "top_right": 31160,
+                          "bottom_left": 31161, "bottom_right": 31162}
+PRINT_OVERLAY_ADD_ARROW = {"top_left": 30755, "top_right": 30757,
+                           "bottom_left": 30759, "bottom_right": 30761}
+PRINT_OVERLAY_REMOVE_ARROW = {"top_left": 30756, "top_right": 30758,
+                              "bottom_left": 30760, "bottom_right": 30762}
+PRINT_OVERLAY_TOP_LAYOUT_SINGLE = 30859
+PRINT_OVERLAY_BOTTOM_LAYOUT_SINGLE = 30869
+PRINT_OVERLAY_NAME_EDIT = 30190
+PRINT_OVERLAY_ADD_BUTTON = 30440
+PRINT_OVERLAY_SCP_LIST_ID = 31158
+
+# 6개, 4개 구역에 고르게 분배 — 사양서 예시(`(TC) R-20-643...` Upgrade 시트
+# 105행 "Print Overlay" 실제 TC)에 나오는 항목 풀에서 뽑았다(사용자 지시,
+# 2026-08-21: "대표적인 것들을 TC 등을 참고해서 6개 정도"). 처음에는
+# Institutional Name을 bottom_right에 넣었으나 이 시험 데이터의 Institution
+# Name 값이 비어 있어 필름에 아무것도 그려지지 않았다(실측) — 사용자 지시로
+# 항상 값이 채워지는 Dose mAs로 바꿨다("Institution Name 말고 Dose mAs로
+# 바꿔주라 그럼 잘 나올꺼야").
+PRINT_OVERLAY_DEFAULT_ITEMS = [
+    ("Dose kVp", "top_left"),
+    ("Exposure Index", "top_left"),
+    ("Exposure Date", "top_right"),
+    ("Accession Number", "bottom_left"),
+    ("Performing Physician", "bottom_left"),
+    ("Dose mAs", "bottom_right"),
+]
+# 필름 OCR 판정에 쓰는 것 — 라벨이 뚜렷해 OCR로 확실히 대조할 수 있는 것만
+# 쓴다. Dose kVp/Dose mAs는 라벨 없이 맨값("50", "1")만 그려져(실측) 다른
+# 곳의 숫자와 혼동될 수 있어 판정 문자열로는 쓰지 않는다 — 레이아웃에는
+# 남겨 두되(6개 항목 배치 확인 목적) 자동 판정은 이 4개로 좁힌다.
+PRINT_OVERLAY_CHECK_TEXTS = ("E.I.", "DOI", "Acc. No", "Performing Physician")
+
+DICOM_PRINT_SCP_LIST_ID = 31133
+DICOM_PRINT_NAME_EDIT = 30090
+DICOM_PRINT_OVERLAY_COMBO_ID = 30942
+DICOM_PRINT_OVERLAY_COMBO_Y = 496
+
+
+def _tess_ready():
+    import pytesseract
+    exe = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    if os.path.exists(exe):
+        pytesseract.pytesseract.tesseract_cmd = exe
+    return pytesseract
+
+
+def _ocr_row_text(row_ctrl, scale=3):
+    from PIL import ImageGrab
+    pytesseract = _tess_ready()
+    img = ImageGrab.grab(bbox=row_ctrl.rect, all_screens=True)
+    big = img.resize((img.width * scale, img.height * scale))
+    return pytesseract.image_to_string(big).strip()
+
+
+def _overlay_norm(s):
+    return "".join(ch for ch in (s or "").lower() if ch.isalnum())
+
+
+def _overlay_row_has(item_name, row_text):
+    """목록 행의 OCR 텍스트가 `item_name` 항목을 가리키는지.
+
+    **잘린 라벨을 인정하는 것이 핵심이다.** 이 화면의 목록은 칸 폭에 맞춰
+    라벨을 말줄임표로 잘라 그린다(실측 2026-08-21: `Accession Number` →
+    `Accession Num...`, `Performing Physician` → `Performing Ph...`). 그래서
+    "항목명이 행 텍스트 안에 들어 있는가"만 보면 **화면에 항목이 실제로 있는데도
+    없다고 판정한다** — 2026-08-21 TC07 Step 4가 MANUAL로 떨어지고, 이미 배치된
+    항목을 매번 다시 추가하려 들다 엉뚱한 항목(`Exposure Time`)이 끼어든 원인이
+    바로 이것이었다. 그래서 방향을 뒤집어 **행 텍스트가 항목명의 앞부분인
+    경우**도 같은 항목으로 본다.
+
+    잘린 조각이 짧으면 다른 항목과 우연히 겹칠 수 있으므로(`Exposure...`는
+    Date/Index/Time 셋 다의 앞부분이다) 4글자 미만 조각은 근거로 쓰지 않는다.
+    그 이상이어도 같은 접두를 가진 항목을 함께 계획에 넣으면 구분되지 않는다 —
+    현재 계획(`PRINT_OVERLAY_DEFAULT_ITEMS`)에는 그런 쌍이 없고, 실측 화면에서
+    잘려 보이는 항목은 `Accession Num...`/`Performing Ph...` 둘뿐이다.
+    """
+    a = _overlay_norm(item_name)
+    b = _overlay_norm(row_text)
+    if not a or not b:
+        return False
+    if a in b:
+        return True
+    return len(b) >= 4 and a.startswith(b)
+
+
+def _overlay_slot_has(item_name, row_texts):
+    return any(_overlay_row_has(item_name, t) for t in (row_texts or []))
+
+
+def print_overlay_slot_rows(ui, slot):
+    from . import setting as S
+    lc = [c for c in S.content_controls(ui) if c.ctrl_id == PRINT_OVERLAY_SLOT_LIST[slot]][0]
+    return S.list_rows(ui, lc)
+
+
+def _print_overlay_move_selected(ui, slot, settle=0.8):
+    from . import setting as S
+    arrow = [c for c in S.content_controls(ui) if c.ctrl_id == PRINT_OVERLAY_ADD_ARROW[slot]][0]
+    ui.click(arrow, settle=settle)
+
+
+def _print_overlay_remove_selected(ui, slot, settle=0.8):
+    from . import setting as S
+    arrow = [c for c in S.content_controls(ui) if c.ctrl_id == PRINT_OVERLAY_REMOVE_ARROW[slot]][0]
+    ui.click(arrow, settle=settle)
+
+
+def _ocr_lines_with_rows(rows, scale=3):
+    """행 목록 영역을 한 번에 OCR해 `[(줄 텍스트, 그 줄이 놓인 행)]`을 돌려준다.
+
+    **줄 번호와 행 번호를 인덱스로 맞추지 않는다.** 이전 구현은 OCR이 돌려준
+    n번째 줄이 n번째 행이라고 가정했는데, 빈 줄이 하나 끼거나 두 줄이 합쳐지면
+    그 뒤가 전부 한 칸씩 밀려 **엉뚱한 행을 클릭한다**(실측 2026-08-21: 계획에
+    없던 `Exposure Time`이 Bottom Left에 들어갔다). 그래서 단어 단위 좌표
+    (`image_to_data`)로 각 줄의 화면상 y 중심을 구하고, 그 y를 품는 행을
+    rect로 찾아 짝지운다 — CLAUDE.md 3절의 "좌표를 저장해 재사용하지 않고,
+    방금 찾은 컨트롤의 실제 rect에서 계산한다"와 같은 방식이다.
+    """
+    from PIL import ImageGrab
+    pytesseract = _tess_ready()
+    if not rows:
+        return [], None
+    x1 = min(r.rect[0] for r in rows); y1 = min(r.rect[1] for r in rows)
+    x2 = max(r.rect[2] for r in rows); y2 = max(r.rect[3] for r in rows)
+    img = ImageGrab.grab(bbox=(x1, y1, x2, y2), all_screens=True)
+    big = img.resize((img.width * scale, img.height * scale))
+    data = pytesseract.image_to_data(big, output_type=pytesseract.Output.DICT)
+    groups = {}
+    for i, word in enumerate(data.get("text", [])):
+        if not (word or "").strip():
+            continue
+        key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
+        g = groups.setdefault(key, {"words": [], "top": [], "bottom": []})
+        g["words"].append(word.strip())
+        g["top"].append(data["top"][i])
+        g["bottom"].append(data["top"][i] + data["height"][i])
+    out = []
+    for g in groups.values():
+        text = " ".join(g["words"])
+        y_mid = y1 + (min(g["top"]) + max(g["bottom"])) / 2.0 / scale
+        row = next((r for r in rows if r.rect[1] <= y_mid <= r.rect[3]), None)
+        if row is not None:
+            out.append((text, row))
+    out.sort(key=lambda p: p[1].rect[1])
+    return out, img
+
+
+def _print_overlay_add_items(ui, ordered_targets, max_scrolls=14):
+    """(항목명, 구역) 목록을 마스터 Item 목록(`31163`)에서 찾아 옮긴다.
+
+    목록이 위→아래 고정 순서라 매 항목마다 맨 위로 되돌아가지 않고, 스크롤을
+    계속 내려가는 **단일 패스**로 찾는다(맨 위부터 매번 다시 훑으면 항목당
+    약 15초, 6개면 1.5분 — 실측으로 느려서 바꿨다). 목록 전체를 한 번에
+    OCR하되 줄과 행은 `_ocr_lines_with_rows()`로 **좌표로** 짝짓는다.
+
+    반환: {항목명: 옮김 성공 여부}
+    """
+    from . import setting as S
+    remaining = list(ordered_targets)
+    done = {}
+    item_list = [c for c in S.content_controls(ui) if c.ctrl_id == PRINT_OVERLAY_ITEM_LIST_ID][0]
+    S.scroll_list_to_top(ui, item_list)
+    seen_sigs = set()
+    for _ in range(max_scrolls):
+        if not remaining:
+            break
+        item_list = [c for c in S.content_controls(ui) if c.ctrl_id == PRINT_OVERLAY_ITEM_LIST_ID][0]
+        rows = S.list_rows(ui, item_list)
+        if not rows:
+            break
+        pairs, img = _ocr_lines_with_rows(rows)
+        if img is None:
+            break
+        sig = hash(img.tobytes())
+        if sig in seen_sigs:
+            break
+        seen_sigs.add(sig)
+        still = []
+        for target, slot in remaining:
+            matched_row = next((row for text, row in pairs
+                                if _overlay_row_has(target, text)), None)
+            if matched_row is not None:
+                ui.click(S.row_click_point(ui, matched_row), settle=0.4)
+                _print_overlay_move_selected(ui, slot)
+                time.sleep(0.4)
+                done[target] = True
+            else:
+                still.append((target, slot))
+        remaining = still
+        if remaining:
+            item_list = [c for c in S.content_controls(ui) if c.ctrl_id == PRINT_OVERLAY_ITEM_LIST_ID][0]
+            S.scroll_list(ui, item_list, notches=-3, settle=0.25)
+    for target, _slot in remaining:
+        done[target] = False
+    return done
+
+
+def _print_overlay_strip_extras(ui, items_plan, max_removals=12):
+    """계획에 없는 항목을 각 구역에서 빼낸다.
+
+    필름에 그려지는 내용을 계획과 정확히 일치시키기 위한 것이다 — 남아 있으면
+    이전 실행의 잔재가 그대로 인쇄돼 Step 9의 판정 근거가 흐려진다(실측
+    2026-08-21: 잘못 끼어든 `Exposure Time`이 필름에 `TOI : 12:58:34`로
+    그려졌다). 이 프로파일은 자동화가 만들고 관리하는 것이므로(SCP 이름과 같은
+    이름) 계획 외 항목을 제거해도 사용자가 손으로 만든 설정을 건드리지 않는다.
+
+    반환: {구역: [빼낸 항목 텍스트]}
+    """
+    from . import setting as S
+    removed = {}
+    for slot in PRINT_OVERLAY_SLOT_LIST:
+        planned = [name for name, s in items_plan if s == slot]
+        for _ in range(max_removals):             # 무한 루프 방지 상한
+            extra = None
+            for row in print_overlay_slot_rows(ui, slot):
+                text = _ocr_row_text(row)
+                if not any(_overlay_row_has(name, text) for name in planned):
+                    extra = (row, text)
+                    break
+            if extra is None:
+                break
+            ui.click(S.row_click_point(ui, extra[0]), settle=0.4)
+            _print_overlay_remove_selected(ui, slot)
+            removed.setdefault(slot, []).append(extra[1] or "(빈 텍스트)")
+    return removed
+
+
+def ensure_print_overlay_profile(ui, cfg, scp_name, items_plan=None, evidence_dir=None):
+    """`Setting > DICOM - Print Overlay`에 `scp_name`과 같은 이름의 프로파일을
+    보장하고, 4개 구역(Top Left/Right, Bottom Left/Right)에 `items_plan`
+    항목이 이미 배치돼 있으면 건드리지 않고, 없으면 배치한 뒤 Update한다.
+    계획에 없는 항목이 섞여 있으면 빼낸다(`_print_overlay_strip_extras`).
+
+    반환: {"ok", "created", "items_before", "items_after", "removed", "note"}
+    """
+    from . import setting as S
+    items_plan = items_plan or PRINT_OVERLAY_DEFAULT_ITEMS
+    if S.goto_screen(ui, "DICOM - Print Overlay") is None:
+        return {"ok": False, "note": "DICOM - Print Overlay 화면을 찾지 못했다."}
+
+    rows = S.list_rows(ui, [c for c in S.content_controls(ui)
+                            if c.ctrl_id == PRINT_OVERLAY_SCP_LIST_ID][0])
+    target_row = None
+    for row in rows:
+        ui.click(S.row_click_point(ui, row), settle=0.6)
+        name_edit = [c for c in S.content_controls(ui) if c.ctrl_id == PRINT_OVERLAY_NAME_EDIT][0]
+        if (ui.get_text(name_edit) or "").strip() == scp_name:
+            target_row = row
+            break
+    created = False
+    if target_row is None:
+        add_btn = [c for c in S.content_controls(ui) if c.ctrl_id == PRINT_OVERLAY_ADD_BUTTON][0]
+        ui.click(add_btn, settle=1.2)
+        name_edit = [c for c in S.content_controls(ui) if c.ctrl_id == PRINT_OVERLAY_NAME_EDIT][0]
+        ui.type_text(name_edit, scp_name, settle=0.3)
+        created = True
+
+    before = dict((slot, [_ocr_row_text(r) for r in print_overlay_slot_rows(ui, slot)])
+                 for slot in PRINT_OVERLAY_SLOT_LIST)
+    planned_ok = all(_overlay_slot_has(name, before.get(slot, []))
+                     for name, slot in items_plan)
+    extras_exist = any(
+        not any(_overlay_row_has(name, t) for name, s in items_plan if s == slot)
+        for slot in PRINT_OVERLAY_SLOT_LIST for t in before.get(slot, []))
+    if planned_ok and not extras_exist and not created:
+        return {"ok": True, "created": False, "items_before": before, "items_after": before,
+                "removed": {},
+                "note": "프로파일 '%s'에 계획한 %d개 항목만 이미 배치돼 있어 건드리지 않았다."
+                        % (scp_name, len(items_plan))}
+
+    top_layout = [c for c in S.content_controls(ui) if c.ctrl_id == PRINT_OVERLAY_TOP_LAYOUT_SINGLE][0]
+    ui.click(top_layout, settle=0.8)
+    bottom_layout = [c for c in S.content_controls(ui)
+                     if c.ctrl_id == PRINT_OVERLAY_BOTTOM_LAYOUT_SINGLE][0]
+    ui.click(bottom_layout, settle=0.8)
+
+    removed = _print_overlay_strip_extras(ui, items_plan)
+    missing = [(name, slot) for name, slot in items_plan
+              if not _overlay_slot_has(name, before.get(slot, []))]
+    added = _print_overlay_add_items(ui, missing) if missing else {}
+
+    after = dict((slot, [_ocr_row_text(r) for r in print_overlay_slot_rows(ui, slot)])
+                for slot in PRINT_OVERLAY_SLOT_LIST)
+    if evidence_dir:
+        os.makedirs(evidence_dir, exist_ok=True)
+        try:
+            from . import setting as S2
+            from PIL import ImageGrab
+            dlg = S2.content_dialog(ui)
+            ImageGrab.grab(bbox=dlg.rect, all_screens=True).save(
+                os.path.join(evidence_dir, "print_overlay_profile.png"))
+        except Exception:                                    # noqa: BLE001
+            pass
+
+    ack = S.update(ui, ack_timeout=8)
+    ok = all(_overlay_slot_has(name, after.get(slot, []))
+             for name, slot in items_plan)
+    return {"ok": ok, "created": created, "items_before": before, "items_after": after,
+            "added": added, "removed": removed, "update_ack": ack,
+            "note": "프로파일 '%s' %s / 배치=%s / 제거=%s / Update: %s"
+                   % (scp_name, "새로 생성" if created else "기존 재사용",
+                      ", ".join("%s:%s" % (k, "OK" if v else "실패")
+                                for k, v in added.items()) or "없음(이미 배치됨)",
+                      ", ".join("%s:%s" % (k, v) for k, v in removed.items()) or "없음",
+                      ack or "(문구 없음)")}
+
+
+def link_print_overlay_to_scp(ui, cfg, scp_name, overlay_name):
+    """`Setting > DICOM - Print`에서 `scp_name` SCP를 선택해 Overlay 콤보를
+    `overlay_name`으로 지정하고 Update한다. 이미 그 값이면 건드리지 않는다.
+
+    실측(2026-08-21, 사용자 제보): Print Overlay 화면에서 프로파일을 만들고
+    Update만 해서는 실제 인쇄물에 반영되지 않는다 — 이 화면의 Overlay 콤보로
+    SCP와 프로파일을 명시적으로 연결해야 한다.
+
+    반환: {"ok", "already", "note"}
+    """
+    from . import setting as S
+    from .ui import children
+    if S.goto_screen(ui, "DICOM - Print") is None:
+        return {"ok": False, "note": "DICOM - Print 화면을 찾지 못했다."}
+
+    rows = S.list_rows(ui, [c for c in S.content_controls(ui)
+                            if c.ctrl_id == DICOM_PRINT_SCP_LIST_ID][0])
+    matched = None
+    for row in rows:
+        ui.click(S.row_click_point(ui, row), settle=0.6)
+        name_edit = [c for c in S.content_controls(ui) if c.ctrl_id == DICOM_PRINT_NAME_EDIT][0]
+        if (ui.get_text(name_edit) or "").strip() == scp_name:
+            matched = row
+            break
+    if matched is None:
+        return {"ok": False, "note": "SCP 목록에서 '%s'를 찾지 못했다." % scp_name}
+
+    combo = next((c for c in S.content_controls(ui)
+                 if c.ctrl_id == DICOM_PRINT_OVERLAY_COMBO_ID
+                 and c.rect[1] == DICOM_PRINT_OVERLAY_COMBO_Y), None)
+    if combo is None:
+        return {"ok": False, "note": "Overlay 콤보(%d)를 찾지 못했다." % DICOM_PRINT_OVERLAY_COMBO_ID}
+    current = (combo.text or "").strip()
+    if current == overlay_name or current == overlay_name[:len(current)]:
+        # 콤보 텍스트가 폭에 맞춰 잘려 표시될 수 있어(실측 'PRINT_SC') 접두 일치도 인정한다.
+        if overlay_name.startswith(current) and len(current) >= 6:
+            return {"ok": True, "already": True,
+                    "note": "Overlay 콤보가 이미 '%s'로 연결되어 있었다." % current}
+
+    arrow = next((c for c in children(combo.hwnd, 2) if c.ctrl_id == 1), None)
+    if arrow is None:
+        return {"ok": False, "note": "Overlay 콤보의 드롭다운 화살표를 찾지 못했다."}
+    ui.click(arrow, settle=0.8)
+
+    from PIL import ImageGrab
+    pytesseract = _tess_ready()
+    region = (combo.rect[0], combo.rect[1], combo.rect[2], combo.rect[1] + 150)
+    img = ImageGrab.grab(bbox=region, all_screens=True)
+    big = img.resize((img.width * 3, img.height * 3))
+    data = pytesseract.image_to_data(big, output_type=pytesseract.Output.DICT)
+    point = None
+    for i, txt in enumerate(data.get("text", [])):
+        if txt.strip() == overlay_name:
+            cx = region[0] + (data["left"][i] + data["width"][i] / 2) / 3
+            cy = region[1] + (data["top"][i] + data["height"][i] / 2) / 3
+            point = (cx, cy)
+            break
+    if point is None:
+        ui.key("ESC", settle=0.3)
+        return {"ok": False, "note": "드롭다운에서 '%s' 항목을 OCR로 찾지 못했다." % overlay_name}
+    ui.click(point, settle=1.0)
+    ack = S.update(ui, ack_timeout=8)
+    return {"ok": True, "already": False,
+            "note": "Overlay 콤보를 '%s'로 연결. Update: %s" % (overlay_name, ack or "(문구 없음)")}
+
+
 def db_button(ui, name, settle=2.5):
     """Database 화면의 버튼을 누른다."""
     if name not in DB_BUTTON:
@@ -2273,7 +2687,59 @@ def _result_total(summary):
     return int(m.group(2)) if m else 0
 
 
-def database_search(ui, settle=3.0, retries=4, retry_wait=3.0):
+def select_search_preset(ui, which="clear", settle=1.0, timeout=6):
+    """검색 조건 프리셋 스플릿 버튼(`30935`)에서 Default/Clear를 고른다.
+
+    사용자 지시(2026-08-21): *"검색할 때 default를 clear로 바꾸고 search를 누르게
+    해줘."* `Clear`는 조회 조건(날짜 범위 등)을 비워 **전체 범위로 조회**하게
+    한다 — Import로 들어온 스터디처럼 검사일이 오늘이 아닐 수 있는 건을 날짜
+    필터가 걸러 버리는 것을 막는다. Clear는 결과 목록도 비우므로 **반드시 그
+    뒤에 Search를 눌러야** 한다(실측 2026-08-21).
+
+    항목 창은 제목이 `ItemList`인 별도 최상위 창이라 제목이 아니라 **그 안에
+    목표 항목 ID가 있는지**로 창을 확정한다(CLAUDE.md 속성 우선 원칙).
+
+    반환: {"ok", "which", "note"}
+    """
+    from .ui import children, top_windows
+    if which not in REG_PRESET:
+        raise WorkflowError("알 수 없는 검색 프리셋: %s" % which)
+    want = REG_PRESET[which]
+    splits = [c for c in by_id(ui, REG_DEFAULT_BUTTON) if c.visible]
+    if not splits:
+        return {"ok": False, "which": which,
+                "note": "프리셋 스플릿 버튼(%d)을 찾지 못했다." % REG_DEFAULT_BUTTON}
+    arrow = next((c for c in children(splits[0].hwnd, 3)
+                  if c.ctrl_id == REG_PRESET_ARROW_CHILD and c.visible), None)
+    if arrow is None:
+        return {"ok": False, "which": which,
+                "note": "프리셋 드롭다운 화살표(자식 %d)를 찾지 못했다."
+                        % REG_PRESET_ARROW_CHILD}
+    ui.click(arrow, settle=settle)
+
+    end = time.time() + timeout
+    item = None
+    while time.time() < end:
+        for win in top_windows(ui.pid):
+            hit = [c for c in children(win.hwnd, 3)
+                   if c.ctrl_id == want and c.visible]
+            if hit:
+                item = hit[0]
+                break
+        if item is not None:
+            break
+        time.sleep(0.3)
+    if item is None:
+        ui.raw_key(0x1B, settle=0.3)          # 열린 메뉴는 닫아 둔다
+        return {"ok": False, "which": which,
+                "note": "프리셋 항목(%d, %s)이 %d초 안에 나타나지 않았다."
+                        % (want, which, timeout)}
+    ui.click(item, settle=settle)
+    return {"ok": True, "which": which,
+            "note": "검색 프리셋을 '%s'(%d)로 지정했다." % (which, want)}
+
+
+def database_search(ui, settle=3.0, retries=4, retry_wait=3.0, preset="clear"):
     """Database 화면에서 조회를 실행하고 요약 문구를 돌려준다.
 
     Search 버튼은 Registration과 같은 ID(`30689`)다(실측). 검사를 Close한 직후에는
@@ -2289,6 +2755,8 @@ def database_search(ui, settle=3.0, retries=4, retry_wait=3.0):
     """
     goto(ui, "database")
     time.sleep(1.0)
+    if preset:
+        select_search_preset(ui, preset)
     hits = by_id(ui, REG_SEARCH_BUTTON)
     summary = ""
     for attempt in range(max(1, retries)):
@@ -2301,6 +2769,395 @@ def database_search(ui, settle=3.0, retries=4, retry_wait=3.0):
         if attempt < retries - 1:
             time.sleep(retry_wait)
     return summary
+
+
+# --- Database > Import (Import Study 창) ------------------------------
+# 실측 2026-08-21 (TC08 Step 2 "Export된 스터디를 뷰어로 import한다" 자동화).
+#
+# 이 창을 찾는 방법이 특별하다 — **제목이 빈 최상위 팝업**이다. 제목("Import
+# Study")을 owner-draw로 그리기 때문에 (1) 메인 윈도우의 자식 트리에 없고
+# (2) 제목으로 창을 거를 수도 없다. 그래서 `core.ui.top_windows()`로 프로세스의
+# 최상위 창을 훑어 **필요한 컨트롤 ID를 모두 가진 창**을 이 창으로 확정한다
+# (CLAUDE.md 3절 속성 우선 원칙 — 좌표나 제목에 기대지 않는다). 이걸 몰라서
+# 메인 창 자식 트리와 "제목 있는 창"만 뒤지다 두 번 헛돌았다.
+#
+# | 컨트롤 | ID | 확인 |
+# |---|---|---|
+# | Location Edit | `30116` | 표시 전용 — **타이핑이 들어가지 않는다**(실측) |
+# | Browse `...` | `30515` | 표준 `SHBrowseForFolder`("폴더 찾아보기")를 띄운다 |
+# | 스터디 목록 | `31118` | Patient Name/ID/Acc. No./Birth Date/Age/Sex/Study Date Time |
+# | Import | `30685` | 누르면 범위 확인 팝업(Print/Export와 같은 27002/27001/27000) |
+# | Close | `30467` | |
+#
+# 경로 지정은 `...`밖에 없다. Location Edit에 `type_text()`로 써 넣어도 값이
+# 그대로였다(Export Manager의 경로 Edit과 같은 성질). 그 트리를 OCR로 읽으면
+# 한글 노드가 깨지고 영문도 `VXvue1 (E:)` → `VXvuel (E)`로 읽혀 **엉뚱한
+# 노드(`VXvue1.0.11.015(SMZ)`)를 선택하는 사고가 실제로 났다.** 그래서
+# `core/shelltree.py`로 `TVM_*` 메시지를 보내 노드 라벨을 정확히 읽는다.
+#
+# 성공 근거는 셋을 함께 본다(실측 확인):
+#  1. Import 후 `Info` 팝업 문구 `Succeed to import the studies.`
+#  2. 목록 각 열의 값이 Export한 정보와 일치 (`core/listgrid.py`, 사용자 지시)
+#  3. Database 조회 건수 증가 (32 → 33)
+IMPORT_LOCATION_EDIT = 30116
+IMPORT_BROWSE_BUTTON = 30515
+IMPORT_STUDY_LIST = 31118
+IMPORT_START_BUTTON = 30685
+IMPORT_CLOSE_BUTTON = 30467
+IMPORT_INFO_OK = 27000
+IMPORT_DIALOG_IDS = (IMPORT_LOCATION_EDIT, IMPORT_BROWSE_BUTTON, IMPORT_STUDY_LIST)
+IMPORT_SUCCESS_WORDS = ("succeed", "success")
+# 진행 표시 팝업은 **결과가 아니다.** 실측 2026-08-21: Import를 누르면
+# `Importing files 1/1 ...` 팝업이 먼저 뜨고, 그것이 사라진 뒤에야
+# `Info: Succeed to import the studies.`가 뜬다. 앞의 것을 결과로 읽어
+# TC08 Step 10이 잘못 FAIL 났다(Result_20260821_145739).
+IMPORT_PROGRESS_WORDS = ("importing", "please wait", "progress")
+IMPORT_FAILURE_WORDS = ("fail", "error", "cannot", "unable")
+BROWSE_DIALOG_TITLE = "폴더 찾아보기"
+BROWSE_TREE_CLASS = "SysTreeView32"
+BROWSE_OK_ID = 1
+BROWSE_CANCEL_ID = 2
+
+
+def find_import_dialog(ui, timeout=20, poll=0.5):
+    """Import Study 창을 **컨트롤 구성으로** 찾는다(제목·좌표에 의존하지 않음)."""
+    from .ui import children, top_windows
+    end = time.time() + timeout
+    while True:
+        for win in top_windows(ui.pid):
+            ids = {c.ctrl_id for c in children(win.hwnd, 4)}
+            if all(n in ids for n in IMPORT_DIALOG_IDS):
+                return win
+        if time.time() >= end:
+            return None
+        time.sleep(poll)
+
+
+def _in_dialog(dlg, ctrl_id):
+    from .ui import children
+    return [c for c in children(dlg.hwnd, 4)
+            if c.ctrl_id == ctrl_id and c.visible]
+
+
+def import_dialog_rows(dlg):
+    """Import Study 목록의 실제 행(`ListItem`)."""
+    from .ui import children
+    out = []
+    for lc in _in_dialog(dlg, IMPORT_STUDY_LIST):
+        for c in children(lc.hwnd, 3):
+            if c.text.strip() == "ListItem" and c.visible:
+                out.append(c)
+    return sorted(out, key=lambda c: c.rect[1])
+
+
+def _find_drive_node(tree, letter, shallow_timeout=2.0):
+    """`(X:)`로 끝나는 트리 노드를 찾는다.
+
+    이동식 드라이브는 바탕 화면 루트에 바로 보이지만(실측: `VXvue1 (E:)`),
+    내장 드라이브는 `내 PC` 아래에 있다. 로케일에 따라 그 노드 이름이 달라지므로
+    이름을 가정하지 않고 **루트 → 루트의 자식 한 단계**까지만 훑는다.
+    """
+    tag = "(%s:)" % letter.rstrip(":").upper()
+    root = tree.root()
+    tree.expand_and_wait(root)
+    hit, label = tree.find_child(root, lambda s: s.upper().endswith(tag))
+    if hit:
+        return hit, [label]
+    for hitem, label in tree.children(root):
+        if not tree.expand_and_wait(hitem, timeout=shallow_timeout):
+            continue
+        sub, sublabel = tree.find_child(hitem, lambda s: s.upper().endswith(tag))
+        if sub:
+            return sub, [label, sublabel]
+    return None, []
+
+
+def set_import_location(ui, dlg, dest, timeout=20):
+    """Import Study의 Location을 `dest` 폴더로 맞춘다.
+
+    반환: {"ok", "already", "location", "trail", "note"}
+    """
+    from .shelltree import ShellTree
+    from .ui import children, top_windows
+
+    edits = _in_dialog(dlg, IMPORT_LOCATION_EDIT)
+    current = (ui.get_text(edits[0]) if edits else "") or ""
+    want = os.path.normcase(os.path.normpath(dest))
+    if current and os.path.normcase(os.path.normpath(current)) == want:
+        return {"ok": True, "already": True, "location": current, "trail": [],
+                "note": "Location이 이미 %s였다(건드리지 않음)." % current}
+
+    btns = _in_dialog(dlg, IMPORT_BROWSE_BUTTON)
+    if not btns:
+        return {"ok": False, "already": False, "location": current, "trail": [],
+                "note": "Browse 버튼(%d)을 찾지 못했다." % IMPORT_BROWSE_BUTTON}
+    ui.click(btns[0], settle=1.5)
+
+    end = time.time() + timeout
+    browse = None
+    while time.time() < end:
+        browse = next((w for w in top_windows(ui.pid)
+                       if (w.text or "").strip() == BROWSE_DIALOG_TITLE), None)
+        if browse is not None:
+            break
+        time.sleep(0.4)
+    if browse is None:
+        return {"ok": False, "already": False, "location": current, "trail": [],
+                "note": "'%s' 창이 %d초 안에 뜨지 않았다."
+                        % (BROWSE_DIALOG_TITLE, timeout)}
+
+    def _cancel_browse():
+        hit = [c for c in children(browse.hwnd, 4)
+               if c.ctrl_id == BROWSE_CANCEL_ID and c.visible]
+        if hit:
+            ui.click(hit[0], settle=0.8)
+
+    tree_ctrl = next((c for c in children(browse.hwnd, 6)
+                      if c.cls == BROWSE_TREE_CLASS and c.visible), None)
+    if tree_ctrl is None:
+        _cancel_browse()
+        return {"ok": False, "already": False, "location": current, "trail": [],
+                "note": "폴더 트리(%s)를 찾지 못했다." % BROWSE_TREE_CLASS}
+
+    drive, tail = os.path.splitdrive(os.path.normpath(dest))
+    parts = [p for p in tail.split(os.sep) if p]
+    with ShellTree(tree_ctrl.hwnd) as tree:
+        node, trail = _find_drive_node(tree, drive or dest[:2])
+        if node is None:
+            _cancel_browse()
+            return {"ok": False, "already": False, "location": current,
+                    "trail": trail,
+                    "note": "트리에서 드라이브 %s 노드를 찾지 못했다." % drive}
+        for part in parts:
+            want_label = part.strip().casefold()
+            found = label = None
+            if tree.expand_and_wait(node):
+                found, label = tree.find_child(
+                    node, lambda s, w=want_label: s.strip().casefold() == w)
+            if found is None:
+                _cancel_browse()
+                return {"ok": False, "already": False, "location": current,
+                        "trail": trail,
+                        "note": ("트리에서 '%s' 폴더를 찾지 못했다(지나온 경로 %s). "
+                                 "없는 폴더를 새로 만들지 않는다." % (part, trail))}
+            trail.append(label)
+            node = found
+        tree.select(node)
+
+    ok_btn = next((c for c in children(browse.hwnd, 4)
+                   if c.ctrl_id == BROWSE_OK_ID and c.visible), None)
+    if ok_btn is None:
+        _cancel_browse()
+        return {"ok": False, "already": False, "location": current, "trail": trail,
+                "note": "폴더 찾아보기의 확인 버튼을 찾지 못했다."}
+    ui.click(ok_btn, settle=1.5)
+
+    end = time.time() + timeout
+    now = current
+    while time.time() < end:
+        edits = _in_dialog(dlg, IMPORT_LOCATION_EDIT)
+        now = (ui.get_text(edits[0]) if edits else "") or ""
+        if now and os.path.normcase(os.path.normpath(now)) == want:
+            break
+        time.sleep(0.4)
+    ok = bool(now) and os.path.normcase(os.path.normpath(now)) == want
+    return {"ok": ok, "already": False, "location": now, "trail": trail,
+            "note": "트리 경로 %s → Location=%r" % (trail, now)}
+
+
+def _close_import_dialog(ui, dlg, attempts=3, timeout=8):
+    """Close(30467)로 창을 닫고 **정말 닫혔는지 확인한다.**
+
+    사용자 제보(2026-08-21): *"import 후 실제 close 할 때도 (Close) 버튼을 눌러
+    close 하면 database 탭에서 다시 검색하면 검색이 될 거야."* — 창을 닫은 뒤
+    **Database에서 다시 조회해야** 들어온 스터디가 목록에 보인다.
+
+    그리고 같은 날 또 하나: *"지금 import study 창이 켜져 있어서 네가 클릭한 다른
+    버튼들이 다 먹히지 않았어. 임포트가 성공하면 일단 이 창을 닫아야지."* 실제로
+    그 사고가 났다(Result_20260821_145739) — 이 창이 모달로 남아 있는 동안 Close와
+    Database 조회 클릭이 조용히 무시돼서 "건수 70 → 70"이라는 **의미 없는 판정
+    근거**가 리포트에 남았다. 그래서 여기서는 눌러 보고 끝내지 않고 **창이 사라진
+    것을 확인**하며, 안 닫히면 제목줄 닫기(`-4`)까지 시도한다.
+
+    반환: True면 창이 사라진 것을 확인했다.
+    """
+    for attempt in range(attempts):
+        target = IMPORT_CLOSE_BUTTON if attempt < attempts - 1 else DIALOG_CLOSE_X
+        btns = _in_dialog(dlg, target)
+        if btns:
+            ui.click(btns[0], settle=1.2)
+        end = time.time() + timeout
+        while time.time() < end:
+            if find_import_dialog(ui, timeout=0) is None:
+                return True
+            time.sleep(0.5)
+    return find_import_dialog(ui, timeout=0) is None
+
+
+def _shot_rect(ctrl, evidence_dir, name):
+    try:
+        from PIL import ImageGrab
+        os.makedirs(evidence_dir, exist_ok=True)
+        ImageGrab.grab(bbox=ctrl.rect, all_screens=True).save(
+            os.path.join(evidence_dir, name))
+        return True
+    except Exception:                                     # noqa: BLE001
+        return False
+
+
+def import_studies(ui, cfg, dest, expected=None, scope="selected",
+                   evidence_dir=None, settle=2.0, info_timeout=90):
+    """Database > Import로 `dest` 폴더의 스터디를 되읽는다.
+
+    `expected`가 있으면 Import Study 목록의 **각 열 값을 그 기대값과 대조**한다
+    (`core/listgrid.compare_row`, 사용자 지시 2026-08-21: "각 열의 정보가 export
+    한 정보와 동일하게 나오면 될 것 같은데"). 열이 좁아 값이 잘려 보이면 그 열의
+    경계선을 드래그해 넓혀 읽고 원래 폭으로 되돌린다.
+
+    반환: {"ok", "location", "rows", "row_values", "match", "scope_clicked",
+           "info", "db_before", "db_after", "note"}
+    """
+    from . import dialogs as D
+    from .listgrid import ListGrid, compare_row
+    from .ui import children
+
+    out = {"ok": False, "location": None, "rows": 0, "row_values": None,
+           "match": None, "scope_clicked": None, "info": "", "progress": [],
+           "closed": False, "db_before": None, "db_after": None, "note": ""}
+
+    out["db_before"] = _result_total(database_search(ui))
+
+    db_button(ui, "import", settle=3.0)
+    dlg = find_import_dialog(ui)
+    if dlg is None:
+        out["note"] = ("Import Study 창을 찾지 못했다(필요 컨트롤 %s를 모두 가진 "
+                       "최상위 창 없음)." % (IMPORT_DIALOG_IDS,))
+        return out
+
+    loc = set_import_location(ui, dlg, dest)
+    out["location"] = loc.get("location")
+    if not loc.get("ok"):
+        out["note"] = "Location 지정 실패: %s" % loc.get("note")
+        out["closed"] = _close_import_dialog(ui, dlg)
+        return out
+
+    rows = []
+    end = time.time() + 20
+    while time.time() < end:
+        rows = import_dialog_rows(dlg)
+        if rows:
+            break
+        time.sleep(0.5)
+    out["rows"] = len(rows)
+    if not rows:
+        out["note"] = ("Location=%s 에서 가져올 스터디를 찾지 못했다. VXvue는 "
+                       "**자기 IMG 형식만** 가져올 수 있다(Operation Manual 8.14) "
+                       "— Export 산출물에 IMG가 있는지 먼저 볼 것." % out["location"])
+        out["closed"] = _close_import_dialog(ui, dlg)
+        return out
+
+    # --- 목록 각 열을 읽어 Export 정보와 대조 --------------------------
+    target = rows[0]
+    grid = None
+    lcs = _in_dialog(dlg, IMPORT_STUDY_LIST)
+    if lcs:
+        try:
+            grid = ListGrid(ui, lcs[0])
+        except Exception as exc:                          # noqa: BLE001
+            out["note"] = "목록 헤더를 읽지 못했다: %s" % exc
+    if grid is not None:
+        want_cols = set((expected or {}).keys()) or None
+        values = grid.read_row(target, widen=True, want=want_cols)
+        out["row_values"] = dict(values)
+        if expected:
+            out["match"] = compare_row(values, expected)
+            # 행이 여럿이면 기대값과 맞는 행을 찾아 고른다.
+            if not out["match"]["ok"] and len(rows) > 1:
+                cols = grid.columns()
+                for row in rows[1:]:
+                    vals = grid.read_row(row, columns=cols, widen=True,
+                                         want=want_cols)
+                    cmp2 = compare_row(vals, expected)
+                    if cmp2["ok"]:
+                        target, out["row_values"], out["match"] = row, dict(vals), cmp2
+                        break
+
+    ui.click((target.rect[0] + 60,
+              (target.rect[1] + target.rect[3]) // 2), settle=0.8)
+    if evidence_dir:
+        _shot_rect(dlg, evidence_dir, "import_dialog.png")
+
+    start = _in_dialog(dlg, IMPORT_START_BUTTON)
+    if not start:
+        out["note"] = "Import 버튼(%d)을 찾지 못했다." % IMPORT_START_BUTTON
+        out["closed"] = _close_import_dialog(ui, dlg)
+        return out
+    ui.click(start[0], settle=settle)
+
+    scope_res = confirm_scope_popup(ui, scope=scope)
+    out["scope_clicked"] = scope_res.get("clicked")
+
+    info_text, progress_seen = "", []
+    end = time.time() + info_timeout
+    while time.time() < end:
+        d = ui.dialog()
+        if d is None:
+            time.sleep(0.5)
+            continue
+        info = D.read(ui, d, cfg)
+        text = ("%s: %s" % (info.get("title"),
+                            info.get("message"))).strip(": ")
+        low = text.lower()
+        terminal = any(w in low for w in
+                       IMPORT_SUCCESS_WORDS + IMPORT_FAILURE_WORDS)
+        if not terminal and any(w in low for w in IMPORT_PROGRESS_WORDS):
+            # 진행 표시다 — 닫지 않고 사라질 때까지 기다린다.
+            if text not in progress_seen:
+                progress_seen.append(text)
+            time.sleep(1.0)
+            continue
+        info_text = text
+        if evidence_dir:
+            _shot_rect(d, evidence_dir, "import_result_popup.png")
+        ok_btn = [c for c in children(d.hwnd, 3)
+                  if c.ctrl_id == IMPORT_INFO_OK]
+        if ok_btn:
+            ui.click(ok_btn[0], settle=1.2)
+        break
+    out["info"] = info_text
+    out["progress"] = progress_seen
+
+    out["closed"] = _close_import_dialog(ui, dlg)
+    if out["closed"]:
+        # 창이 사라진 뒤에야 조회 클릭이 먹는다(위 docstring의 사고 참고).
+        out["db_after"] = _result_total(database_search(ui))
+
+    low = info_text.lower()
+    said_ok = any(w in low for w in IMPORT_SUCCESS_WORDS)
+    said_bad = any(w in low for w in IMPORT_FAILURE_WORDS)
+    grew = (out["db_after"] or 0) > (out["db_before"] or 0)
+    cols_ok = out["match"]["ok"] if out.get("match") else True
+    out["ok"] = bool(said_ok and not said_bad and cols_ok and out.get("closed"))
+    bits = ["결과 팝업=%r" % (info_text or "(없음)"),
+            "진행 표시=%s" % (progress_seen or "없음")]
+    if out.get("closed"):
+        bits.append("Import Study 창 닫힘 확인 / Database 건수 %s → %s%s"
+                    % (out["db_before"], out["db_after"],
+                       "" if grew else " (증가 없음)"))
+    else:
+        bits.append("**Import Study 창이 닫히지 않았다** — 이 창이 모달로 남으면 "
+                    "이후 클릭이 무시되므로 Database 재조회 결과를 판정 근거로 "
+                    "쓰지 않는다(건수 확인 생략)")
+    if out.get("match") is not None:
+        m = out["match"]
+        bits.append("열 대조 일치=%s / 잘림부분일치=%s / 불일치=%s / 없는열=%s"
+                    % (sorted(m["matched"]), sorted(m["partial"]),
+                       dict(m["mismatched"]), m["missing"]))
+    if not grew and said_ok:
+        bits.append("팝업은 성공이라 했는데 목록 건수가 늘지 않았다 — 같은 "
+                    "스터디를 덮어썼을 수 있어 확인이 필요하다")
+    out["note"] = " / ".join(bits)
+    return out
 
 
 # 상단 스터디 탭. 열린 검사 하나가 NaviBarItem 하나다. **ctrl_id로 범위를
@@ -2450,16 +3307,36 @@ def close_all_studies(ui, cfg=None, max_iters=12, evidence_dir=None):
     return out
 
 
-def close_study(ui, cfg, settle=3.0, evidence_dir=None):
-    """열려 있는 검사를 닫는다(Database 화면의 Close).
+def close_study(ui, cfg, settle=3.0, evidence_dir=None, verify=True):
+    """열려 있는 검사를 닫는다(Database 화면의 Close) — **닫혔는지 확인한다.**
 
     체크리스트 TC02 Step 4: "스터디를 Close 하고 Database 에서 스터디 정보를
     확인한다." Close 후 뜨는 확인 팝업까지 처리한다.
 
-    반환: {"clicked": bool, "dialogs": [...], "state": 촬영 상태}
+    ## 왜 확인이 필요한가 (실측 2026-08-21)
+
+    사용자 제보: *"지금 클로즈 버튼을 헛으로 눌렀고, 실제 스터디가 close 되지 않아
+    데이터베이스에 저장되지 않음."* 실제로 그 사고가 났다
+    (`Result_20260821_150508`): 이 함수는 버튼을 눌렀다는 사실만 돌려줬고 TC08은
+    그것을 성공으로 받아들였다. 그런데 검사는 닫히지 않았고 — 그래서 **DB에
+    커밋되지 않아** 뒤따르는 Step 3이 목록에서 *이전 실행의 오래된 스터디*를 골라
+    Export했다. TC 마지막 정리 단계가 `닫음 2개`로 뒤늦게 치운 것이 그 증거다.
+
+    그래서 이제 **열린 검사 탭 수를 앞뒤로 세어** 실제로 줄었는지 확인하고, 줄지
+    않았으면 이미 검증된 경로(`close_all_studies()` — Close All 툴 + 탭 닫기
+    백업)로 확실히 닫는다. 어느 경로로 닫혔는지 `method`에 남긴다.
+
+    반환: {"clicked", "dialogs", "state", "pre_dialogs", "tabs_before",
+           "tabs_after", "closed", "method", "ok"}
     """
-    out = {"clicked": False, "dialogs": [], "state": "", "pre_dialogs": []}
+    out = {"clicked": False, "dialogs": [], "state": "", "pre_dialogs": [],
+           "tabs_before": 0, "tabs_after": 0, "closed": 0, "method": "",
+           "ok": False}
     out["pre_dialogs"] = pending_dialogs(ui, evidence_dir=evidence_dir, cfg=cfg)
+    # 스터디 탭 바는 Registration 화면에서는 렌더링되지 않는다(실측) — Exposure에서 센다.
+    goto(ui, "exposure")
+    time.sleep(0.5)
+    out["tabs_before"] = len(open_study_tabs(ui))
     goto(ui, "database")
     time.sleep(1.5)
     # 화면이 실제로 Database로 바뀌었는지 확인한다 — 팝업이 남아 있으면 클릭이
@@ -2487,5 +3364,22 @@ def close_study(ui, cfg, settle=3.0, evidence_dir=None):
                 pass
         ui.dismiss_dialog(timeout=3)
         time.sleep(0.8)
+
+    goto(ui, "exposure")
+    time.sleep(0.5)
+    after = len(open_study_tabs(ui))
+    out["method"] = "database_close"
+    if verify and out["tabs_before"] and after >= out["tabs_before"]:
+        # 눌렀지만 닫히지 않았다 — 검증된 경로로 확실히 닫는다.
+        fb = close_all_studies(ui, cfg, evidence_dir=evidence_dir)
+        out["fallback"] = fb
+        out["dialogs"] += [str(d) for d in (fb.get("dialogs") or [])]
+        after = len(open_study_tabs(ui))
+        out["method"] = ("database_close(무효) → %s"
+                         % (fb.get("method") or "close_all_studies"))
+    out["tabs_after"] = after
+    out["closed"] = max(0, out["tabs_before"] - after)
+    # 닫을 것이 없었으면(0개) 그대로 성공으로 본다 — 이미 닫힌 상태다.
+    out["ok"] = (out["tabs_before"] == 0) or (after < out["tabs_before"])
     out["state"] = acquisition_state(ui, cfg)
     return out
