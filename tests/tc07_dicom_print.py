@@ -185,7 +185,20 @@ def printscp_note(cfg):
 
 
 def _click_print(ui, cfg, evidence_dir):
-    """Print를 실행한다. Database 화면의 Print(30293)를 우선 시도한다."""
+    """Print를 실행한다. Database 화면의 Print(30293)를 우선 시도한다.
+
+    **Database > Print는 두 번의 확인이 필요하다**(실측 2026-08-21, 이전
+    버전은 첫 번째만 처리해 '클릭은 했지만 아무것도 전송되지 않는' 거짓양성이
+    났다).
+
+    1. Print(30293)를 누르면 'Do you want to print all images of the selected
+       study?' 확인 팝업이 뜬다 — Send 팝업과 같은 버튼 ID(`27002`/27001/27000)를
+       쓴다(실측: 팝업의 자식 컨트롤을 그 자리에서 덤프해 확인).
+    2. 그 팝업에서 All Images(27002)를 누르면 필름 구성 화면(CUIFilmManager)으로
+       전환되는데, **여기서 Print(`30718`)를 다시 눌러야** Print SCP로 실제
+       전송된다. 이 두 번째 클릭 없이는 필름 구성만 되고 수신 쪽에는 아무것도
+       도착하지 않는다(실측: Print SCP 필름 0건 → 30718 클릭 후 2건 수신 확인).
+    """
     out = {"clicked": False, "where": "", "dialogs": [], "note": ""}
 
     # Database 화면에 목록이 있으면 그쪽에서(스터디 단위 전송)
@@ -195,26 +208,33 @@ def _click_print(ui, cfg, evidence_dir):
         if rows:
             W.click_row(ui, rows[0])
             W.db_button(ui, "print")
-            out.update(clicked=True, where="Database > Print(30293)")
+            confirm = W.confirm_scope_popup(ui, scope="all")
+            finish = W.finish_print(ui, button="print")
+            out.update(clicked=bool(finish["clicked"]),
+                       where="Database > Print(30293) -> 확인 팝업(%s) -> "
+                             "Film Manager Print(%s)"
+                             % (confirm["clicked"], finish["clicked"]))
+            if not confirm["dialog"]:
+                out["note"] += " 확인 팝업이 나타나지 않았다."
+            if not finish["clicked"]:
+                out["note"] += " Film Manager의 Print(30718)를 찾지 못했다."
     except Exception as exc:                              # noqa: BLE001
         out["note"] = "Database 경로 실패: %s" % exc
 
     if not out["clicked"]:
         # Database 목록이 비어 있으면(TC02에서 확인한 '완료된 검사만 표시' 제약)
-        # Print 화면에서 전송한다.
+        # Print 화면에서 곧바로 전송한다(이 화면은 확인 팝업 없이 30718/30719가
+        # 최종 전송 버튼이다 — 위 Database 경로와 같은 화면으로 수렴한다).
         try:
             W.goto(ui, "print")
             time.sleep(1.5)
-            hits = W.by_id(ui, 30718) or W.by_id(ui, 30719)
-            if hits:
-                ui.click(hits[0], settle=2.5)
-                out.update(clicked=True, where="Print 화면 TextButton(%d)"
-                                               % hits[0].ctrl_id)
-                out["note"] += (" Database 목록이 비어 Print 화면에서 실행했다 — "
-                                "Print 화면의 두 TextButton(30718/30719)은 라벨을 "
-                                "표준 API로 읽을 수 없어 첫 번째를 눌렀다. **어느 "
-                                "쪽이 전송 버튼인지 실측으로 확정해야 한다** "
-                                "(ui-probe + 캡처 대조).")
+            finish = W.finish_print(ui, button="print")
+            if finish["clicked"]:
+                out.update(clicked=True,
+                           where="Print 화면 Print(%d)" % finish["clicked"])
+                out["note"] += (" Database 목록이 비어 Print 화면에서 직접 실행했다"
+                                "(30718='Print', 30719='Print & Close' — "
+                                "캡처+OCR로 확정, 2026-08-19/21).")
         except Exception as exc:                          # noqa: BLE001
             out["note"] += " Print 화면 경로 실패: %s" % exc
 

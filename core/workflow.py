@@ -92,6 +92,7 @@ Send: "Do you want to send all images of the selected study?"
 """
 
 import os
+import re
 import time
 
 from . import dialogs
@@ -2177,6 +2178,33 @@ def click_tool(ui, cfg=None, name="XIPL", section="tools", evidence_dir=None,
             "available": sorted(palette)}
 
 
+def confirm_scope_popup(ui, scope="all", dialog_timeout=8, settle=2.0):
+    """이미 띄워 놓은 'Do you want to send/print all images...' 팝업에서
+
+    범위 버튼(All Images/Selected/Cancel, `27002`/`27001`/`27000`)을 누른다.
+    Send와 Print 확인 팝업이 문구만 다르고 버튼 ID 구성은 같다(실측
+    2026-08-21 — Database > Print를 눌러서 뜨는 팝업의 자식을 그 자리에서
+    덤프해 확인했다). 팝업을 직접 트리거하지 않는 호출부(`send()`처럼 버튼을
+    누르는 쪽이 아니라, Database 목록 액션 등으로 이미 팝업이 뜬 뒤)에서 쓴다.
+
+    반환: {"scope","clicked","dialog":bool}
+    """
+    from .ui import children
+    if scope not in SEND_SCOPE:
+        raise WorkflowError("알 수 없는 확인 범위: %s" % scope)
+    want = SEND_SCOPE[scope]
+    end = time.time() + dialog_timeout
+    while time.time() < end:
+        d = ui.dialog()
+        if d is not None:
+            btn = [c for c in children(d.hwnd, 3) if c.ctrl_id == want]
+            if btn:
+                ui.click(btn[0], settle=settle)
+                return {"scope": scope, "clicked": want, "dialog": True}
+        time.sleep(0.5)
+    return {"scope": scope, "clicked": None, "dialog": False}
+
+
 # --- 전송 -------------------------------------------------------------
 def send(ui, scope="all", settle=2.5, dialog_timeout=8, attempts=3):
     """선택한 영상을 DICOM Storage로 전송한다.
@@ -2189,26 +2217,40 @@ def send(ui, scope="all", settle=2.5, dialog_timeout=8, attempts=3):
 
     반환: {"scope","clicked","dialog":bool}
     """
-    from .ui import children
     if scope not in SEND_SCOPE:
         raise WorkflowError("알 수 없는 전송 범위: %s" % scope)
-    want = SEND_SCOPE[scope]
-
     for _ in range(attempts):
         hits = by_id(ui, TOOL["send"])
         if not hits:
             raise WorkflowError("Send 버튼(%d)을 찾지 못했습니다." % TOOL["send"])
         ui.click(hits[0], settle=settle)
-        end = time.time() + dialog_timeout
-        while time.time() < end:
-            d = ui.dialog()
-            if d is not None:
-                btn = [c for c in children(d.hwnd, 3) if c.ctrl_id == want]
-                if btn:
-                    ui.click(btn[0], settle=2.0)
-                    return {"scope": scope, "clicked": want, "dialog": True}
-            time.sleep(0.5)
+        result = confirm_scope_popup(ui, scope=scope, dialog_timeout=dialog_timeout)
+        if result["dialog"]:
+            return result
     return {"scope": scope, "clicked": None, "dialog": False}
+
+
+def finish_print(ui, button="print", timeout=8, settle=2.5):
+    """Film Manager(`CUIFilmManager`) 화면에서 실제 전송 버튼을 누른다.
+
+    **Database > Print는 곧바로 전송하지 않는다** — 확인 팝업(`confirm_scope_popup`)을
+    누르면 필름 구성 화면(CUIFilmManager)으로 전환될 뿐이고, 그 화면의
+    Print(`30718`) 또는 Print & Close(`30719`)를 다시 눌러야 Print SCP로 실제
+    전송된다(실측 2026-08-21: 이 두 번째 클릭 없이는 확인 팝업까지 다 눌러도
+    수신 쪽에 필름이 0건이었다). 두 버튼 모두 표준 API로 라벨을 읽을 수 없어
+    캡처+OCR로 `30718`='Print', `30719`='Print & Close'를 확정했다(2026-08-19).
+
+    반환: {"clicked": ctrl_id 또는 None}
+    """
+    want = PRINT_BUTTON if button == "print" else PRINT_AND_CLOSE_BUTTON
+    end = time.time() + timeout
+    while time.time() < end:
+        hits = by_id(ui, want)
+        if hits:
+            ui.click(hits[0], settle=settle)
+            return {"clicked": want}
+        time.sleep(0.5)
+    return {"clicked": None}
 
 
 def db_button(ui, name, settle=2.5):
@@ -2223,28 +2265,58 @@ def db_button(ui, name, settle=2.5):
     return True
 
 
-def database_search(ui, settle=3.0):
+_RESULT_COUNT_RX = re.compile(r"Result:\s*(\d+)\s*/\s*(\d+)")
+
+
+def _result_total(summary):
+    m = _RESULT_COUNT_RX.search(summary or "")
+    return int(m.group(2)) if m else 0
+
+
+def database_search(ui, settle=3.0, retries=4, retry_wait=3.0):
     """Database 화면에서 조회를 실행하고 요약 문구를 돌려준다.
 
     Search 버튼은 Registration과 같은 ID(`30689`)다(실측). 검사를 Close한 직후에는
     목록이 자동으로 갱신되지 않아 `Result: 0 / 0`이 남아 있다 — 조회하지 않으면
     "촬영했는데 Database에 없다"는 잘못된 판정이 난다.
+
+    **한 번 조회해도 비어 있을 수 있다**(실측 2026-08-21: TC02가 Close 직후 조회한
+    결과는 `Result: 0 / 0`이었는데, 같은 스터디를 몇 분 뒤 다시 열면 `6 / 6`으로
+    정상 표시됐다 — 제품 내부 인덱싱이 Close보다 늦게 끝나는 지연으로 보인다).
+    그래서 결과가 비어 있으면 Search를 다시 눌러 재시도한다. 그래도 계속 비어
+    있으면 그 자체가 판정 대상이므로 무한 재시도하지 않고 마지막 결과를 그대로
+    반환한다.
     """
     goto(ui, "database")
     time.sleep(1.0)
     hits = by_id(ui, REG_SEARCH_BUTTON)
-    if hits:
-        ui.click(hits[0], settle=settle)
-    time.sleep(1.0)
-    return result_summary(ui)
+    summary = ""
+    for attempt in range(max(1, retries)):
+        if hits:
+            ui.click(hits[0], settle=settle)
+        time.sleep(1.0)
+        summary = result_summary(ui)
+        if _result_total(summary) > 0:
+            break
+        if attempt < retries - 1:
+            time.sleep(retry_wait)
+    return summary
 
 
-# 상단 스터디 탭. 열린 검사 하나가 NaviBarItem 하나이고, ctrl_id가 31213부터
-# 순번으로 붙는다(실측 2026-08-20: 검사 4개가 31213~31216). 각 탭의 자식
-# IconButton(id=1)이 그 탭의 닫기(X) 버튼이다.
+# 상단 스터디 탭. 열린 검사 하나가 NaviBarItem 하나다. **ctrl_id로 범위를
+# 가정하지 않는다** — 2026-08-20에는 검사 4개가 31213~31216으로 연속이었지만,
+# 2026-08-21 실측(검사 1개)에서는 31274 하나였다. ID가 순번이 아니라 세션마다
+# 달라지는 값이므로, 대신 **클래스 텍스트('NaviBarItem')로 찾는다**(CLAUDE.md
+# 속성 우선 원칙). 이 버그로 열린 검사가 하나만 있을 때 `open_study_tabs()`가
+# 0개로 잘못 보고해 정리가 되지 않은 채 다음 TC로 넘어갈 수 있었다.
+#
+# **컨테이너 ID(31200)는 스터디 탭 바만의 것이 아니다** — 같은 ID를 Registration
+# 화면 자체의 Scheduled/Unscheduled/Reserved 탭도 쓴다(실측 2026-08-21). 두
+# 컨테이너를 트리에서 항상 함께 발견되고 상황에 따라 하나만 보인다(visible).
+# 구분 기준(실측): 스터디 탭 바는 환자 배너 오른쪽에서 시작해 `rect[0]`이
+# 약 270 — Registration 자체 탭은 `rect[0]=0`부터 전체 폭이다. `.visible`과
+# `rect[0]`을 함께 봐야 두 컨테이너가 섞이지 않는다.
 STUDY_TAB_CONTAINER = 31200
-STUDY_TAB_FIRST_ID = 31213
-STUDY_TAB_LAST_ID = 31240          # 넉넉한 상한(실측 범위 밖까지 훑는다)
 
 
 def open_study_tabs(ui):
@@ -2258,9 +2330,10 @@ def open_study_tabs(ui):
         return []
     out = []
     for cont in [c for c in children(main.hwnd, 2)
-                 if c.ctrl_id == STUDY_TAB_CONTAINER and c.size[0] > 400]:
+                 if c.ctrl_id == STUDY_TAB_CONTAINER and c.visible
+                 and c.rect[0] > 200 and c.size[0] > 400]:
         for tab in children(cont.hwnd, 2):
-            if not (STUDY_TAB_FIRST_ID <= tab.ctrl_id <= STUDY_TAB_LAST_ID):
+            if tab.text.strip() != "NaviBarItem":
                 continue
             if not tab.visible or tab.size[0] < 100:
                 continue
@@ -2286,56 +2359,93 @@ def open_study_tabs(ui):
     return uniq
 
 
+CLOSE_ALL_BUTTON = 30274   # OCR 확정: "Close All" — 항상 보이는 툴바(더보기 팔레트 아님)
+CLOSE_BUTTON = 30275       # OCR 확정: "Close"
+
+
+def _handle_close_confirm_popups(ui, cfg, out, max_iters=3):
+    """닫기 뒤에 뜨는 확인 팝업을 처리한다(QUESTION은 첫 버튼 = 닫기)."""
+    from .ui import children as _children
+    for _ in range(max_iters):
+        d = ui.dialog()
+        if d is None:
+            break
+        info = dialogs.read(ui, d, cfg)
+        kind = dialogs.classify(info)
+        rec = dialogs.DialogRecord(info["title"], info["message"], kind,
+                                   "handled_by_close_all")
+        out["dialogs"].append(rec)
+        if kind == dialogs.QUESTION:
+            btns = sorted([c for c in _children(d.hwnd, 3)
+                           if c.text.strip() in ("TextButton", "Button")
+                           and c.size[0] >= 40 and c.visible],
+                          key=lambda c: c.rect[0])
+            if btns:
+                ui.click(btns[0], settle=1.2)       # 첫 버튼 = 닫기
+            else:
+                ui.dismiss_dialog(timeout=2)
+        else:
+            ui.dismiss_dialog(timeout=2)
+        time.sleep(0.5)
+
+
 def close_all_studies(ui, cfg=None, max_iters=12, evidence_dir=None):
     """열려 있는 모든 검사를 닫는다 — **시험이 끝나면 반드시 호출한다.**
 
     사용자 지시(2026-08-20): *"지금 테스트중이라고 해도 열려있는 스터디가 너무
-    많거든? 이걸 잘 닫을 수 있도록 해줘, 테스트가 끝나면."*
+    많거든? 이걸 잘 닫을 수 있도록 해줘, 테스트가 끝나면."* 사용자 지시
+    (2026-08-21): *"촬영화면을 열고 테스트한 다음에는 꼭 그 촬영 스터디를
+    닫아줘 — Tool의 Close All을 쓰면 될 것 같아."*
 
     열린 검사가 쌓이면 (1) 다음 시험이 어느 검사를 보고 있는지 불분명해지고,
     (2) 촬영 대상 Step 선택이 엉키고, (3) 사람이 화면을 봤을 때 시험 흔적과
     실제 상태를 구분하기 어렵다.
 
-    각 스터디 탭의 닫기(X)를 누르고, 그때 뜨는 확인 팝업을 처리한다. Operation
-    Manual 6.8(p.99): *"촬영 예정인 Step이 남아 있는 경우, 검사를 닫거나 보류하는
-    것을 선택할 수 있습니다."* — 시험 정리 목적이므로 **닫기**를 택한다(팝업의
-    첫 버튼). 보류를 택하면 검사가 그대로 남아 목적을 달성하지 못한다.
+    **1차: Close All 툴(`30274`).** Viewer 최대화 레이아웃(우측 도구 패널)의
+    항상 보이는 툴바에 있다 — Tools ≡ 더보기 팔레트 안이 아니다(실측
+    2026-08-21, 사용자 지적으로 위치 정정). 열린 검사가 1개여도 활성화돼
+    있고(실측), 팝업 없이 한 번에 전부 닫힌다. Exposure 화면이면 먼저
+    `viewer_mode()`로 전환한다.
 
-    반환: {"closed": n, "remaining": n, "dialogs": [DialogRecord...]}
+    **2차 백업: 탭을 하나씩 닫기.** Close All 버튼을 못 찾거나 눌러도 탭이
+    남으면, 각 스터디 탭의 닫기(X)를 오른쪽부터 누르고 뜨는 확인 팝업을
+    처리한다. Operation Manual 6.8(p.99): *"촬영 예정인 Step이 남아 있는
+    경우, 검사를 닫거나 보류하는 것을 선택할 수 있습니다."* — 시험 정리
+    목적이므로 **닫기**를 택한다(팝업의 첫 버튼). 보류를 택하면 검사가 그대로
+    남아 목적을 달성하지 못한다.
+
+    반환: {"closed": n, "remaining": n, "dialogs": [DialogRecord...], "method": str}
     """
-    out = {"closed": 0, "remaining": 0, "dialogs": []}
+    out = {"closed": 0, "remaining": 0, "dialogs": [], "method": ""}
+    # 스터디 탭 바는 Registration 목록 화면에서는 렌더링되지 않는다(실측
+    # 2026-08-21) — 그 화면에 있는 상태로 확인하면 스터디가 열려 있어도
+    # `open_study_tabs()`가 0개로 보인다. Exposure로 옮겨 확인한다.
+    goto(ui, "exposure")
+    time.sleep(0.5)
+    before = open_study_tabs(ui)
+    if not before:
+        return out
+
+    if viewer_mode(ui, cfg):
+        hits = by_id(ui, CLOSE_ALL_BUTTON)
+        if hits:
+            ui.click(hits[0], settle=1.5)
+            _handle_close_confirm_popups(ui, cfg, out)
+            after = open_study_tabs(ui)
+            out["closed"] += len(before) - len(after)
+            out["method"] = "close_all_button"
+
     for _ in range(max_iters):
         tabs = open_study_tabs(ui)
         if not tabs:
             break
         ui.click(tabs[-1]["close_point"], settle=1.5)   # 오른쪽부터 닫는다
-        # 닫기 확인 팝업 처리. QUESTION은 clear_blocking이 남겨 두므로 직접 누른다.
-        for _ in range(3):
-            d = ui.dialog()
-            if d is None:
-                break
-            info = dialogs.read(ui, d, cfg)
-            kind = dialogs.classify(info)
-            rec = dialogs.DialogRecord(info["title"], info["message"], kind,
-                                       "handled_by_close_all")
-            out["dialogs"].append(rec)
-            if kind == dialogs.QUESTION:
-                from .ui import children as _children
-                btns = sorted([c for c in _children(d.hwnd, 3)
-                               if c.text.strip() in ("TextButton", "Button")
-                               and c.size[0] >= 40 and c.visible],
-                              key=lambda c: c.rect[0])
-                if btns:
-                    ui.click(btns[0], settle=1.2)       # 첫 버튼 = 닫기
-                else:
-                    ui.dismiss_dialog(timeout=2)
-            else:
-                ui.dismiss_dialog(timeout=2)
-            time.sleep(0.5)
+        _handle_close_confirm_popups(ui, cfg, out)
         after = open_study_tabs(ui)
         if len(after) >= len(tabs):
             break                                       # 더 못 닫는다
         out["closed"] += len(tabs) - len(after)
+        out["method"] = (out["method"] + "+tab_close").lstrip("+")
     out["remaining"] = len(open_study_tabs(ui))
     return out
 

@@ -1,0 +1,317 @@
+<!doctype html><html><head><meta charset='utf-8'>
+<title>VXvue TC 설계 리포트</title><style>
+body{font-family:'Malgun Gothic',sans-serif;margin:24px;color:#1a1a1a;background:#fff;max-width:1100px}
+h1{font-size:21px;margin:0 0 4px}
+h2{font-size:17px;margin:34px 0 4px;border-bottom:2px solid #333;padding-bottom:4px}
+h3{font-size:14.5px;margin:16px 0 4px}
+h4{font-size:13px;margin:10px 0 3px;color:#444}
+.meta{color:#666;font-size:12px;margin-bottom:18px}
+.badge{display:inline-block;padding:2px 8px;border-radius:3px;font-size:12px;font-weight:700;
+       color:#fff;margin-left:8px;vertical-align:middle}
+.b-FULL{background:#0a7f3f}.b-PARTIAL{background:#a06000}.b-MANUAL{background:#777}
+.b-BLOCKED{background:#6a1b9a}.b-EXCLUDED{background:#999}.b-none{background:#c62828}
+.scope-reason{background:#f7f7f7;border-left:3px solid #999;padding:8px 12px;font-size:12.5px;margin:6px 0 14px}
+.no-code{background:#fff3e0;border-left:3px solid #e65100;padding:8px 12px;font-size:12.5px;margin:6px 0 14px}
+.import-error{background:#ffebee;border-left:3px solid #c62828;padding:8px 12px;font-size:12.5px}
+table{border-collapse:collapse;width:100%;font-size:12.5px;margin:8px 0 14px}
+th,td{border:1px solid #d8d8d8;padding:5px 8px;text-align:left;vertical-align:top}
+th{background:#f3f4f6;font-weight:600}
+code{font-family:Consolas,monospace;font-size:12px;word-break:break-all;background:#f5f5f5;padding:1px 3px}
+pre{background:#f5f5f5;padding:8px 10px;overflow-x:auto;font-size:12px}
+pre code{background:none;padding:0}
+.PASS{color:#0a7f3f;font-weight:700}.FAIL{color:#c62828;font-weight:700}
+.MANUAL{color:#a06000;font-weight:700}.SKIP{color:#777;font-weight:700}.BLOCKED{color:#6a1b9a;font-weight:700}
+.result-box{border:1px solid #d8d8d8;padding:8px 12px;margin:10px 0;font-size:12.5px}
+.toc{columns:2;font-size:13px;margin-bottom:20px}
+.toc a{text-decoration:none;color:#1a56db}
+</style>
+
+</head><body>
+<h1>VXvue TC 설계 리포트</h1>
+<div class='meta'>생성 2026-08-21 09:26:03 &nbsp;|&nbsp; 최신 실행 결과 출처: <code>Reports\Result_20260821_091120.json</code><br>이 문서는 <code>tests/tc*.py</code> 모듈 docstring과 <code>automation_scope.json</code>에서 **코드 기준으로 뽑아** 생성한다 (<code>python run.py design-report</code>). 특정 실행의 PASS/FAIL 결과는 <code>Reports/</code>를 본다.</div>
+<div class='toc'><a href='#TC_WindowsUpdate_01'>TC_WindowsUpdate_01</a><a href='#TC_WindowsUpdate_02'>TC_WindowsUpdate_02</a><a href='#TC_WindowsUpdate_03'>TC_WindowsUpdate_03</a><a href='#TC_WindowsUpdate_04'>TC_WindowsUpdate_04</a><a href='#TC_WindowsUpdate_05'>TC_WindowsUpdate_05</a><a href='#TC_WindowsUpdate_06'>TC_WindowsUpdate_06</a><a href='#TC_WindowsUpdate_07'>TC_WindowsUpdate_07</a><a href='#TC_WindowsUpdate_08'>TC_WindowsUpdate_08</a><a href='#TC_WindowsUpdate_09'>TC_WindowsUpdate_09</a><a href='#TC_WindowsUpdate_10'>TC_WindowsUpdate_10</a><a href='#TC_WindowsUpdate_11'>TC_WindowsUpdate_11</a><a href='#TC_WindowsUpdate_12'>TC_WindowsUpdate_12</a><a href='#TC_WindowsUpdate_13'>TC_WindowsUpdate_13</a><a href='#TC_WindowsUpdate_14'>TC_WindowsUpdate_14</a><a href='#TC_WindowsUpdate_15'>TC_WindowsUpdate_15</a><a href='#TC_Setting_ExportImport'>TC_Setting_ExportImport</a></div>
+<h2 id='TC_WindowsUpdate_01'>TC_WindowsUpdate_01 <span class='badge b-EXCLUDED'>EXCLUDED</span></h2>
+<div class='scope-reason'><b>automation_scope.json 근거</b> — 사용자 지시로 이번 자동화 범위 제외 (패키지 설치·실행 확인 TC, 수행 불필요)</div>
+<div class='no-code'>자동화 코드 모듈이 없다 — 현재 수준(EXCLUDED)이 그대로 이번 회귀의 실행 결과다. 코드가 생기면 이 섹션에 Step별 설계가 자동으로 채워진다.</div>
+<h2 id='TC_WindowsUpdate_02'>TC_WindowsUpdate_02 — MWL 조회 워크플로우 (조회 → 촬영 → Send → Close → DB 대조) <span class='badge b-FULL'>FULL</span></h2>
+<div class='scope-reason'><b>automation_scope.json 근거</b> — 2026-08-21 재검증(`python run.py tc02`, **PASS 13/FAIL 0/MANUAL 0/SKIP 0/BLOCKED 0**). MWL 조회 -&gt; 목록 표시값 대조 -&gt; Study 등록 -&gt; 인체도에서 Projection(Chest)·Step(PA) 등록 -&gt; F2 촬영(DB INSTANCE 증가로 판정) -&gt; Send -&gt; 수신 DICOM 태그가 MWL 등록값과 완전 일치 -&gt; Close -&gt; DB 대조 -&gt; Database 화면 표시 확인까지 전부 PASS. 이전까지 남아 있던 &#x27;Database 목록 Result 0/0&#x27; 문제(TC07/08도 공통 원인)는 Step 미등록이 아니라 **Close 직후 제품 내부 인덱싱이 검색보다 늦게 끝나는 지연**이었다(실측: 첫 조회 0/0 → 몇 분 뒤 재조회 시 정상 표시). `core/workflow.database_search()`에 재시도(최대 4회, 3초 간격)를 추가해 해소했다(2026-08-21). 근거: 사양서1 p.37~38 VP-460, p.86 VP-526.</div>
+<div class='meta'>코드: <code>tests/tc02_mwl_workflow.py</code></div>
+<p>TC_WindowsUpdate_02 — MWL 조회 워크플로우.</p>
+<p>실행: <code>python run.py tc02</code></p>
+<h3>체크리스트 원문 (R-25-774, Checklist 시트 8행)</h3>
+<p>Precondition: *MWL 서버 : JDICOM, Bunny, DVTK 이용 / 뷰어와 다른 PC 의 Server 이용*</p>
+<p>Step Description</p>
+<pre><code>1. Registration-Scheduled 화면에서 MWL 스터디를 조회한다.
+2. 조회된 스터디의 정보를 확인한다.
+3. 스터디를 선택하고 촬영화면으로 오픈하여 촬영한다.
+4. 스터디를 Close 하고 Database 에서 스터디 정보를 확인한다.
+5. 영상을 Send 후 전송정보를 확인한다.</code></pre>
+<p>Expected Result</p>
+<pre><code>1. MWL 스터디가 조회되어 스터디 목록이 표시된다.
+2. MWL 서버에 저장된 환자 정보가 뷰어에 동일하게 표시된다.
+   - Patient ID, Name, Birth Date, Age, Acc no, Scheduled Date/Time
+3,4,5: 촬영화면, Database, 전송정보가 모두 MWL 스터디 정보와 일치한다.</code></pre>
+<p>Test Data: <code>http://&lt;MWL_SERVER_HOST&gt;:5000/</code> / <code>MWL_SCP</code> / <code>&lt;MWL_SERVER_HOST&gt;</code> / <code>11112</code></p>
+<h3>판정 설계 — 정답지를 어디서 가져오는가</h3>
+<p>Expected Result가 "<b>MWL 스터디 정보와 일치</b>"이므로 정답지는 화면이 아니라 <b>MWL 서버에 등록한 값</b>이다. 이 프로젝트는 <code>core/mwl.py</code>로 처방을 HTTP API로 직접 등록하므로(<code>python run.py mwl-ensure</code>) 그 등록값이 곧 정답지다 — 화면에서 읽은 값으로 기준을 역산하지 않는다.</p>
+<p>일치 확인을 세 지점에서 한다.</p>
+<table>
+<tr><th>지점</th><th>근거</th><th>방법</th></tr>
+<tr><td>① 뷰어 목록(Step 1~2)</td><td>MWL API 등록값</td><td>Registration&gt;Scheduled 행을 캡처+OCR로 읽어 대조</td></tr>
+<tr><td>② Database(Step 4)</td><td>DB <code>STUDY</code>/<code>PATIENT</code> 테이블</td><td>촬영·Close 후 SQL로 조회해 대조</td></tr>
+<tr><td>③ 전송정보(Step 5)</td><td>수신된 DICOM 파일의 태그</td><td>Bunny 수신 파일을 <code>core/dicomlite</code>로 읽어 대조</td></tr>
+</table>
+<p>③이 이 TC의 핵심이다. 제품 UI의 Queue 상태만 보면 "제품이 보냈다고 말한 것"을 믿는 것이 되므로, <b>받은 쪽 파일의 태그</b>로 확인한다.</p>
+<h3>사양 근거</h3>
+<ul><li>사양서1 p.37~38 <code>VP-460 - Register Scheduled Study</code> — Start로 Study 등록,</li></ul>
+<p>맵핑되지 않은 Procedure Code가 있으면 확인 팝업(Yes/No/Cancel). 자동화는 <b>No</b>(매핑하지 않고 Exposure Mode 전환)를 택한다. 이유는 <code>core/workflow.py</code> docstring 참고.</p>
+<ul><li>사양서1 p.86 <code>VP-526 - Obtain Demo Image</code> — "VXvue Demo License 가 등록이</li></ul>
+<p>되어있어야 한다". 데모(F2) 촬영의 선행 조건이며 <code>run.py vxvue-license</code>가 그 등록을 확인한다.</p>
+<h3>알려진 환경 문제 (판정에 그대로 남긴다)</h3>
+<p>촬영 직후 <code>Error: "Image process parameter file does not exist."</code>가 뜬다. XIPL 서버 로그 근거로 원인은 <b>파라미터 경로 구성</b>이며 파일 자체는 존재한다 (<code>core/workflow.py</code> docstring). 영상 획득 자체는 성공하므로 이 TC는 촬영 성공으로 판정하되, 팝업이 떴다는 사실과 원인을 <code>note</code>에 남긴다. Image Processing 성공 여부의 판정은 TC04의 책임이다.</p>
+<h3>Storage에 대한 한계</h3>
+<p>체크리스트 Precondition은 "뷰어와 다른 PC 의 Server 이용"이다. 이 실행은 MWL은 다른 PC(시험 서버)를 쓰지만 <b>Storage는 이 PC의 Bunny</b>를 쓴다(사용자 지시). <code>core/bunny.precondition_note()</code>가 그 차이를 판정 note에 남긴다.</p>
+<h2 id='TC_WindowsUpdate_03'>TC_WindowsUpdate_03 — 영상 조작 (Interpolation 설정 + Zoom/Pan/Rotation 툴 적용) <span class='badge b-PARTIAL'>PARTIAL</span></h2>
+<div class='scope-reason'><b>automation_scope.json 근거</b> — 2026-08-19 구현(`python run.py tc03`). Setting &gt; Display - General의 Interpolation Mode 콤보(30975) 변경·재확인·원복, Exposure Tool 레일의 Select/Zoom/Pan/CW/CCW를 눌러 **영상 표시 영역 캡처 SSIM 비교로 실제 반영 여부를 판정**(버튼 클릭만으로 적용을 인정하지 않는다). PARTIAL 이유: (1) Expected Result의 &#x27;**delay 없이**&#x27;에 정량 기준이 사양서·매뉴얼에 없어 소요 시간은 측정·기록만 하고 판정하지 않는다, (2) 체크리스트 Step 3의 &#x27;영상 2장 이상&#x27;은 Step이 2개 이상인 Procedure가 필요하고 그것은 Procedure Mapping이 선행돼야 한다.</div>
+<div class='meta'>코드: <code>tests/tc03_image_display.py</code></div>
+<p>TC_WindowsUpdate_03 — 영상 조작(표시/도구).</p>
+<p>실행: <code>python run.py tc03</code></p>
+<h3>체크리스트 원문 (R-25-774, Checklist 시트 9행)</h3>
+<p>Step Description</p>
+<pre><code>1. Setting-Display-General-Interpolation Mode 설정을 변경한다
+   - Bicubic, GDI 등.
+2. 촬영화면/뷰어화면에서 영상을 선택하고 영상에 Zoom, Select, Pan, Rotation 등을 적용한다.
+3. 영상을 2장 이상 오픈하고 첫번째/두번째 영상을 선택하며 영상에 Tool 을 적용한다.</code></pre>
+<p>Expected Result: *2,3. 선택한 영상이 화면에 display 되고, <b>delay 없이</b> 선택한 툴이 영상에 적용된다.*</p>
+<p>Test Data: *\*default(Bicubic)*</p>
+<h3>"delay 없이"를 어떻게 판정하는가 — 판정하지 않는다</h3>
+<p>Expected Result의 "delay 없이"에 <b>정량 기준이 없다.</b> 사양서·매뉴얼에서도 수치를 찾지 못했다(<code>NEXT_TASK.md</code>의 "별도 확인 필요" 항목). 임의로 "1초 이내"를 정하면 그것은 근거 없는 기준이므로, 이 자동화는</p>
+<ul><li>툴 적용이 <b>실제로 반영됐는지</b>(영상 영역이 변했는지)는 PASS/FAIL로 판정하고,</li><li><b>소요 시간은 측정해서 기록만</b> 한다(<code>MANUAL</code> — 기준값 확인 필요).</li></ul>
+<p>기준이 정해지면 그 값과 대조하는 판정으로 바꾸면 된다. 측정값은 이미 남아 있다.</p>
+<h3>툴이 "적용됐다"를 무엇으로 보는가</h3>
+<p>툴 버튼을 눌렀다는 것만으로는 적용을 증명하지 못한다(버튼이 비활성이면 클릭이 조용히 무시된다). 그래서 <b>영상 표시 영역을 툴 조작 전후로 캡처해 화면이 변했는지</b>로 확인한다(<code>core/screen.py</code>의 SSIM).</p>
+<ul><li><b>Zoom / Pan / Rotation(CW·CCW)</b>: 조작하면 화면이 변해야 한다 → 변화 없으면 FAIL.</li><li><b>Select</b>: 선택 도구는 그 자체로 화면을 바꾸지 않는다 → 버튼 활성 상태만 확인.</li></ul>
+<h3>Interpolation Mode</h3>
+<p><code>config.json</code>의 <code>viewer.control_ids</code>에 실측된 콤보 ID(<code>30975</code>)를 쓴다. 값을 바꾼 뒤 <b>반드시 원래 값(Test Data 기준 기본값 <code>Bicubic</code>)으로 되돌린다</b> — 회귀가 남긴 설정 변경이 다음 TC의 판정을 흔들지 않게 하기 위함이다.</p>
+<h2 id='TC_WindowsUpdate_04'>TC_WindowsUpdate_04 — Image Processing (촬영 시 처리 + Image Process 화면 + XIPL Studio) <span class='badge b-PARTIAL'>PARTIAL</span></h2>
+<div class='scope-reason'><b>automation_scope.json 근거</b> — 2026-08-20 최종 라이브 검증(`python run.py tc04 --no-env`, PASS 8/FAIL 0/MANUAL 4). Patient ID 열 자동 확장과 Accession 교차검증으로 정확한 MWL 대상을 선택하고(미일치 시 첫 행 대체 금지), Viewer 최대화를 30331로 해제한 뒤 General&gt;Chest&gt;PA Step을 등록했다. 촬영은 DB INSTANCE 17→18, 오류 팝업 0건, XIPL 로그의 Chest PA_normal_H.hs8 로드 및 Parameter file not found 0건으로 확인했다. Tools ≡ 팝업 27개를 다중 OCR해 Proc.과 XIPL 좌표를 매번 확보했고, Image Process [HS8] 진입과 XIPL.STUDIO.exe 기동까지 PASS. PARTIAL 이유: XIPL.SERVER About 창 라이선스, Image Process 내부 파라미터 변경/Process, WPF Studio 내부 영상·파라미터 로드 및 재처리는 아직 MANUAL이다.</div>
+<div class='meta'>코드: <code>tests/tc04_image_processing.py</code></div>
+<p>TC_WindowsUpdate_04 — Image Processing.</p>
+<p>실행: <code>python run.py tc04</code></p>
+<h3>체크리스트 원문 (R-25-774, Checklist 시트 10행)</h3>
+<p>Precondition</p>
+<pre><code>1. XIPL 라이선스 적용
+   - PureGrid
+   - Deep denoising
+   - VXCAD CXR
+   - Bone Suppression</code></pre>
+<p>Step Description</p>
+<pre><code>1. Exposure에서 영상을 촬영한다.
+2. Exposure/Veiwer 화면에서 툴의 Image Process 버튼을 누르고, 파라미터를 변경한 후 Process 를 한다.
+3. 툴의 XIPL 버튼을 누른다.
+4. XIPL Studio 화면에서 Process 버튼을 눌러 processing을 한다.</code></pre>
+<p>Expected Result</p>
+<pre><code>1. 영상을 촬영하면 Image Processing 이 성공한다.
+2. Image Process 화면에서 Processing 이 성공한다.
+   - 변경한 파라미터가 적용되어 프로세싱된다.
+   - SBSC 가 적용된 경우 Process 화면에 SBSC 가 체크상태로 표시된다.
+   - SBSC 가 적용되지 않은경우 Process 화면에서 SBSC 체크후 Processing을 하면
+     영상에 SBSC 가 적용된다. (썸네일에 SBSC 아이콘 표시된다)
+3. XIPL 버튼을 누르면 Studio가 오픈되고 선택한 영상이 Studio 화면에 로드된다.
+   - 영상에 적용된 파라미터 파일이 로드된다
+4. XIPL 에서 파라미터 파일을 변경, 또는 파라미터 값을 변경 후 Processing 성공한다.</code></pre>
+<h3>이 TC가 열린 경위 (2026-08-20)</h3>
+<p>전날까지 이 TC는 <code>BLOCKED</code>였다. 촬영 직후 <code>Error: Image process parameter file does not exist.</code>가 떴고, XIPL 서버 로그에 <code>Loading base parameter : Chest PA_normal_H.hs8</code> → <code>Parameter file not found</code>가 기록됐다. 두 가지가 함께 해결되면서 열렸다.</p>
+<ol><li>**사용자가 파라미터 파일을 <code>C:\XIPL\PARAMETER</code> 루트로 옮기고 XIPL.SERVER를</li></ol>
+<p>재시작했다.** 서버가 시작 시점에 파라미터를 잡기 때문에 파일만 옮겨서는 반영되지 않았다(실측: 재시작 전에는 같은 오류가 계속 났다).</p>
+<ol><li><b>촬영 전에 Step을 등록하도록 바꿨다</b>(사용자 지시). 인체도에서 Projection</li></ol>
+<p>(<code>Chest</code>)과 Step(<code>PA</code>)을 골라 등록하면 그 Step에 대응하는 파라미터가 지정된다. Step 없이 F2만 누르던 이전 방식에서는 지정될 파라미터가 없었다.</p>
+<p>이 둘을 적용한 뒤 촬영에서 <b>오류 팝업이 사라졌다</b>(실측 2026-08-20). 그래서 Step 1(촬영 시 Image Processing 성공)은 이제 자동 판정할 수 있다.</p>
+<h3>판정 근거</h3>
+<table>
+<tr><th>Step</th><th>근거</th></tr>
+<tr><td>1 촬영 시 처리 성공</td><td>XIPL 서버 로그에 <code>Parameter file not found</code>가 <b>없고</b>, 촬영 오류 팝업도 없고, DB <code>INSTANCE</code>가 늘어난다</td></tr>
+<tr><td>2 Image Process 파라미터 변경</td><td>화면의 파라미터 값을 읽어 변경 전/후를 대조. <b>컨트롤 ID 미실측</b> — 이 Step은 화면 진입까지 확인하고 값 조작은 MANUAL로 남긴다</td></tr>
+<tr><td>3 XIPL Studio 로드</td><td><code>XIPL.STUDIO</code> 프로세스 창이 뜨는지 + 로그에 로드 기록</td></tr>
+<tr><td>4 Studio 재처리</td><td><b>MANUAL</b> — Studio는 WPF 앱이고 컨트롤을 실측하지 않았다</td></tr>
+</table>
+<p>Step 2·4의 컨트롤을 실측하지 않은 상태에서 추측한 ID를 누르면 영상처리 파라미터를 엉뚱하게 바꾼다(<code>CLAUDE.md</code> 3절 — 근거 없는 조작 금지). 그래서 <b>확인 가능한 것만 자동 판정하고 나머지는 무엇을 실측해야 하는지 남긴다.</b></p>
+<h2 id='TC_WindowsUpdate_05'>TC_WindowsUpdate_05 — DICOM 전송 (Send Dose SR = Yes → Image + Dose SR 전송) <span class='badge b-PARTIAL'>PARTIAL</span></h2>
+<div class='scope-reason'><b>automation_scope.json 근거</b> — 2026-08-19 구현(`python run.py tc05`). 촬영 -&gt; Send -&gt; **수신 객체의 SOP Class UID로 Image/Dose SR 포함 여부를 판정**한다(Image=1.2.840.10008.5.1.4.1.1.1.1 / Dose SR=…88.67). 수신 확인은 Bunny 로그의 C-STORE Status 0000h와 실제 저장 파일 양쪽을 본다(`core/bunny.py`). 사용자 지시(2026-08-19)로 체크리스트 Precondition(&#x27;다른 PC 의 Server&#x27;)과 달리 **이 PC의 Bunny를 Storage로 사용**하며, 그 차이를 판정 note에 항상 남긴다. 원격 PC로 옮길 때는 config.json의 Storage 항목만 바꾸면 된다. PARTIAL 이유: Setting &gt; DICOM - General의 &#x27;Send Dose SR&#x27; 컨트롤 ID를 실측으로 확정하지 못해 그 설정 확인이 MANUAL이다(근거 없는 조작 금지).</div>
+<div class='meta'>코드: <code>tests/tc05_dicom_send.py</code></div>
+<p>TC_WindowsUpdate_05 — DICOM 전송.</p>
+<p>실행: <code>python run.py tc05</code></p>
+<h3>체크리스트 원문 (R-25-774, Checklist 시트 11행)</h3>
+<p>Precondition: *다른 PC 의 Server 이용 - Storage*</p>
+<p>Step Description</p>
+<pre><code>1. Setting- DICOM - General -
+   Send Dose SR : Yes
+2. 영상을 선택 후 DICOM Send 한다</code></pre>
+<p>Expected Result</p>
+<pre><code>1. 영상 전송이 성공한다.
+   - Image, DSR</code></pre>
+<p>Test Data: *QXLink 로 전송하여 Image, Dose SR 전송되는지 확인 - Image, 스냅샷 영상, Dose SR 전송됨*</p>
+<h3>TC02와 무엇이 다른가</h3>
+<p>TC02는 "MWL 정보가 전송정보까지 일치하는가"를 보고, 이 TC는 <b>"Send Dose SR을 Yes로 설정했을 때 Image와 함께 Dose SR(DSR)도 전송되는가"</b> 를 본다. 즉 전송 <b>대상 객체의 종류</b>가 판정 대상이다.</p>
+<p>판정은 수신된 객체의 SOP Class UID로 한다.</p>
+<table>
+<tr><th>객체</th><th>SOP Class UID</th></tr>
+<tr><td>Digital X-Ray Image Storage - For Presentation</td><td><code>1.2.840.10008.5.1.4.1.1.1.1</code></td></tr>
+<tr><td>X-Ray Radiation Dose SR</td><td><code>1.2.840.10008.5.1.4.1.1.88.67</code></td></tr>
+</table>
+<p>DICOM Conformance Statement에서 지원 여부를 확인한 뒤 그 값을 기준으로 쓴다 (<code>core/specs.py</code>로 인용).</p>
+<h3>Storage 한계 (사용자 지시)</h3>
+<p>Precondition은 "다른 PC 의 Server"지만 이 실행은 <b>이 PC의 Bunny</b>를 쓴다. <code>core/bunny.precondition_note()</code>가 그 차이를 판정 note에 남기며, 원격 PC로 옮길 때는 <code>config.json</code>의 Storage 항목(ip/port)과 수신 폴더만 바꾸면 된다.</p>
+<h2 id='TC_WindowsUpdate_06'>TC_WindowsUpdate_06 <span class='badge b-PARTIAL'>PARTIAL</span></h2>
+<div class='scope-reason'><b>automation_scope.json 근거</b> — 2026-08-18 확정: Setting&gt;Integration&gt;Extra Tool 맨 아래 &#x27;Remove Image Processing&#x27; 행의 체크박스 라벨이 실제로 &#x27;S.B.S.C.&#x27;이며 체크리스트의 Remove SBSC와 동일함을 실물로 확인(컨트롤 ID 31523). DB AE_LIST.RemoveSBSC 컬럼과 대응하므로 UI 체크→Update→DB 값 1 확인으로 자동 판정 가능. 전송 대상 AE/IP/Port는 미설정 상태라 사용자 확인 필요. XIPL Server Log(C:\XIPL\SERVER_X64\log)의 &#x27;PureGrid.Apply=&quot;0&quot;&#x27; 판정 구현 필요</div>
+<div class='no-code'>자동화 코드 모듈이 없다 — 현재 수준(PARTIAL)이 그대로 이번 회귀의 실행 결과다. 코드가 생기면 이 섹션에 Step별 설계가 자동으로 채워진다.</div>
+<h2 id='TC_WindowsUpdate_07'>TC_WindowsUpdate_07 — DICOM Print (영상 선택 → Print server 전송 → 수신 필름 확인) <span class='badge b-FULL'>FULL</span></h2>
+<div class='scope-reason'><b>automation_scope.json 근거</b> — 2026-08-21 재검증(`python run.py tc07`, **PASS 7/FAIL 0/MANUAL 0**). Print SCP 가동 확인(HTTP `/api/scp-status`) -&gt; 기존 필름 기준선 -&gt; Print 화면 설정 판독(서버 30955 / 필름 크기 30956 / 방향 30957) -&gt; 촬영 -&gt; Database &gt; Print(30293) -&gt; **수신 필름 목록(`/api/jobs`)에서 Calling AE=VXVUE 신규 필름 확인**까지 전부 PASS. 이전 FAIL의 진짜 원인은 Database 목록 지연(위 TC02 참고, database_search 재시도로 해소)이 아니라 **Print 자체가 두 번의 확인을 요구하는데 한 번만 처리했던 것**이었다: ① Database &gt; Print를 누르면 뜨는 확인 팝업(&#x27;Do you want to print all images...&#x27;)이 Send 팝업과 같은 버튼(All Images=27002)을 쓰는데 눌러 주지 않았고, ② 그 팝업을 넘기면 필름 구성 화면(CUIFilmManager)으로 전환되는데 거기서 **다시 Print(30718)를 눌러야** 실제 전송된다. `core/workflow.confirm_scope_popup()`/`finish_print()`로 두 확인을 모두 자동화해 해소했다(실측: 두 확인 없이는 필름 0건, 추가 후 2건 수신). Print 화면 버튼은 캡처+OCR로 확정(Print=30718 / Print &amp; Close=30719).</div>
+<div class='meta'>코드: <code>tests/tc07_dicom_print.py</code></div>
+<p>TC_WindowsUpdate_07 — DICOM Print.</p>
+<p>실행: <code>python run.py tc07</code></p>
+<h3>체크리스트 원문 (R-25-774, Checklist 시트 13행)</h3>
+<p>Precondition: *다른 PC 의 Server 이용 - Print SCP (JDICOM Print Server)*</p>
+<p>Step Description: *1. 영상을 선택 후 Print server 로 전송한다.* Expected Result: *1. Print 성공한다.* Test Data: <code>http://&lt;PRINT_SERVER_HOST&gt;:8000/</code> / <code>PRINT_SCP</code> / <code>&lt;PRINT_SERVER_HOST&gt;</code> / <code>11113</code></p>
+<h3>판정을 어디서 하는가 — 받은 쪽에서 한다</h3>
+<p>Expected Result가 "Print 성공한다"뿐이므로, 제품 UI의 Print Queue만 보면 <b>제품이 "보냈다"고 말한 것을 그대로 믿는 것</b>이 된다. 이 시험 Print SCP는 수신 필름 목록을 웹 API로 주므로 <b>받은 쪽에서 확인</b>한다(<code>core/printscp.py</code>).</p>
+<pre><code>GET /api/scp-status  -&gt; {"running":true,"ae_title":"PRINT_SCP",...}
+GET /api/jobs        -&gt; [{"id":70,"calling_ae_title":"BELLALUN","film_size_id":"8INX10IN"},...]</code></pre>
+<p><code>calling_ae_title</code>로 <b>VXvue가 보낸 필름만</b> 가려낸다 — 같은 서버를 Bellalun 자동화와 공유하고 있어(실측: BELLALUN 필름 8건 존재) 전체 목록으로 판정하면 다른 제품의 필름을 자기 결과로 착각한다. 기존 필름을 지우지 않으므로 다른 제품의 시험 자산도 건드리지 않는다.</p>
+<h3>실행 지점 (실측, 2026-08-19)</h3>
+<p>Print는 두 화면에서 시작할 수 있다.</p>
+<ul><li><b>Database 화면 <code>Print</code>(30293)</b> — 목록에서 스터디를 골라 바로 전송.</li><li><b>Print 화면(메인 네비 12, <code>CUIFilmManager</code>)</b> — 필름을 구성한 뒤 전송.</li></ul>
+<p>상단 콤보가 평문으로 읽힌다: 서버 <code>30955</code>(=<code>PRINT_SC…</code>), 필름 크기 <code>30956</code>(=<code>14INX17I…</code>), 방향 <code>30957</code>(=<code>Portrait</code>). 이 값들이 판정의 부가 근거다.</p>
+<p>이 자동화는 <b>Print 화면의 설정을 먼저 읽어 근거로 남기고</b>, 전송은 촬영 직후 Exposure/Database 중 영상을 고를 수 있는 쪽에서 수행한다.</p>
+<h2 id='TC_WindowsUpdate_08'>TC_WindowsUpdate_08 — Study Export (외부 저장 매체 Export → 산출물 검증 → 역방향 Import) <span class='badge b-PARTIAL'>PARTIAL</span></h2>
+<div class='scope-reason'><b>automation_scope.json 근거</b> — 2026-08-21 전면 재구현·재검증(`python run.py tc08`, **PASS 8/FAIL 0/MANUAL 2**, 이전 BLOCKED에서 대폭 향상). 사용자 지시대로 E 드라이브 기준(없으면 D로 대체하고 그 사실을 판정에 남김, 2026-08-21 지시) — 대상 폴더 기준선 -&gt; 촬영·Close -&gt; Database 선택 -&gt; Export(30300, 확인 팝업 처리) -&gt; **Export Manager 창 내부를 실측해 완전 자동화**: 드라이브 드롭다운(31003, owner-draw라 OCR로 좌표 계산) -&gt; Browse(30680, 표준 SHBrowseForFolder 트리를 OCR로 탐색) -&gt; File Format에 DICOM+**IMG 추가 선택**(30696/30698, 상태는 테두리색 (255,255,0)=선택/(32,32,32)=비선택으로 판별) -&gt; Start(30683) -&gt; 완료 팝업 자동 처리 -&gt; 산출물 확인. **VXvue 자체 Import는 DICOM이 아니라 IMG만 받는다**(Operation Manual 8.14, 사용자 지적으로 재확인) — IMG를 함께 Export하도록 반영. 산출물 DICOM 태그 대조 중 `core/dicomlite.py`의 **정의되지 않은 길이 DICOM 시퀀스 파싱 버그**(중첩 Item을 8바이트 고정폭으로 오인해 이후 모든 태그 위치가 어긋남 — PatientID/PatientName이 항상 None으로 나왔다)를 발견·수정했다. 남은 MANUAL 2건은 설계상 의도된 것: QXLink 포터블 뷰어 실행 확인(외부 실행 파일 자동 실행 금지)과 역방향 Import(DB에 데이터를 추가하는 조작이라 자동 승인 없이 실행 안 함, Setting Import와 같은 원칙) — 둘 다 사람 확인이 필요한 항목이라 PARTIAL로 남는다. 체크리스트 Comment의 알려진 결함 #21049는 이번 실행에서 재현되지 않았다.</div>
+<div class='meta'>코드: <code>tests/tc08_study_export.py</code></div>
+<p>TC_WindowsUpdate_08 — Study Export.</p>
+<p>실행: <code>python run.py tc08</code></p>
+<h3>체크리스트 원문 (R-25-774, Checklist 시트 14행)</h3>
+<p>Precondition: *CD/USB*</p>
+<p>Step Description</p>
+<pre><code>1. 스터디를 선택하고 외부 저장 매체로 Export 를 한다.
+   - CD
+   - USB
+2. CD/USB 에 Export 된 스터디를 선택 후 뷰어로 import 한다.</code></pre>
+<p>Expected Result</p>
+<pre><code>1. Study Export 가 성공한다.
+   export 된 영상 오픈하여 확인
+2. 뷰어로 import 성공한다.</code></pre>
+<p>Test Data: *CD로 Export 한 후 CD 안의 QXlink portable viewer 가 정상 실행되는지 확인할것.*</p>
+<p>Comment(원본에 기록된 이력): *Win11: CD Export 함 / Win10 : USB Export함 / <b>Win11 #21049 Study Export 시 에러 발생 하면서 Export 안됨</b>*</p>
+<h3>알려진 결함 #21049 — 이 TC의 회귀 목적</h3>
+<p>체크리스트 Comment에 <b>Win11에서 Study Export 시 에러가 발생하며 Export되지 않는다(#21049)</b> 는 이력이 남아 있다. 이 시험대는 Windows 11이므로 <b>이 TC는 그 결함의 재발 여부를 확인하는 회귀 케이스</b>다. 그래서 Export 실패를 단순 FAIL로 끝내지 않고, <b>에러 문구를 캡처·OCR로 남겨 #21049와 대조할 수 있게</b> 한다.</p>
+<h3>매체 처리 — E 드라이브 기준 (사용자 지시)</h3>
+<p>물리 CD 굽기와 USB 삽입은 사람이 해야 하므로 자동화할 수 없다. 사용자 지시 (2026-08-19): <b>"TC08번은 지금 E드라이브로 수행해주면 좋을것 같아. 앞으로도 E드라이브를 기준으로 수행되도록 해주면 될것 같아."</b> 사용자 지시(2026-08-21): <b>"E가 없다면 일단 D로 하고 결과에 D로 했다고 리포팅해라 — 이건 외부 드라이브 export/import를 보는 테스트라서."</b> → <code>_pick_drive()</code>가 <code>dest</code>의 드라이브가 실제 있는지 확인하고, 없으면 로컬 드라이브로 대체하며 그 사실을 판정에 명시한다.</p>
+<p>그래서 <code>config.json</code>의 <code>export.dest_dir</code>(기본 <code>E:\VXvue_QA_Export</code>)로 Export 하고, 그 산출물을 검증한다. 대상 경로를 코드에 박지 않으므로 나중에 실제 USB 드라이브 문자로 바꾸면 그대로 동작한다.</p>
+<p>검증 내용은 매체 종류와 무관하게 동일하다.</p>
+<table>
+<tr><th>확인</th><th>방법</th></tr>
+<tr><td>Export 실행됨</td><td>Export Manager 창이 열리고 Start가 눌린다</td></tr>
+<tr><td>산출물 생성</td><td>대상 폴더에 파일이 생긴다</td></tr>
+<tr><td><b>영상이 진짜인가</b></td><td><code>core/dicomlite</code>로 DICOM 태그를 읽어 환자정보 대조</td></tr>
+<tr><td>Portable viewer</td><td><code>QXLink</code> 실행 파일 포함 여부(존재 확인까지 — 실행은 MANUAL)</td></tr>
+<tr><td>역방향 Import 전제조건</td><td><b>IMG 형식</b>이 함께 Export됐는지 확인(아래 참고)</td></tr>
+<tr><td>역방향 Import</td><td>Database <code>Import</code>(30315)로 되읽기</td></tr>
+</table>
+<p>"export 된 영상 오픈하여 확인"이라는 Expected Result를 <b>뷰어로 열어 보는 대신 파일 태그를 직접 읽어</b> 확인한다 — 사람이 눈으로 보는 것보다 대조 항목이 명확하고 증적으로 남는다.</p>
+<h3>VXvue의 Import는 DICOM이 아니라 IMG만 받는다 (문서 근거, 사용자 지적 2026-08-21)</h3>
+<p>Operation Manual 8.14 "검사 가져오기"(p.204): <b>"VXvue에서 생성된 IMG 파일만 가져올 수 있습니다."</b> DICOM/DICOMDIR로만 Export하면 파일 자체는 정상 생성돼도 <b>뷰어로 다시 가져올 방법이 없다</b> — Expected Result 2("뷰어로 import 성공한다")를 검증하려면 File Format에 <b>IMG를 반드시 함께 선택</b>해야 한다.</p>
+<p>8.13.1(p.200)에 따르면 File Format은 "최소 1개 이상 다중 설정"할 수 있다(실측 확인: DICOM과 IMG를 동시에 체크해도 서로 배타적이지 않다 — DICOM/DICOMDIR끼리만 배타적). 그래서 이 자동화는 <b>DICOM(태그 대조용)과 IMG(Import 전제조건)를 함께 선택</b>하고 Start한다. 실측(2026-08-21): 한 번의 Export로 <code>dcm\...\*.dcm</code>과 <code>S{Series}I{Instance}.img</code>가 같은 대상 폴더에 함께 생성됨을 확인했다.</p>
+<h3>Export Manager 컨트롤 (실측 2026-08-21, 캡처+OCR로 확정)</h3>
+<p>이전 세션은 이 창의 컨트롤을 실측하지 못해 Step 4~7이 전부 MANUAL이었다. <code>python run.py ui-probe</code>로는 owner-draw 라벨이 안 보여, 창이 뜬 상태에서 캡처+OCR을 여러 번 돌려 확정했다(Bellalun의 <code>core/export_manager.py</code>와 창 구조는 같지만 컨트롤 ID는 VXvue에서 새로 실측한 값만 쓴다).</p>
+<table>
+<tr><th>컨트롤</th><th>ID</th><th>확정 방법</th></tr>
+<tr><td>Export Path (표시 전용)</td><td><code>30191</code> Edit</td><td><code>SendMessage(WM_SETTEXT)</code>로는 <b>표시만 바뀌고 실제 Export 대상은 안 바뀐다</b>(실측: 텍스트를 "E:\..."로 바꿔도 파일은 여전히 이전 D: 경로에 생성됨) — 이 필드는 내부 상태의 읽기 전용 반영판이다</td></tr>
+<tr><td>드라이브 선택</td><td><code>31003</code> (자식 <code>1</code>=드롭다운 화살표)</td><td>클릭하면 owner-draw 드롭다운(C/D/E...)이 뜬다. <b>이 목록으로 드라이브를 바꿔야 실제 내부 경로가 바뀐다</b>(실측 확인: 드롭다운에서 E 클릭 → Export Path가 진짜 <code>E:\</code>로 바뀌고 그 뒤 Export도 실제 E:에 생성됨)</td></tr>
+<tr><td>경로 찾아보기</td><td><code>30680</code> "..."</td><td>표준 <code>SHBrowseForFolder</code> 창을 연다. 트리는 <b>현재 선택된 드라이브 위치에서 시작</b>하므로, 위 드라이브 선택으로 먼저 드라이브를 맞추면 하위 폴더까지 몇 단계 안 걸린다. 확인(<code>1</code>)/취소(<code>2</code>) 버튼은 표준 폴더 찾아보기 다이얼로그의 것</td></tr>
+<tr><td>File Format</td><td><code>30696</code>=DICOM <code>30697</code>=DICOMDIR <code>30698</code>=IMG <code>30703</code>=RAW <code>30699</code>=JPEG <code>30702</code>=BMP <code>30700</code>=TIF 8 <code>30701</code>=TIF 16</td><td>다중 선택(토글) — 눌러도 이미 선택된 다른 항목이 풀리지 않는다(DICOM/DICOMDIR만 상호배타, Operation Manual 8.13.1)</td></tr>
+<tr><td>Start / Cancel</td><td><code>30683</code> / <code>30684</code></td><td>OCR로 라벨 확정. <b>Start를 눌러야 실제 전송된다</b> — 확인 팝업이 없다</td></tr>
+<tr><td>Current State</td><td>라벨 옆 값(둘 다 ctrl_id 공용값 <code>20000</code>이라 위치로 구분, <code>_export_state()</code>)</td><td><code>Ready</code> → (진행) → <code>Done</code></td></tr>
+<tr><td>완료 알림</td><td><code>Info</code> 팝업, 버튼 <code>27000</code> 하나만 표시</td><td>"Succeed to export. Export Manager will be closed." — 누르면 Export Manager 프로세스 자체가 종료된다</td></tr>
+</table>
+<h3>Export Manager는 별도 프로세스다 (실측)</h3>
+<p><code>C:\Program Files\Vxvue\VX.EXPORT.MANAGER.exe</code>가 별도 최상위 창으로 뜬다 (Bellalun의 <code>EXPORT.MANAGER</code>와 같은 구조). VXvue 프로세스에 붙은 드라이버로는 이 창의 컨트롤이 보이지 않으므로 <code>VXvueUi("VX.EXPORT.MANAGER")</code>로 따로 붙는다.</p>
+<div class='result-box'><b>최신 실행 결과</b> (2026-08-21T09:11:19, 128.68초) — 판정 <span class='MANUAL'>MANUAL</span> · PASS 8 / FAIL 0 / MANUAL 2 / SKIP 0 / BLOCKED 0</div>
+<h2 id='TC_WindowsUpdate_09'>TC_WindowsUpdate_09 <span class='badge b-MANUAL'>MANUAL</span></h2>
+<div class='scope-reason'><b>automation_scope.json 근거</b> — 사용자 확인(2026-08-18): 재부팅이 필요해 TC09 전체 수동 처리로 결정</div>
+<div class='no-code'>자동화 코드 모듈이 없다 — 현재 수준(MANUAL)이 그대로 이번 회귀의 실행 결과다. 코드가 생기면 이 섹션에 Step별 설계가 자동으로 채워진다.</div>
+<h2 id='TC_WindowsUpdate_10'>TC_WindowsUpdate_10 <span class='badge b-EXCLUDED'>EXCLUDED</span></h2>
+<div class='scope-reason'><b>automation_scope.json 근거</b> — 사용자 지시로 이번 자동화 범위 제외 (직접 수행 필요 TC)</div>
+<div class='no-code'>자동화 코드 모듈이 없다 — 현재 수준(EXCLUDED)이 그대로 이번 회귀의 실행 결과다. 코드가 생기면 이 섹션에 Step별 설계가 자동으로 채워진다.</div>
+<h2 id='TC_WindowsUpdate_11'>TC_WindowsUpdate_11 <span class='badge b-PARTIAL'>PARTIAL</span></h2>
+<div class='scope-reason'><b>automation_scope.json 근거</b> — 2026-08-18: Setting&gt;System&gt;License에서 &#x27;Computer Aided Detection&#x27; 옵션 라이선스(****-*****-****-*****) 적용 확인 — AI 라이선스 선행조건 충족. vunoSDK.dll 1.1.1.0 설치, Viewer.xml &lt;AIEngine product=&quot;3&quot;&gt;. GPU 미탑재(Intel Iris Xe 내장만)라 Serialization/AI 결과물 생성 검증은 Bellalun과 동일하게 SKIP, 라이선스·UI 흐름은 자동화 대상 유지</div>
+<div class='no-code'>자동화 코드 모듈이 없다 — 현재 수준(PARTIAL)이 그대로 이번 회귀의 실행 결과다. 코드가 생기면 이 섹션에 Step별 설계가 자동으로 채워진다.</div>
+<h2 id='TC_WindowsUpdate_12'>TC_WindowsUpdate_12 <span class='badge b-PARTIAL'>PARTIAL</span></h2>
+<div class='scope-reason'><b>automation_scope.json 근거</b> — 2026-08-18 해소: VX.LIVE.SERVER 설치(1.1.0.1, DEMO 트리거 파일 존재) + &#x27;Live View&#x27; 옵션 라이선스(****-*****-****-*****) 적용 + Viewer.xml &lt;Camera UseLiveView=&quot;1&quot;/&gt; 상태에서 Setting&gt;Integration에 &#x27;Camera&#x27; 소분류가 실제로 나타남을 확인(조건부 표시 추정이 확인됨, Integration 소분류 6개→7개). 이전 BLOCKED 사유(미설치) 해소. 남은 것: Camera 화면 진입 후 Step Analysis/스냅샷 전송 흐름 확인</div>
+<div class='no-code'>자동화 코드 모듈이 없다 — 현재 수준(PARTIAL)이 그대로 이번 회귀의 실행 결과다. 코드가 생기면 이 섹션에 Step별 설계가 자동으로 채워진다.</div>
+<h2 id='TC_WindowsUpdate_13'>TC_WindowsUpdate_13 — Study List Import (txt/csv) <span class='badge b-FULL'>FULL</span></h2>
+<div class='scope-reason'><b>automation_scope.json 근거</b> — 2026-08-19 라이브 검증 완료: tests/tc13_import_patient.py Step1~7이 python run.py tc13 1회 클린 실행으로 FAIL 0건(PASS 8/MANUAL 2, MANUAL 2건은 자동판정 불가 사유가 명확한 항목 — 아래 참고) 통과했다. 실측으로 밝혀지고 고친 것: (1) Import Patient Order(30392) 클릭은 OS 파일 대화상자가 아니라 Setting 화면과 동일 구조를 재사용한 별도 모달 팝업을 여는 것이었다(그 안의 Browse(30515)를 다시 눌러야 진짜 파일 대화상자가 열림) — 원래 설계는 이 팝업 존재를 몰라 항상 실패했었다. (2) Import 확인은 &#x27;Import&#x27;라는 별도 확인창(All Patients/Selected/Cancel, 27002/27001/27000)을 거쳐야 하고, 완료 후 팝업(-4 아이콘)을 최대 4회까지 반복해서 닫아야 본체 팝업까지 완전히 닫힌다(완료 직후 임시 팝업이 하나 더 뜰 수 있음). (3) 완료 확인 팝업 무한반복 버그(실측 343회)는 core/ui.drain_dialogs()(상한 有)+dismiss_dialog()의 ensure_foreground() 선-클릭으로 해결. (4) Registration-Reserved에서 Default 필터를 Clear로 바꾸고 Search를 누른 뒤 목록에 실제로 표시되는지까지 pass/fail에 포함(사용자 지시) — 목록 행이 owner-draw라 표준 API로 못 읽어 캡처+OCR(pytesseract, C:\Program Files\Tesseract-OCR)로 확인. (5) 기존 결함 #22985(Tab 구분자) 회귀를 Step6으로 추가 — Data Delimiter 콤보(31042)를 core/setting.select_combo()로 전환(항목 텍스트도 owner-draw라 &#x27;클릭 후 값 재확인&#x27; 방식으로 우회)하고 ui.is_responsive()로 응답없음(hang) 감지 시 즉시 중단하도록 설계(과거 콤보 조작 중 hang 전례 있었음, 이번 라이브 검증에선 재현되지 않음), 성공 후 반드시 COMMA로 원복까지 확인. DB(CONFIGURATION_IMPORT_PATIENT_OPTION Type=716)로 TAB 반영은 확인됐으나 Save Sample이 그 값을 즉시 반영하지 않는 현상은 MANUAL로 남김(원인 미확정 — 화면 재진입 필요 여부 확인 과제). (6) Service Manual 4.6.7절 원문 확인 결과 &#x27;Import Patient Order&#x27;(수동)와 &#x27;Import Patient Information From a Specific Folder&#x27;(폴더 자동 감지)가 상호 배타 기능임을 확인 — Step7은 기본 실행에서 라벨 존재만 확인(PASS)하고 실제 On/Off 전환은 컨트롤 구조가 라이브 미검증이라 &#x27;python run.py tc13 --with-folder-watch&#x27; 별도 실행으로 분리해 뒀다(MANUAL). (7) core/setting.goto_screen()에 세션 내 캐시 + 대분류 고정 순서(사용자 확인: 대분류는 라이선스와 무관하게 고정, 소분류만 변동) 기반 단축 경로를 추가해 매 Step마다 55개 화면을 처음부터 다시 훑던 비효율을 없앴다. 남은 것: --with-folder-watch 경로의 라이브 검증(별도 세션), Save Sample-Delimiter 관계 확인.</div>
+<div class='meta'>코드: <code>tests/tc13_import_patient.py</code></div>
+<p>TC_WindowsUpdate_13 — Study List Import (txt/csv).</p>
+<p>체크리스트(Windows Update 호환성 검증 Checklist_VXvue_R-25-774.xlsx, TC13) 원문 기준:</p>
+<p>Step 1. Setting-Study-Import Patient 에서 study list 샘플 파일을 저장한다 (txt, csv). Step 2. 저장한 파일을 오픈하고 스터디 정보를 입력한다. Step 3. Registration-Reserved 에서 Import Patient 버튼을 누르고 파일을 뷰어로 import 한다. Expected: 스터디 목록이 뷰어로 import 성공한다.</p>
+<p>매뉴얼 근거(사용자 확인 2026-08-19, "Save Sample로 샘플 받아서 채운 뒤 import"): Service Manual 4.6.7절(p.95) — Import Patient 화면에 <b>Save Sample</b> 버튼이 있어 그 시점의 Input Format/Column Mapping 설정에 맞는 예시 파일을 만들어 준다. 이 테스트는 그 샘플을 그대로 근거로 삼는다 — 컬럼 순서·구분자·날짜/나이 표기를 코드에 하드코딩하지 않고, 매번 실제 Save Sample 결과를 읽어 그 형식 그대로 테스트 데이터를 채운다.</p>
+<p>Operation Manual 5.3/5.3.1절(p.74~75) 근거: 실제 Import는 Registration &gt; Reserved 화면의 <b>Import Patient Order</b> 버튼(실측 컨트롤 id=30392)에서 수행한다.</p>
+<h3>왜 "값을 안 읽고 Save Sample을 그대로 쓰는가"</h3>
+<p>Setting Export/Import TC의 뮤테이션 테스트가 이 화면의 Sex Format(Male) 값을 이미 한 번 건드려 놓았다(<code>M</code> -&gt; <code>M_QA1</code>, 실측 2026-08-19). 이 상태에서 "기본값은 M/F/O"라고 가정하고 파일을 만들면 실제 설정과 어긋나 오탐이 난다. Save Sample은 <b>지금 이 순간 실제로 적용된 설정</b>을 그대로 반영하는 파일을 만들어 주므로, 그 파일의 헤더와 형식을 그대로 따라가면 이 화면의 현재 상태(오염 여부와 무관하게)에 항상 맞는 테스트 데이터를 만들 수 있다.</p>
+<h2 id='TC_WindowsUpdate_14'>TC_WindowsUpdate_14 — Setting 전체 화면 표시 확인 (스크롤·목록 상세 포함) <span class='badge b-PARTIAL'>PARTIAL</span></h2>
+<div class='scope-reason'><b>automation_scope.json 근거</b> — 2026-08-18: Setting 전체 트리(10개 대분류, 53개 소분류) 확인 완료. 좌측 메뉴는 커스텀 owner-draw(StepItem)라 GetWindowText로 라벨을 읽을 수 없어 Bellalun bellalunSetting.py처럼 좌표+OCR/SSIM 방식이 필요함을 확인. 다음 단계: 확인된 목록 기준으로 좌표 캘리브레이션 스크립트 작성</div>
+<div class='meta'>코드: <code>tests/tc14_setting_display.py</code></div>
+<p>TC_WindowsUpdate_14 — Setting 전체 화면 표시 확인.</p>
+<p>체크리스트 Step: Setting의 각 탭(대분류/소분류)을 순회하며 화면이 정상적으로 표시되는지 확인한다.</p>
+<h3>이 TC가 실제로 검증하는 것 (사용자 확인 2026-08-19)</h3>
+<p>TC14는 <b>Windows Update 이후 각 탭(대분류/소분류)이 여전히 정상적으로 클릭·표시되고, 화면에 있어야 할 옵션이 그대로 있는지</b>를 확인하는 시험이다. "기준값과 완전히 같아야 PASS"인 정밀 회귀는 이 TC의 목적이 아니다 — 그런 값 단위 회귀는 <code>tests/tc_setting_export_import.py</code>(Setting Export/Import) 쪽에서 다룬다. 그래서 여기서는:</p>
+<ul><li>화면 진입·노출·스크롤 등 <b>탐색 자체가 깨졌는지</b>는 FAIL로 판정한다.</li><li>화면에 있는 <b>옵션 구성(트리)이나 표시 텍스트가 이전 실행과 달라진 것</b>은</li></ul>
+<p>FAIL이 아니라 <code>확인 필요</code>(MANUAL)로만 표시하고, 무엇이 달라졌는지 적는다. 달라졌다는 사실 자체가 결함이라고 단정할 수 없기 때문이다(연동·라이선스 상태에 따라 메뉴 구성이 정상적으로 늘어나는 사례가 실제로 있었다).</p>
+<table>
+<tr><th>#</th><th>확인 내용</th><th>근거</th><th>판정</th></tr>
+<tr><td>1</td><td>Setting 화면 진입</td><td>좌측 메뉴(ItemWnd) 존재</td><td>PASS/FAIL</td></tr>
+<tr><td>2</td><td>소분류 전부 열림</td><td>상단 제목 <code>Static</code>이 실제로 바뀜(평문으로 읽힘)</td><td>PASS/FAIL</td></tr>
+<tr><td>3</td><td>제목 중복 없음</td><td>같은 제목이 두 번 = 클릭이 다른 항목에 안 먹은 것</td><td>PASS/FAIL</td></tr>
+<tr><td>4</td><td><b>모든 컨트롤이 스크롤 순회 중 화면에 온전히 노출됨</b></td><td>본문 대화상자의 자식 컨트롤 전수와, 페이지별로 뷰포트에 들어온 집합을 비교</td><td>PASS/FAIL</td></tr>
+<tr><td>5</td><td>스크롤을 끝까지 내렸는지</td><td>페이지 서명이 반복될 때까지 내려가며, 상한에 걸린 화면이 있으면 FAIL</td><td>PASS/FAIL</td></tr>
+<tr><td>6</td><td>SCP 목록 상세가 DB 등록값과 일치</td><td>목록 행을 클릭해 나타난 Edit 값 vs <code>AE_LIST</code></td><td>PASS/FAIL</td></tr>
+<tr><td>7</td><td><b>화면별 옵션 구성(트리) 확인</b></td><td>Edit/콤보/라벨/체크박스의 <b>존재 여부</b>를 기준과 대조. 값 텍스트가 달라도 FAIL이 아니라 확인 필요</td><td>PASS/MANUAL</td></tr>
+<tr><td>8</td><td>내용이 거의 없는 화면</td><td>참고 정보</td><td>PASS/MANUAL</td></tr>
+<tr><td>9</td><td>Setting 트리 실측 목록 확보</td><td>정보 기록(체크리스트 대조용)</td><td>PASS</td></tr>
+</table>
+<h4>4번이 이 시험의 핵심이다</h4>
+<p>화면에 보이는 부분만 캡처하면 스크롤 아래 설정은 전혀 검증되지 않는다. 그래서 본문 대화상자의 자식 컨트롤을 <b>전수 열거</b>하고(스크롤 밖에 있어도 잡힌다), 페이지를 내려가며 각 컨트롤이 뷰포트에 온전히 들어왔는지를 표시한다. 끝까지 내려도 한 번도 온전히 보이지 않은 컨트롤이 있으면 그 화면은 잘려서 조작할 수 없다는 뜻이므로 FAIL이다. "컨트롤이 하나라도 있으면 통과" 같은 느슨한 기준을 쓰지 않는다.</p>
+<h4>6번 — DICOM 화면은 목록을 클릭해야 상세가 나온다</h4>
+<p>사용자 확인(2026-08-18): DICOM 서버 설정은 SCP 목록의 항목을 클릭해야 상세 정보가 표시된다. 따라서 목록 행을 순서대로 클릭해 상세를 캡처하고, 표시된 값을 DB <code>AE_LIST</code>의 실제 등록값과 대조한다 — 캡처 비교보다 강한 근거다.</p>
+<h4>7번 — 트리(구성) 대조이지 값 대조가 아니다</h4>
+<p>사용자 확인(2026-08-19): 테마·폰트에 따라 <b>색상, Setting 창 크기, 폰트가 달라지지만 설정 값과 옵션, 메뉴 구성은 동일하다.</b> 그래서 판정은 픽셀이 아니라 <b>값 JSON</b>으로 한다. 화면마다 Edit 값, 콤보 값(부모 텍스트는 잘리므로 숨은 자식 Edit에서 전체값을 읽는다), 라벨, 체크박스 컨트롤 구성을 뽑아 기준과 비교한다. 좌표·크기·색은 넣지 않는다.</p>
+<p>다만 <b>이 비교의 결론은 PASS 또는 <code>확인 필요</code>뿐이고 FAIL은 없다.</b> 옵션 구성(어떤 Edit/콤보/체크박스/라벨이 있는지)이나 표시 텍스트가 기준과 달라도 그 자체를 결함으로 단정하지 않는다 — 라이선스·연동 상태에 따라 메뉴가 정상 적으로 늘어나는 사례가 실제로 있었다(Live View 연동 시 <code>Integration &gt; Camera</code> 등장). 값이 완전히 같아야만 PASS로 인정하는 정밀 회귀는 <code>tests/tc_setting_export_import.py</code> 쪽 책임이다.</p>
+<p>읽을 수 없는 것은 정직하게 남긴다 — 체크박스/라디오는 커스텀 owner-draw라 <code>BM_GETCHECK</code>가 항상 0이어서 <b>UI에서 on/off를 읽을 수 없다</b>(실측). 픽셀로 체크 여부를 판정하는 방법은 테마에 종속되므로 쓰지 않고, 실제 on/off 값은 DB 스냅샷(<code>python run.py snapshot</code>)으로 검증한다.</p>
+<h3>화소 균일도만으로 '빈 화면'을 판정하면 안 된다 (실측 교훈)</h3>
+<p>첫 실행에서 <code>Procedure - Procedure Manager</code> / <code>DICOM - Queue</code> / <code>Integration - Generator</code> 3건이 '빈 화면'으로 FAIL 났는데, 캡처를 열어 보니 <b>세 화면 모두 실행 버튼 하나만 있는 정상 화면</b>이었다. 그래서 빈 화면 판정은 참고 정보로 낮추고, 4번(컨트롤 노출)과 7번(기준 대조)을 판정 근거로 쓴다.</p>
+<h2 id='TC_WindowsUpdate_15'>TC_WindowsUpdate_15 <span class='badge b-EXCLUDED'>EXCLUDED</span></h2>
+<div class='scope-reason'><b>automation_scope.json 근거</b> — 사용자 지시로 이번 자동화 범위 제외 (직접 수행 필요 TC)</div>
+<div class='no-code'>자동화 코드 모듈이 없다 — 현재 수준(EXCLUDED)이 그대로 이번 회귀의 실행 결과다. 코드가 생기면 이 섹션에 Step별 설계가 자동으로 채워진다.</div>
+<h2 id='TC_Setting_ExportImport'>TC_Setting_ExportImport — Setting Export / 변경 / Import 복원 회귀</h2>
+<div class='meta'>코드: <code>tests/tc_setting_export_import.py</code></div>
+<p>TC_Setting_ExportImport — Setting 값 Export / 변경 / Import 복원 회귀.</p>
+<p>사용자 제안 시나리오를 실측 근거로 보강한 것이다. 상세 설계는 <code>지식/[자동화 설계] VXvue Setting Export-Import 회귀 설계.md</code> 참고. 사용자 확인(2026-08-18): Windows Update 체크리스트에 없는 항목이므로 <b>기본기능 회귀 쪽 신규 TC</b>로 관리한다.</p>
+<h3>흐름 (3단 비교)</h3>
+<pre><code>S0  설정 스냅샷(DB 설정 테이블 + 설정 파일 해시) + UI 표시값 전체 캡처
+ +-&gt; Export  -&gt;  export_A.vxs
+ +-&gt; 변경 수행 (탭별 최대 1건 + Extra Tool)
+S1  스냅샷      [검증] S1 != S0   &lt;- 변경이 실제로 반영됐다는 증명
+ +-&gt; Import  export_A.vxs   (파괴적. 사전 백업 후 실행)
+ +-&gt; 뷰어 재기동 + 로그인
+S2  스냅샷 + UI 표시값 전체 재캡처
+    [검증] S2 == S0 (DB)          &lt;- Export 당시 값이 DB에 그대로 복원됐다
+    [검증] UI(S2) == UI(S0)       &lt;- 화면에도 그 값이 그대로 다시 그려진다</code></pre>
+<p><b>중간 검증(S1 != S0)이 핵심이다.</b> 이것이 없으면 변경이 한 건도 먹지 않아도 마지막 대조가 통과해 헛된 PASS가 난다.</p>
+<p>사용자 확인(2026-08-19): "옵션 값이 기준과 완전히 같아야 PASS"인 정밀 회귀는 TC14가 아니라 이 TC의 책임이다. TC14는 Windows Update로 탭 클릭·옵션 노출이 깨지지 않았는지만 보고, 값이 달라도 <code>확인 필요</code>로만 표시한다. DB가 정확히 복원돼도 Setting 화면이 그 값을 제대로 다시 그리지 못하는 경우(렌더링 결함)는 DB 스냅샷 비교만으로 잡히지 않으므로, 화면에 실제로 표시되는 값도 S0/S2로 비교한다(<code>core/setting.capture_all_screen_values</code>, <code>core/setting.diff_all_screen_values</code> — TC14와 공유하는 헬퍼).</p>
+<h3>판정에서 제외하는 것</h3>
+<p><code>C:\ProgramData\VXvue\Viewer.xml</code>(Theme/Language/Generator/AIEngine/Camera 등 머신 단위 설정)은 <code>.vxs</code> 안에 <b>포함되지 않는다</b>. 사용자 확인(2026-08-18): 복원되지 않는 것이 정상이므로 판정에서 제외하고 참고 정보로만 기록한다.</p>
+<h3>안전 장치</h3>
+<ul><li>Import는 <code>.vxs</code> 안의 <code>Data.bak</code>으로 <b>DB 전체를 복원</b>한다(환자·검사 포함).</li></ul>
+<p>실행 전에 <code>core/dbreset.backup()</code>으로 안전 백업을 남긴다.</p>
+<ul><li>변경 대상에서 아래 화면은 제외한다. 되돌리기 위험이 크거나 다른 TC의 선행</li></ul>
+<p>조건을 깨뜨린다.</p>
+</body></html>

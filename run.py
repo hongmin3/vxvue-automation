@@ -5,6 +5,10 @@
   python run.py env                 리포트 상단 헤더(Windows/패키지 정보) 출력
   python run.py preflight           실행 전 환경 점검 (NG가 있으면 종료코드 2)
   python run.py scope               TC별 자동화 수준(automation_scope.json) 표시
+  python run.py design-report       TC별 설계(Step·판정 근거) HTML 리포트 생성
+                                     (tests/tc*.py docstring + automation_scope.json에서
+                                     뽑아 만든다. --save로 출력 경로 지정, 기본
+                                     docs/TC_설계리포트.html)
   python run.py ui-probe            현재 VXvue 화면의 컨트롤 트리 덤프
   python run.py ui-probe --save 파일  덤프를 파일로 저장
   python run.py mwl-list            공용 MWL 서버의 처방 목록
@@ -102,6 +106,13 @@ def cmd_scope(cfg, args):
         return 1
     for r in rows:
         print("%-22s %-14s %s" % (r.get("tc_id"), r.get("level"), r.get("reason", "")[:120]))
+    return 0
+
+
+def cmd_design_report(cfg, args):
+    from core import design_report
+    path = design_report.write(args.save if args.save else None)
+    print("작성: %s" % path)
     return 0
 
 
@@ -220,19 +231,22 @@ def _cleanup_studies(cfg, ui, result=None):
     """
     try:
         from core import workflow as W
-        before = len(W.open_study_tabs(ui))
-        if not before:
-            return
+        # **여기서 미리 open_study_tabs()로 게이트를 걸지 않는다** — 스터디 탭
+        # 바는 Registration 목록 화면에서는 렌더링되지 않아(실측 2026-08-21)
+        # 그 화면에 있을 때 미리 확인하면 0개로 보여 정리를 통째로 건너뛰게
+        # 된다. `close_all_studies()`가 내부에서 Exposure로 옮겨 직접
+        # 확인하고, 열린 게 없으면 그 자체로 빠르게 반환한다.
         info = W.close_all_studies(ui, cfg)
         # 다음 TC가 Step을 등록할 수 있도록 Viewer 최대화 레이아웃을 남기지 않는다.
         W.restore_exposure_layout(ui, cfg)
-        if result is not None:
+        if result is not None and (info["closed"] or info["remaining"]):
             from core.result import MANUAL, PASS
             ok = info["remaining"] == 0
             result.add(len(result.checks) + 1, "시험 후 정리 — 열린 검사 닫기",
                        PASS if ok else MANUAL,
                        expected="열린 검사 0개",
-                       actual="닫음 %d개 / 남음 %d개" % (info["closed"], info["remaining"]),
+                       actual="닫음 %d개 / 남음 %d개 (%s)"
+                             % (info["closed"], info["remaining"], info.get("method") or "-"),
                        note="열린 검사가 쌓이면 다음 시험의 시작 상태가 불분명해진다"
                             "(사용자 지시, 2026-08-20). 처리한 팝업: %s"
                             % ("; ".join(str(d) for d in info["dialogs"]) or "없음"))
@@ -535,6 +549,7 @@ COMMANDS = {
     "run-regression": cmd_run_regression,
     "preflight": cmd_preflight,
     "scope": cmd_scope,
+    "design-report": cmd_design_report,
     "ui-probe": cmd_ui_probe,
     "mwl-list": cmd_mwl_list,
     "mwl-ensure": cmd_mwl_ensure,

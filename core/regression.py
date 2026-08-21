@@ -472,13 +472,22 @@ def _run_tc(tc_id, cfg, ui, evidence_root, extra_kwargs=None):
         # 촬영 대상 선택을 엉키게 한다.
         try:
             from . import workflow as W
-            if W.open_study_tabs(ui):
-                info = W.close_all_studies(ui, cfg)
+            # **미리 open_study_tabs()로 게이트를 걸지 않는다** — 스터디 탭 바는
+            # Registration 목록 화면에서는 렌더링되지 않는다(실측 2026-08-21).
+            # TC가 그 화면에서 끝났다면 여기서 미리 확인하면 0개로 보여 정리를
+            # 통째로 건너뛴다. close_all_studies()가 내부에서 Exposure로 옮겨
+            # 직접 확인한다.
+            info = W.close_all_studies(ui, cfg)
+            # close_all_studies()가 Close All 툴을 쓰려고 Viewer를 최대화할
+            # 수 있다 — 되돌리지 않으면 다음 TC가 인체도(Step 등록)를 못 본다
+            # (README 4.14절, 2026-08-19 사고와 같은 패턴).
+            W.restore_exposure_layout(ui, cfg)
+            if info["closed"] or info["remaining"]:
                 r.add(len(r.checks) + 1, "시험 후 정리 — 열린 검사 닫기",
                       result_mod.PASS if info["remaining"] == 0 else result_mod.MANUAL,
                       expected="열린 검사 0개",
-                      actual="닫음 %d개 / 남음 %d개"
-                             % (info["closed"], info["remaining"]))
+                      actual="닫음 %d개 / 남음 %d개 (%s)"
+                             % (info["closed"], info["remaining"], info.get("method") or "-"))
                 r.finalize(r.completed)
         except Exception as exc:                          # noqa: BLE001
             _log("%s 검사 정리 실패: %s" % (label, exc))
@@ -586,4 +595,3 @@ def run(cfg, ui_factory, approve_destructive=False, reset_baseline=False,
     #     python run.py setting-export-import                # Export까지만
     #     python run.py setting-export-import --approve-destructive   # Import 포함
     return results
-

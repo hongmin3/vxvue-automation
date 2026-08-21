@@ -547,6 +547,89 @@ TC 하나(TC03)의 소요를 쪼갰다.
 그래서 `core.ui.ADAPTIVE_SETTLE = False` 한 줄로 예전 동작으로 되돌릴 수 있게
 두었다 — 판독이 이른 것으로 의심되면 이 스위치로 먼저 갈라 본다.
 
+### 4.16 "클릭은 했다"와 "실제로 일어났다"는 다르다 (2026-08-21)
+
+TC02/07/08이 오랫동안 MANUAL·BLOCKED로 남아 있던 진짜 원인들을 하루 만에
+찾았다. 공통점은 전부 **"버튼을 눌렀다는 사실"과 "그 결과로 원하는 일이
+실제로 일어났다는 사실"을 같은 것으로 취급한 것**이었다.
+
+**① Database 목록이 촬영 직후에는 비어 있다.** TC02/07/08 모두 "Database 목록
+`Result: 0/0`"으로 막혀 있었고, 이전 조사는 원인을 Procedure Mapping 생략(Step
+미등록)으로 지목했다. 그런데 이번에는 Step 등록이 정상인데도 재현됐다 — Close
+직후 첫 조회는 `0/0`인데 **몇 분 뒤 다시 열면 같은 스터디가 `n/n`으로 정상
+표시됐다.** 제품 내부 인덱싱이 화면 Close보다 늦게 끝나는 지연으로 보인다.
+`core/workflow.database_search()`에 결과가 비면 Search를 최대 4회(3초 간격)
+재시도하는 로직을 넣어 해소했다 — TC02/07/08 세 TC가 이 함수 하나를 공유하므로
+한 곳을 고쳐 셋 다 나아졌다.
+
+**② Print/Export는 확인을 두 번 요구한다.** Database `Print`(30293)를 누르면
+'Do you want to print all images...' 팝업이 뜨는데, 이전 코드는 이 팝업을
+**분류만 하고 누르지 않았다**(`QUESTION`은 호출부가 안다고 확신할 때만 누르는
+설계 원칙 그대로였다 — 원칙은 맞았지만 이 경우엔 호출부가 실제로 알아야 했는데
+빠뜨렸다). 팝업을 확인(`All Images`, 실측: Send 팝업과 같은 버튼 ID 27002)해도
+**끝이 아니었다** — 필름 구성 화면(`CUIFilmManager`)으로 넘어갈 뿐이고, 거기서
+**다시 Print(30718)를 눌러야** 실제로 Print SCP에 전송됐다(실측: 두 번째 클릭
+전 수신 필름 0건 → 클릭 후 2건). Export(30300)도 같은 확인 팝업 패턴을 썼다.
+`core/workflow.confirm_scope_popup()`(범위 팝업만 분리해 처리)과
+`finish_print()`(필름 구성 화면의 실제 전송 버튼)를 추가해 두 TC 모두
+FULL(TC07)/거의 FULL(TC08)로 올렸다.
+
+**③ owner-draw 위젯은 표준 API로 "바꿨다"고 믿으면 안 된다.** Export
+Manager의 경로 표시 Edit(`30191`)에 `SendMessage(WM_SETTEXT)`로 새 경로를
+쓰면 **화면 텍스트는 바뀌는데 실제 Export 대상은 그대로**였다(제품이 그 값을
+표시 전용으로만 쓰고, 실제 상태는 별도 내부 변수에 있었다). 진짜로 바꾸려면
+**드라이브 드롭다운(owner-draw 팝업, 화살표 클릭 → OCR로 원하는 문자의 좌표를
+찾아 클릭) → Browse(표준 `SHBrowseForFolder` 트리, 폴더명을 OCR로 찾아 클릭)**
+순서를 실제로 거쳐야 했다. File Format 버튼(DICOM/IMG 등)도 상태를 표준 API로
+못 읽어 **테두리 픽셀 색**(선택 `(255,255,0)` / 비선택 `(32,32,32)`, 실측)으로
+판별했다 — 다중 선택 토글이라 이미 켜진 것을 모르고 다시 누르면 꺼지기
+때문이다. 세 조작 모두 **CLAUDE.md의 좌표 규칙 그대로** — 속성으로 못 찾는
+owner-draw 요소는 실행 시점에 화면을 읽어 좌표를 계산했다.
+
+**④ VXvue의 Import는 DICOM이 아니라 IMG만 받는다.** 사용자가 "실제 import
+동작을 하려면 IMG로 export해야 하지 않나"라고 지적해 Operation Manual을 다시
+찾았다 — 8.14절에 "VXvue에서 생성된 IMG 파일만 가져올 수 있습니다"라고 명시돼
+있었다. DICOM만 골라 Export하던 이전 설계는 Expected Result 1("Export
+성공")은 만족해도 2("뷰어로 import 성공")는 애초에 불가능한 산출물을 만들고
+있었다. File Format이 다중 선택이라는 점(8.13.1)을 이용해 DICOM(태그 대조용)과
+IMG(Import 전제조건)를 함께 선택하도록 고쳤다.
+
+**⑤ DICOM 파서가 8년 묵은 표준 케이스를 놓치고 있었다.** ①~④를 다 고친 뒤
+Export된 DICOM의 PatientID/PatientName이 계속 `None`으로 나왔다. 원인은 제품이
+아니라 `core/dicomlite.py`(자매 프로젝트에서 가져와 그대로 쓰던 파서)에
+있었다 — `(0008,2218) Anatomic Region Sequence`가 **길이 미정(0xFFFFFFFF)
+Item**을 담고 있었는데, 파서가 이런 Item을 FFFE류 특수 태그와 같은 8바이트
+고정폭으로 건너뛰려 했다. 실제로는 Item 안에 VR 필드가 있는 일반 태그들이
+들어 있어, 그 순간부터 파일 끝까지 모든 태그 위치가 어긋났다(AccessionNumber/
+Modality는 그 앞쪽 그룹이라 멀쩡히 읽혔다). `_skip_undefined_sequence()`/
+`_skip_item_undefined()`로 길이 미정 Item 내부를 explicit VR 규칙으로
+재귀적으로 건너뛰도록 고쳤다 — 이 모듈은 TC02/05/07/08이 공유하므로 한 번의
+수정이 넷에 함께 적용된다.
+
+이 다섯 가지가 겹쳐서 TC02/07/08을 오래 MANUAL/BLOCKED로 묶어 놨었다. 공통
+교훈은 "화면이 다음 단계로 넘어갔다"나 "표시값이 바뀌었다"를 성공의 증거로
+삼지 말고, **그 조작이 만들려던 결과물(수신 파일, 실제 대상 경로, DB 표시)을
+직접 확인하는 것**이다.
+
+**⑥ "열린 검사가 없다"는 확인 자체가 화면을 가린다.** 사용자가 "촬영 스터디를
+테스트가 끝나면 꼭 닫아 달라, Tool의 Close All을 쓰면 될 것 같다"고 지적했다.
+확인해 보니 `core/workflow.open_study_tabs()`가 스터디 탭의 ctrl_id를
+`31213~31240`으로 하드코딩해 찾고 있었는데, 실측 두 번 모두(검사 1개일 때
+`31274`, 다음 실행엔 `31275`/`31276`) 그 범위 밖이었다 — ID가 순번이 아니라
+세션마다 달라지는 값이라 클래스 텍스트(`NaviBarItem`)로 바꿔 찾도록 고쳤다.
+그런데 그 컨테이너 ID(`31200`)는 **Registration 목록 화면 자체의
+Scheduled/Unscheduled/Reserved 탭도 재사용**하고 있어서, 텍스트만으로 찾자
+이번엔 그 화면의 탭 3개를 "열린 검사"로 잘못 세는 반대 방향 버그가 났다 — 두
+컨테이너는 `rect[0]`(스터디 탭 바=270대, Registration 자체 탭=0)으로 구분해야
+했다. 더 근본적인 문제는 **스터디 탭 바 자체가 Registration 목록 화면에서는
+렌더링되지 않는다**는 것이었다 — TC가 그 화면에서 끝나면 정리 함수를 부르기
+전에 미리 `open_study_tabs()`로 "닫을 게 있나" 게이트를 거는 기존 코드가
+매번 0개로 보고 정리를 통째로 건너뛰었다. `close_all_studies()`가 내부에서
+먼저 Exposure 화면으로 이동해 확인하도록 고치고, 호출부의 사전 게이트를
+없앴다. 사용자가 짚어 준 **Close All 버튼(`30274`, Edit 옆 항상 보이는
+툴바 — 더보기 팔레트 안이 아니다)** 도 실측 확인해 1차 수단으로 넣었다(팝업
+없이 한 번에 닫힌다). 기존 탭별 닫기 방식은 백업으로 남겼다.
+
 ---
 
 ## 5. 실행 방법
@@ -722,6 +805,7 @@ TC를 새로 구현하거나 화면 구조가 바뀌었을 때 쓰는 조회 전
 | `python run.py snapshot-diff --a A.json --b B.json` | 두 스냅샷 비교 |
 | `python run.py vxs-info --a export.vxs [--b other.vxs]` | Export 파일(`.vxs`) 구성 판독 / 두 파일 비교 |
 | `python run.py report-sample` | 리포트 4종 형식 확인(판정은 비어 있음) |
+| `python run.py design-report [--save 경로]` | TC별 **설계**(Step 구성·판정 근거) HTML 리포트를 `tests/tc*.py` docstring과 `automation_scope.json`에서 뽑아 생성한다(기본 `docs/TC_설계리포트.html`). 특정 실행의 PASS/FAIL이 아니라 "코드가 무엇을 검증하도록 설계됐는가"를 본다 — 코드가 바뀌면 다음 생성 때 그대로 반영된다 |
 
 ### 5.6 결과물
 
@@ -862,6 +946,7 @@ auto/
 │  ├─ xipl.py                 XIPL 영상처리 라이선스 확인 + UTF-16 로그 판독
 │  ├─ specs.py                사양서·매뉴얼 PDF에서 근거를 찾아 쪽·VP번호까지 인용
 │  ├─ checklist.py            체크리스트 xlsx 사본에 판정 열 기록 (원본은 읽기만)
+│  ├─ design_report.py        TC 설계(Step·판정 근거) HTML 리포트 생성 (docstring+scope에서 추출)
 │  ├─ watchdog.py             상태 기반 대기·재시도·팝업 가드·단계 실패 격리
 │  ├─ sysinfo.py              환경 조회 (WMI 비의존)
 │  ├─ package_info.py         패키지 버전 수집
@@ -932,9 +1017,9 @@ SSIM에 쓰고, 없으면 numpy 구현으로 대체한다.
 | 체크박스 on/off | DB로 검증 | UI에서 상태를 읽을 수 없다 |
 | GPU 필요한 3D 산출물 | SKIP (규칙화) | 검증 PC에 CUDA GPU가 없다. 라이선스·UI 흐름은 검증 |
 | Procedure ↔ Code 매핑 | 하지 않음 | 제품 설정을 바꾸는 조작이고, 자동화가 잘못 눌러 Procedure를 하나 만든 사고가 있었다(4.12절). 사람이 한 번 매핑한 뒤 회귀를 돌린다 |
-| Export Manager 창 내부 조작 | MANUAL | 별도 프로세스(`VX.EXPORT.MANAGER`)의 컨트롤 ID를 실측하지 못했다. 추측한 ID를 누르면 형식·익명화·Portable viewer 포함 여부를 바꾼다 |
-| Setting > DICOM - General 의 Send Dose SR | MANUAL | 어느 컨트롤인지 실측 확정 전 — 잘못 누르면 다른 전송 정책을 바꾼다 |
-| Export된 스터디의 역방향 Import | MANUAL | DB에 데이터를 추가하는 조작이라 자동 승인 없이 실행하지 않는다 |
+| Export Manager 창 내부 조작 | **자동화됨**(2026-08-21) | 별도 프로세스(`VX.EXPORT.MANAGER`)의 드라이브·경로·형식(DICOM+IMG) 지정과 Start까지 캡처+OCR·픽셀 색으로 실측해 자동화했다(4.16절) |
+| Setting > DICOM - General 의 Send Dose SR | MANUAL | 위치는 확인됨(Service Manual p.136 4.9.1, 사양서4 p.88 VP-707 — Custom Setting Yes/No) — **컨트롤 ID는 아직 실측 전**이라 잘못 누르면 다른 전송 정책을 바꿀 수 있다 |
+| Export된 스터디의 역방향 Import | MANUAL | DB에 데이터를 추가하는 조작이라 자동 승인 없이 실행하지 않는다. Export는 **DICOM+IMG를 함께** 만들어 전제조건은 갖춰 둔다 — VXvue 자체 Import는 IMG만 받는다(Operation Manual 8.14) |
 | XIPL Studio 재처리(TC04) | MANUAL | `C:\XIPL\PARAMETER` 구성과 서버 재시작으로 촬영 처리 및 Studio 기동은 확인됐다. WPF 내부 컨트롤 실측 후 로드·Process 조작을 추가해야 한다 |
 
 UI를 조작하는 명령은 **관리자 권한**으로 실행해야 한다(제품이 관리자 권한으로

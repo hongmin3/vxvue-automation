@@ -174,9 +174,10 @@ TC02/03/05/07/08은 앞부분(MWL 처방 열기 → 촬영)이 같다. 각 TC가
 | 촬영 | `acquire(ui, cfg)` | `viewer.demo_exposure_key`(F2). Step 등록 후 미촬영 항목을 선택하고 DB `INSTANCE` 증가로 획득을 확인한다. **획득 뒤에도 늦게 뜨는 팝업을 한 번 더 훑는다** |
 | 촬영 상태 | `acquisition_state()` | `31093` `AcquisitionState` — 캡처+OCR. 실측 문구: `Not Exposure mode`(검사 없음) / `Ready`(촬영 준비 완료) |
 | 영상 선택 | `select_first_image()` | 선택 전에는 Send가 동작하지 않는다 |
-| 전송 | `send(ui, scope)` | Send `30294`(Exposure·Database 공통). 팝업 `All Images 27002` / `Selected 27001` / `Cancel 27000` |
+| 전송 | `send(ui, scope)` | Send `30294`(Exposure·Database 공통). 팝업 `All Images 27002` / `Selected 27001` / `Cancel 27000`. 내부적으로 `confirm_scope_popup()`을 호출한다 |
+| 확인 팝업만 처리 | `confirm_scope_popup(ui, scope)` | 이미 떠 있는 'Do you want to send/print all images...' 팝업의 범위 버튼만 누른다(`send()`에서 분리, 2026-08-21). Print(`db_button('print')`)·Export(`db_button('export')`) 등 **버튼을 직접 트리거하지 않는 호출부**가 쓴다 — Send와 Print 확인 팝업이 문구만 다르고 버튼 ID는 같다(실측) |
 | 검사 종료 | `close_study()` | Database Close `30275` |
-| DB 조회 | `database_search()` | Database 목록 `31191`, Search는 Registration과 같은 `30689`. **Close 직후 목록이 자동 갱신되지 않아** 조회하지 않으면 "Database에 없다"는 잘못된 판정이 난다 |
+| DB 조회 | `database_search()` | Database 목록 `31191`, Search는 Registration과 같은 `30689`. **Close 직후 목록이 자동 갱신되지 않아** 조회하지 않으면 "Database에 없다"는 잘못된 판정이 난다. **한 번으로도 비어 있을 수 있다**(실측 2026-08-21: Close 직후 첫 조회 `0/0` → 몇 분 뒤 재조회 시 `n/n`, 제품 내부 인덱싱 지연으로 보인다) — 결과가 비면 Search를 최대 4회(3초 간격) 재시도한다 |
 | 팝업 정리 | `pending_dialogs()` | 문구를 표준 API로 못 읽으면 캡처+OCR(`dialog_message()`). `dismiss_dialog()`로 안 닫히는 창은 제목줄 X(`-4`)로 닫는다 |
 
 Tool 레일(Exposure): `30360` Select · `30284` Rect. · `30390` Zoom · `30338` Pan ·
@@ -219,7 +220,12 @@ Statistics · `30378` Multi-Study · `30348` QXLink · `30471` Report · `30473`
 | 9 | 수신 파일의 DICOM 태그를 정답지와 대조 | PatientID / PatientName / AccessionNumber / Modality 일치. 체크리스트 Expected Result 3·4·5의 마지막 고리 | PASS/FAIL |
 | 10 | 검사 Close | Database 화면의 Close 실행, 상태가 `Not Exposure mode`로 | PASS/FAIL |
 | 11 | DB(`STUDY`+`PATIENT`) 조회로 대조 | PatientId / AccessionNumber / Modality 일치 | PASS/FAIL |
-| 12 | Database 화면에 이 검사가 표시되는지 | 표시돼야 한다. **표시되지 않으면 그 원인**(Operation Manual 3.6 — 완료된 검사만 조회 / Procedure Mapping 생략으로 `StudyStatus=1`)**과 해제 조건을 note에 적고 MANUAL로 남긴다** — 제품 결함으로 단정하지 않는다 | PASS/MANUAL |
+| 12 | Database 화면에 이 검사가 표시되는지 | 표시돼야 한다. `database_search()`가 재시도까지 마쳐도 안 보이면 원인(Operation Manual 3.6 — 완료된 검사만 조회 / Step 미등록 / 재시도 상한을 넘는 인덱싱 지연)과 해제 조건을 note에 적고 MANUAL로 남긴다 — 제품 결함으로 단정하지 않는다. **2026-08-21 재검증에서는 재시도로 해소되어 PASS** | PASS/MANUAL |
+
+2026-08-21 실측: **PASS 13 / FAIL 0 / MANUAL 0** — 위 표의 모든 Step이 자동
+판정으로 떨어진다(FULL). 이전까지 Step 12가 MANUAL로 남던 원인은 Step 등록
+누락이 아니라 `database_search()`가 한 번만 조회했기 때문이었다(위 공통 인프라
+표 참고).
 
 ---
 
@@ -302,12 +308,18 @@ TC02와 다른 점: TC02는 "정보 일치"를, 이 TC는 **"전송된 객체의
 | 2 | **VXvue가 보낸 기존 필름 id를 기준선으로 뜬다** | 기존 필름을 지우지 않고 id로 걸러낸다 — 같은 시험 서버를 자매 프로젝트와 공유하므로(실측: 다른 제품 필름 8건) 전체 목록으로 판정하면 남의 필름을 자기 결과로 착각한다 | PASS |
 | 3 | Print 화면의 서버/필름 크기/방향 콤보 판독(`30955`/`30956`/`30957`) | 서버 콤보가 등록된 Print SCP를 가리킨다. 콤보 텍스트가 잘려 표시되므로 접두만 대조 | PASS/MANUAL |
 | 4 | MWL 오픈 + 촬영 | 영상 1장 이상 | PASS/FAIL |
-| 5 | Print 실행 — Database 목록이 있으면 Database `Print`(30293), 없으면 Print 화면 `Print`(30718) | 버튼 클릭 및 확인 팝업 처리 | PASS/FAIL |
+| 5 | Print 실행 — Database 목록이 있으면 Database `Print`(30293), 없으면 Print 화면에서 직접 | **두 번의 확인이 필요하다**(실측 2026-08-21). ① Database `Print`를 누르면 뜨는 확인 팝업('Do you want to print all images...')을 `confirm_scope_popup(scope="all")`로 넘긴다(Send 팝업과 같은 버튼 구성). ② 그러면 필름 구성 화면(`CUIFilmManager`)으로 전환되는데, 여기서 **다시 Print(`30718`)를 눌러야**(`finish_print()`) 실제로 Print SCP에 전송된다 — 이 두 번째 클릭이 빠지면 필름 구성만 되고 아무것도 전송되지 않는다(이전 버전의 거짓양성 원인) | PASS/FAIL |
 | 6 | `GET /api/jobs`에서 **Calling AE=VXVUE의 신규 필름**을 기다린다 | 1건 이상 신규 수신. 'Print 성공'의 유일한 객관적 근거 | PASS/FAIL |
 | 7 | 수신 필름의 속성(id / film_size / received_at) 기록 | 증적으로 남긴다 | PASS |
 
 Print SCP는 체크리스트 Precondition대로 **다른 PC**에 있다 — Storage와 달리 이
 조건은 충족한다.
+
+2026-08-21 재검증: **PASS 7 / FAIL 0 / MANUAL 0**(FULL). 이전 FAIL(Step 6 "120초
+안에 신규 필름 미확인")의 진짜 원인은 Database 목록 지연이 아니라 위 Step 5의
+두 번째 확인(Film Manager Print 버튼) 누락이었다 — Database 목록 문제는
+`database_search()` 재시도로, Print 확인 누락은 `finish_print()` 추가로 각각
+해소했다.
 
 ---
 
@@ -316,25 +328,67 @@ Print SCP는 체크리스트 Precondition대로 **다른 PC**에 있다 — Stor
 코드: `tests/tc08_study_export.py` · 실행: `python run.py tc08`
 
 체크리스트 Precondition은 *CD/USB*지만 물리 매체 굽기·삽입은 사람이 해야 한다.
-사용자 지시(2026-08-19)로 **E 드라이브를 기준**으로 수행한다
-(`config.json > export.dest_dir`). 경로를 코드에 박지 않았으므로 실제 USB
-드라이브 문자로 바꾸면 그대로 동작한다.
+사용자 지시로 **E 드라이브를 기준**으로 수행하고(`config.json > export.dest_dir`),
+**E가 없으면 D로 대체하며 그 사실을 판정에 남긴다**(2026-08-21 지시 — "이건
+외부 드라이브 export/import를 보는 테스트라서"). 경로를 코드에 박지 않았으므로
+실제 USB 드라이브 문자로 바꾸면 그대로 동작한다.
 
 체크리스트 Comment에 **알려진 결함 `#21049`(Win11에서 Study Export 시 에러 발생
 하며 Export 안 됨)** 이력이 있다. 이 시험대는 Windows 11이므로 **이 TC는 그
-결함의 재발 확인 회귀**다.
+결함의 재발 확인 회귀**다. 2026-08-21 실행에서는 재현되지 않았다.
+
+## Export Manager 내부 자동화 (2026-08-21 신규 실측)
+
+이전 버전은 이 창의 컨트롤을 실측하지 못해 Step 5~9가 전부 MANUAL이었다.
+캡처+OCR로 컨트롤을 확정해 전면 자동화했다(`tests/tc08_study_export.py`의
+`_run_export_manager()` 등, 상세 근거는 모듈 docstring 참고).
+
+| 조작 | 함수 | 확정된 사실 |
+|---|---|---|
+| 경로 표시(읽기 전용) | — (`30191` Edit) | `SendMessage(WM_SETTEXT)`로는 **표시만 바뀌고 실제 대상은 안 바뀐다**(실측: 텍스트를 바꿔도 파일은 이전 경로에 생성됨) |
+| 드라이브 변경 | `_select_export_drive()` | `31003` 위젯의 드롭다운(owner-draw)에서 원하는 드라이브 문자를 **OCR로 찾아 클릭**해야 실제로 바뀐다. 이미 그 드라이브면 건드리지 않는다(재클릭 방지) |
+| 폴더 선택 | `_browse_to_folder()` | Browse(`30680`)가 여는 표준 `SHBrowseForFolder` 트리는 **현재 선택된 드라이브 위치에서 시작**한다 — 드라이브를 먼저 맞추면 대상 폴더가 트리 첫 화면에 보인다. 폴더명을 OCR로 찾아 클릭 후 확인 |
+| 형식 선택 | `_format_selected()` + 클릭 | File Format(`30696`=DICOM `30698`=IMG 등)은 **다중 선택 토글**이고 owner-draw라 표준 API로 상태를 못 읽는다. 선택 시 테두리 `(255,255,0)`(노랑), 아니면 `(32,32,32)`(회색) — 픽셀로 판별해 **이미 선택된 것은 다시 누르지 않는다**(다시 누르면 꺼진다) |
+| 시작 | `30683`(Start) | 확인 팝업 없이 곧바로 전송 시작 |
+| 완료 대기 | `_export_state()` | 'Current State' 라벨과 값 모두 `Static`에 공용 ctrl_id(`20000`)라 위치로 구분(라벨보다 오른쪽) — `Ready → Done` |
+| 완료 팝업 | ctrl_id `27000` 단일 버튼 | "Succeed to export. Export Manager will be closed." — 누르면 프로세스 자체가 종료된다. 안 닫으면 다음 실행과 충돌한다 |
+
+**VXvue 자체 Import는 DICOM이 아니라 IMG만 받는다**(Operation Manual 8.14,
+p.204: "VXvue에서 생성된 IMG 파일만 가져올 수 있습니다.", 사용자 지적으로
+재확인). File Format은 다중 선택이 가능하므로(8.13.1) **DICOM(태그 대조용)과
+IMG(Import 전제조건)를 함께 선택**한다 — 실측: 한 번의 Export로 `dcm\*.dcm`과
+`S{Series}I{Instance}.img`가 같은 폴더에 함께 생성된다.
 
 | Step | 코드가 하는 일 | Expected Result(판정 기준) | 판정 |
 |---|---|---|---|
-| 1 | 대상 드라이브·폴더 준비, **기존 파일 목록을 먼저 뜬다** | 대상 사용 가능. 기준선이 없으면 이전 산출물을 이번 결과로 착각한다 | PASS/BLOCKED |
+| 0 | 대상 드라이브 확인. 설정된 드라이브가 없으면 D로 대체 | 사용 가능한 드라이브 확보. 대체 시 **PASS로 올리지 않고 MANUAL**로 남겨 "외부 매체 대신 내장 드라이브로 대체했다"는 사실을 표시 | PASS/MANUAL/BLOCKED |
+| 1 | 대상 폴더 준비, **기존 파일 목록을 먼저 뜬다** | 대상 사용 가능. 기준선이 없으면 이전 산출물을 이번 결과로 착각한다 | PASS/FAIL |
 | 2 | MWL 오픈 + 촬영 + Close | 영상 획득 후 검사 종료 | PASS/FAIL/SKIP |
-| 3 | Database에서 Export 대상 선택 | 목록에 스터디가 있어야 한다. 없으면 **BLOCKED** — 원인(완료된 검사만 표시 / Mapping 생략)과 해제 조건, 그리고 "#21049 재발 여부도 이번 실행으로는 판단할 수 없다"는 사실을 함께 적는다 | PASS/BLOCKED |
-| 4 | Export(`30300`) → Export Manager 창 확인 | 별도 프로세스 `VX.EXPORT.MANAGER` 창이 열린다. **에러 팝업이 뜨면 #21049 재발 가능성으로 표시하고 문구를 증적으로 남긴다** | PASS/FAIL/MANUAL |
-| 5 | Export Manager에서 경로·형식 지정 후 Start | **창 내부 컨트롤 ID를 실측하지 못했다** — 추측한 ID를 누르면 형식·익명화·Portable viewer 포함 여부를 바꾼다. 확정 방법을 note에 적고 MANUAL | MANUAL |
-| 6 | 대상 폴더의 신규 파일 확인 | 산출물 생성. Start를 자동으로 누르지 않으므로 보통 0개다 — 사람이 Start를 누른 뒤 `--no-acquire`로 다시 실행하면 이 Step부터 검증된다 | PASS/MANUAL |
-| 7 | 산출물의 DICOM 태그 대조 | PatientID 일치. Expected Result의 *"export 된 영상 오픈하여 확인"* 을 **뷰어로 여는 대신 파일 태그를 직접 읽어** 확인한다 | PASS/FAIL |
-| 8 | QXLink portable viewer 포함 확인 | 산출물에 포함. **실행 여부는 사람이 확인**한다(외부 실행 파일을 자동으로 띄우지 않는다) | PASS/MANUAL |
-| 9 | 역방향 Import | **수행하지 않는다** — DB에 데이터를 추가하는 조작이라 자동 승인 없이 실행하지 않는다. 버튼은 실측 확인됨(`30315`) | MANUAL |
+| 3 | Database에서 Export 대상 선택 | 목록에 스터디가 있어야 한다. `database_search()` 재시도까지 실패하면 BLOCKED | PASS/BLOCKED |
+| 4 | Export(`30300`, 확인 팝업 처리) → Export Manager 창 확인 | 별도 프로세스 `VX.EXPORT.MANAGER` 창이 열린다. **에러 팝업이 뜨면 #21049 재발 가능성으로 표시** | PASS/FAIL/MANUAL |
+| 5 | 위 표대로 드라이브·폴더·형식(DICOM+IMG) 지정 후 Start, 완료까지 대기 | Export Path가 요청한 대상과 일치 + Current State=Done | PASS/FAIL/MANUAL |
+| 6 | 대상 폴더의 신규 파일 확인 | 산출물 생성 | PASS/MANUAL |
+| 7 | IMG 형식 산출물 확인 | `S{Series}I{Instance}.img` 1개 이상 — 이게 있어야 Step 9(역방향 Import)가 원칙적으로 가능하다 | PASS/MANUAL |
+| 8 | 산출물의 DICOM 태그 대조(가장 큰 DICOM 파일 기준) | PatientID 일치. **같은 검사에서 Dose SR(수 KB)도 함께 Export되므로 크기순으로 골라 실제 영상 파일을 본다** — 안 그러면 SR 객체를 잘못 골라 태그가 비어 보일 수 있다(2026-08-21 실측 재현) | PASS/FAIL |
+| 9 | QXLink portable viewer 포함 확인 | 산출물에 포함. **실행 여부는 사람이 확인**한다(외부 실행 파일을 자동으로 띄우지 않는다) | PASS/MANUAL |
+| 10 | 역방향 Import | **수행하지 않는다** — DB에 데이터를 추가하는 조작이라 자동 승인 없이 실행하지 않는다(Setting Import와 같은 원칙). 버튼은 실측 확인됨(`30315`) | MANUAL |
+
+2026-08-21 재검증: **PASS 8 / FAIL 0 / MANUAL 2**(이전 BLOCKED에서 대폭 향상).
+남은 MANUAL 2건(Step 9 QXLink 실행 확인, Step 10 Import)은 설계상 의도된
+것이다 — 외부 실행 파일 구동과 DB 쓰기는 자동 승인 없이 하지 않는다.
+
+### 부수 발견 — `core/dicomlite.py` DICOM 파서 버그 수정 (2026-08-21)
+
+Step 8의 태그 대조가 PatientID/PatientName을 계속 `None`으로 돌려줘 원인을
+추적했다. Export된 영상에 포함된 `(0008,2218) Anatomic Region Sequence`가
+**길이 미정(0xFFFFFFFF) Item**을 담고 있었는데, 기존 `_parse()`가 이런 Item을
+8바이트 고정폭(FFFE류 태그와 같은 모양)으로 건너뛰려 해 VR 필드만큼 위치가
+어긋났다 — 그 뒤로 나오는 모든 태그가 잘못된 위치에서 읽혀 (0010,0010)/
+(0010,0020)이 조용히 빈 값이 됐다. `_skip_undefined_sequence()`/
+`_skip_item_undefined()`를 추가해 길이 미정 Item 내부를 explicit VR 규칙으로
+재귀적으로 건너뛰도록 고쳤다(TC02/05/07/08이 공유하는 모듈이라 전부에 이득이
+적용된다). 수정 전후로 Bunny 수신 파일(TC02/05/07)에 대해서도 결과가 그대로임을
+확인해 회귀가 없음을 검증했다.
 
 ---
 
@@ -454,3 +508,16 @@ Windows Update 체크리스트에는 없는 별도 신규 TC다. **"옵션 값�
 10. **자동화가 바꾼 것은 자동화가 되돌리고, 되돌리기 실패도 남긴다.**
     설정을 바꾸는 TC는 원복을 Step으로 두고(TC03 Interpolation), 실패하면
     조용히 넘기지 않는다 — 다음 시험이 오염된 상태에서 시작한다.
+11. **"완전 자동화"는 모든 Step이 PASS/FAIL로만 떨어지는 상태를 뜻한다.**
+    `core/result.TCResult.verdict`는 Step 하나라도 MANUAL이면 TC 전체를
+    MANUAL로 올린다 — **SKIP도 마찬가지다**(2026-08-21 수정). 이전에는 PASS
+    Step만 있고 SKIP이 섞여 있으면 TC가 PASS로 보고됐다(TC14가 실제 사례) —
+    SKIP은 "환경상 정상적인 건너뜀"이지 "확인했다"는 뜻이 아니므로, 그 TC를
+    완전 자동화로 보고하면 안 된다는 판정 규칙(사용자 확정, 2026-08-20)에
+    맞게 고쳤다.
+12. **"버튼을 눌렀다"와 "원하는 일이 일어났다"를 같은 것으로 취급하지
+    않는다.** 확인 팝업을 분류만 하고 누르지 않았거나(Print/Export가 두 번의
+    확인을 요구하는데 한 번만 처리), owner-draw 위젯의 표시 텍스트만 바뀌고
+    실제 내부 상태는 그대로였던 사례(Export Manager 경로 Edit)가 있었다
+    (2026-08-21, README 4.16절). 조작의 결과물(수신 파일, 실제 대상 경로,
+    DB 표시)을 직접 확인해야 판정이 된다.

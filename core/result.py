@@ -132,7 +132,10 @@ class TCResult:
             if c[BLOCKED]:
                 return BLOCKED
             return SKIP if c[SKIP] else MANUAL
-        return MANUAL if (c[MANUAL] or c[BLOCKED]) else PASS
+        # SKIP도 MANUAL과 마찬가지로 PASS를 막는다 — "완전 자동화"는 모든 Step이
+        # PASS/FAIL로만 판정되는 상태를 뜻하고(TODO_전체자동화.md 0절, 사용자 확정
+        # 2026-08-20), SKIP 1건이라도 있으면 그 TC는 완전 자동화된 것이 아니다.
+        return MANUAL if (c[MANUAL] or c[BLOCKED] or c[SKIP]) else PASS
 
     def as_dict(self):
         return {

@@ -70,6 +70,59 @@ def _decode(vr, raw):
         return None
 
 
+def _skip_item_undefined(buf, pos, explicit, end):
+    """길이 미정 Item(FFFE,E000) 안의 태그들을 Item Delimitation까지 건너뛴다.
+
+    Item 내부는 일반 태그(그룹,엘리먼트,VR,길이,값)의 나열이다 — 8바이트
+    고정폭(FFFE류 태그와 같은 모양)으로 가정하고 건너뛰면 VR 필드만큼
+    어긋난다(아래 `_parse`의 옛 버그, 2026-08-21 실측: Anatomic Region
+    Sequence(0008,2218)처럼 길이 미정 Item을 포함한 시퀀스를 지나가는 순간
+    이후 모든 태그 위치가 틀어져 PatientID/PatientName이 안 읽혔다).
+    """
+    while pos + 8 <= end:
+        group, elem = struct.unpack_from("<HH", buf, pos)
+        pos += 4
+        if (group, elem) == (0xFFFE, 0xE00D):        # Item Delimitation
+            return pos + 4
+        if (group, elem) == (0xFFFE, 0xE000):        # 드문 중첩 Item
+            length = struct.unpack_from("<I", buf, pos)[0]
+            pos += 4
+            pos = (_skip_item_undefined(buf, pos, explicit, end)
+                  if length == 0xFFFFFFFF else pos + length)
+            continue
+        if explicit:
+            vr = buf[pos:pos + 2]
+            pos += 2
+            if vr in _VR_WITH_LONG_LEN:
+                pos += 2
+                length = struct.unpack_from("<I", buf, pos)[0]
+                pos += 4
+            else:
+                length = struct.unpack_from("<H", buf, pos)[0]
+                pos += 2
+        else:
+            length = struct.unpack_from("<I", buf, pos)[0]
+            pos += 4
+        pos = (_skip_undefined_sequence(buf, pos, explicit, end)
+              if length == 0xFFFFFFFF else pos + length)
+    return pos
+
+
+def _skip_undefined_sequence(buf, pos, explicit, end):
+    """길이 미정 SQ 값 전체(Item 0개 이상 + Sequence Delimitation)를 건너뛴다."""
+    while pos + 8 <= end:
+        group, elem = struct.unpack_from("<HH", buf, pos)
+        length = struct.unpack_from("<I", buf, pos + 4)[0]
+        pos += 8
+        if (group, elem) == (0xFFFE, 0xE0DD):        # Sequence Delimitation
+            return pos
+        if length == 0xFFFFFFFF:
+            pos = _skip_item_undefined(buf, pos, explicit, end)
+        else:
+            pos += length
+    return pos
+
+
 def _parse(buf, pos, explicit, wanted, out, end=None):
     end = len(buf) if end is None else end
     while pos + 8 <= end:
@@ -100,16 +153,8 @@ def _parse(buf, pos, explicit, wanted, out, end=None):
             length = struct.unpack_from("<I", buf, pos)[0]
             pos += 4
 
-        if length == 0xFFFFFFFF:  # undefined length sequence -> 내부는 건너뛴다
-            depth = 1
-            while pos + 8 <= end and depth:
-                g, e = struct.unpack_from("<HH", buf, pos)
-                ln = struct.unpack_from("<I", buf, pos + 4)[0]
-                pos += 8
-                if (g, e) == (0xFFFE, 0xE0DD):
-                    depth -= 1
-                elif ln != 0xFFFFFFFF:
-                    pos += ln
+        if length == 0xFFFFFFFF:  # 정의되지 않은 길이의 SQ 값 — 재귀적으로 건너뛴다
+            pos = _skip_undefined_sequence(buf, pos, explicit, end)
             continue
 
         if (group, elem) in wanted:

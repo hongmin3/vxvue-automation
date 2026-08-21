@@ -6,8 +6,8 @@
   },
   {
     "tc_id": "TC_WindowsUpdate_02",
-    "level": "PARTIAL",
-    "reason": "2026-08-20 재검증(`python run.py tc02`, PASS 11/FAIL 1/MANUAL 1). MWL 조회 -> 목록 표시값 대조 -> Study 등록 -> **인체도에서 Projection(Chest)·Step(PA) 등록** -> F2 촬영(DB INSTANCE 증가로 판정) -> Send -> **수신 DICOM 태그가 MWL 등록값과 완전 일치** -> Close -> DB 대조 -> **Database 화면 표시 확인까지 PASS**. 전날 Database 목록이 비어 있던 문제는 Step 등록으로 해소됐다(Step이 없으면 검사가 완료 처리되지 않아 Database에 안 나타난다 — Operation Manual 3.6 p.41). 남은 PARTIAL 사유: 목록 셀이 owner-draw라 Patient ID가 '...'로 잘려 OCR로 전체를 읽지 못한다(다른 필드는 확인되고 DB 대조로 보완). 근거: 사양서1 p.37~38 VP-460, p.86 VP-526."
+    "level": "FULL",
+    "reason": "2026-08-21 재검증(`python run.py tc02`, **PASS 13/FAIL 0/MANUAL 0/SKIP 0/BLOCKED 0**). MWL 조회 -> 목록 표시값 대조 -> Study 등록 -> 인체도에서 Projection(Chest)·Step(PA) 등록 -> F2 촬영(DB INSTANCE 증가로 판정) -> Send -> 수신 DICOM 태그가 MWL 등록값과 완전 일치 -> Close -> DB 대조 -> Database 화면 표시 확인까지 전부 PASS. 이전까지 남아 있던 'Database 목록 Result 0/0' 문제(TC07/08도 공통 원인)는 Step 미등록이 아니라 **Close 직후 제품 내부 인덱싱이 검색보다 늦게 끝나는 지연**이었다(실측: 첫 조회 0/0 → 몇 분 뒤 재조회 시 정상 표시). `core/workflow.database_search()`에 재시도(최대 4회, 3초 간격)를 추가해 해소했다(2026-08-21). 근거: 사양서1 p.37~38 VP-460, p.86 VP-526."
   },
   {
     "tc_id": "TC_WindowsUpdate_03",
@@ -31,13 +31,13 @@
   },
   {
     "tc_id": "TC_WindowsUpdate_07",
-    "level": "PARTIAL",
-    "reason": "2026-08-19 구현(`python run.py tc07`, PASS 5/FAIL 1). Print SCP 가동 확인(HTTP `/api/scp-status`) -> 기존 필름 기준선 -> Print 화면 설정 판독(서버 30955 / 필름 크기 30956 / 방향 30957 — 평문 판독 가능) -> 촬영 -> Print -> **수신 필름 목록(`/api/jobs`)에서 Calling AE=VXVUE 신규 필름 확인**. 기존 BELLALUN 필름을 지우지 않고 AE로 걸러낸다. PARTIAL 이유: 전송 대상 지정이 Database 목록을 전제로 하는데 그 목록이 비어 있어(TC02와 같은 원인) 라이브 검증에서 필름 수신을 확인하지 못했다. Print 화면 버튼은 실측 확정됨(Print=30718 / Print & Close=30719)."
+    "level": "FULL",
+    "reason": "2026-08-21 재검증(`python run.py tc07`, **PASS 7/FAIL 0/MANUAL 0**). Print SCP 가동 확인(HTTP `/api/scp-status`) -> 기존 필름 기준선 -> Print 화면 설정 판독(서버 30955 / 필름 크기 30956 / 방향 30957) -> 촬영 -> Database > Print(30293) -> **수신 필름 목록(`/api/jobs`)에서 Calling AE=VXVUE 신규 필름 확인**까지 전부 PASS. 이전 FAIL의 진짜 원인은 Database 목록 지연(위 TC02 참고, database_search 재시도로 해소)이 아니라 **Print 자체가 두 번의 확인을 요구하는데 한 번만 처리했던 것**이었다: ① Database > Print를 누르면 뜨는 확인 팝업('Do you want to print all images...')이 Send 팝업과 같은 버튼(All Images=27002)을 쓰는데 눌러 주지 않았고, ② 그 팝업을 넘기면 필름 구성 화면(CUIFilmManager)으로 전환되는데 거기서 **다시 Print(30718)를 눌러야** 실제 전송된다. `core/workflow.confirm_scope_popup()`/`finish_print()`로 두 확인을 모두 자동화해 해소했다(실측: 두 확인 없이는 필름 0건, 추가 후 2건 수신). Print 화면 버튼은 캡처+OCR로 확정(Print=30718 / Print & Close=30719)."
   },
   {
     "tc_id": "TC_WindowsUpdate_08",
     "level": "PARTIAL",
-    "reason": "2026-08-19 구현(`python run.py tc08`). 사용자 지시로 **E 드라이브 기준**(`config.json > export.dest_dir`, 기본 `E:\\VXvue_QA_Export`) — 물리 CD/USB 굽기는 사람이 해야 하므로 대상만 로컬 드라이브로 바꾸고 검증 내용은 동일하게 유지한다. 대상 폴더 기준선 -> 촬영·Close -> Database 선택 -> Export(30300) -> **Export Manager(별도 프로세스 VX.EXPORT.MANAGER) 창 표시 확인** -> 산출물 DICOM 태그 대조 -> QXLink portable viewer 포함 확인 -> 역방향 Import(MANUAL). 체크리스트 Comment의 **알려진 결함 #21049(Win11에서 Export 시 에러)** 를 회귀 대상으로 삼아, 에러 팝업이 뜨면 문구를 증적으로 남긴다. PARTIAL 이유: (1) Export Manager 창 내부 컨트롤 ID 미실측(추측 조작 금지), (2) Database 목록이 비어 라이브에서 BLOCKED로 판정됨."
+    "reason": "2026-08-21 전면 재구현·재검증(`python run.py tc08`, **PASS 8/FAIL 0/MANUAL 2**, 이전 BLOCKED에서 대폭 향상). 사용자 지시대로 E 드라이브 기준(없으면 D로 대체하고 그 사실을 판정에 남김, 2026-08-21 지시) — 대상 폴더 기준선 -> 촬영·Close -> Database 선택 -> Export(30300, 확인 팝업 처리) -> **Export Manager 창 내부를 실측해 완전 자동화**: 드라이브 드롭다운(31003, owner-draw라 OCR로 좌표 계산) -> Browse(30680, 표준 SHBrowseForFolder 트리를 OCR로 탐색) -> File Format에 DICOM+**IMG 추가 선택**(30696/30698, 상태는 테두리색 (255,255,0)=선택/(32,32,32)=비선택으로 판별) -> Start(30683) -> 완료 팝업 자동 처리 -> 산출물 확인. **VXvue 자체 Import는 DICOM이 아니라 IMG만 받는다**(Operation Manual 8.14, 사용자 지적으로 재확인) — IMG를 함께 Export하도록 반영. 산출물 DICOM 태그 대조 중 `core/dicomlite.py`의 **정의되지 않은 길이 DICOM 시퀀스 파싱 버그**(중첩 Item을 8바이트 고정폭으로 오인해 이후 모든 태그 위치가 어긋남 — PatientID/PatientName이 항상 None으로 나왔다)를 발견·수정했다. 남은 MANUAL 2건은 설계상 의도된 것: QXLink 포터블 뷰어 실행 확인(외부 실행 파일 자동 실행 금지)과 역방향 Import(DB에 데이터를 추가하는 조작이라 자동 승인 없이 실행 안 함, Setting Import와 같은 원칙) — 둘 다 사람 확인이 필요한 항목이라 PARTIAL로 남는다. 체크리스트 Comment의 알려진 결함 #21049는 이번 실행에서 재현되지 않았다. **주의**: 2026-08-21 전체 회귀(TC02~14 연속 실행) 중 1회, Export Manager 창이 25초 안에 뜨지 않아 BLOCKED로 기록됐다 — 개별 실행에서는 항상 25초 안에 떴고, 창은 뒤늦게(회귀가 다음 TC로 넘어간 뒤) 실제로 열렸다. 앞선 TC를 여럿 돈 뒤의 메모리 압박으로 추정되는 타이밍 문제이지 로직 결함이 아니다 — 대기 시간을 45초로 늘렸다. 같은 창은 클릭(Cancel/제목줄 X)과 `WM_CLOSE` 모두로 닫히지 않아 `taskkill`로 정리해야 했다(원인 미상, 후속 조사 필요)."
   },
   {
     "tc_id": "TC_WindowsUpdate_09",
