@@ -28,7 +28,7 @@ pre code{background:none;padding:0}
 
 </head><body>
 <h1>VXvue TC 설계 리포트</h1>
-<div class='meta'>생성 2026-08-21 15:39:46 &nbsp;|&nbsp; 최신 실행 결과 출처: <code>Reports\Result_20260821_151315.json</code><br>이 문서는 <code>tests/tc*.py</code> 모듈 docstring과 <code>automation_scope.json</code>에서 **코드 기준으로 뽑아** 생성한다 (<code>python run.py design-report</code>). 특정 실행의 PASS/FAIL 결과는 <code>Reports/</code>를 본다.</div>
+<div class='meta'>생성 2026-08-21 16:07:21 &nbsp;|&nbsp; 최신 실행 결과 출처: <code>Reports\Result_20260821_151315.json</code><br>이 문서는 <code>tests/tc*.py</code> 모듈 docstring과 <code>automation_scope.json</code>에서 **코드 기준으로 뽑아** 생성한다 (<code>python run.py design-report</code>). 특정 실행의 PASS/FAIL 결과는 <code>Reports/</code>를 본다.</div>
 <div class='toc'><a href='#TC_WindowsUpdate_01'>TC_WindowsUpdate_01</a><a href='#TC_WindowsUpdate_02'>TC_WindowsUpdate_02</a><a href='#TC_WindowsUpdate_03'>TC_WindowsUpdate_03</a><a href='#TC_WindowsUpdate_04'>TC_WindowsUpdate_04</a><a href='#TC_WindowsUpdate_05'>TC_WindowsUpdate_05</a><a href='#TC_WindowsUpdate_06'>TC_WindowsUpdate_06</a><a href='#TC_WindowsUpdate_07'>TC_WindowsUpdate_07</a><a href='#TC_WindowsUpdate_08'>TC_WindowsUpdate_08</a><a href='#TC_WindowsUpdate_09'>TC_WindowsUpdate_09</a><a href='#TC_WindowsUpdate_10'>TC_WindowsUpdate_10</a><a href='#TC_WindowsUpdate_11'>TC_WindowsUpdate_11</a><a href='#TC_WindowsUpdate_12'>TC_WindowsUpdate_12</a><a href='#TC_WindowsUpdate_13'>TC_WindowsUpdate_13</a><a href='#TC_WindowsUpdate_14'>TC_WindowsUpdate_14</a><a href='#TC_WindowsUpdate_15'>TC_WindowsUpdate_15</a><a href='#TC_Setting_ExportImport'>TC_Setting_ExportImport</a></div>
 <h2 id='TC_WindowsUpdate_01'>TC_WindowsUpdate_01 <span class='badge b-EXCLUDED'>EXCLUDED</span></h2>
 <div class='scope-reason'><b>automation_scope.json 근거</b> — 사용자 지시로 이번 자동화 범위 제외 (패키지 설치·실행 확인 TC, 수행 불필요)</div>
@@ -216,7 +216,7 @@ GET /api/jobs        -&gt; [{"id":70,"calling_ae_title":"BELLALUN","film_size_id
 <tr><td>역방향 Import 전제조건</td><td><b>IMG 형식</b>이 함께 Export됐는지 확인(아래 참고)</td></tr>
 <tr><td>역방향 Import</td><td>Database <code>Import</code>(30315)로 되읽기</td></tr>
 </table>
-<p>"export 된 영상 오픈하여 확인"이라는 Expected Result를 <b>뷰어로 열어 보는 대신 파일 태그를 직접 읽어</b> 확인한다 — 사람이 눈으로 보는 것보다 대조 항목이 명확하고 증적으로 남는다.</p>
+<p>"export 된 영상 오픈하여 확인"이라는 Expected Result를 <b>뷰어로 열어 보는 대신 파일 태그를 직접 읽어</b> 확인한다 — 사람이 눈으로 보는 것보다 대조 항목이 명확하고 증거로 남는다.</p>
 <h3>VXvue의 Import는 DICOM이 아니라 IMG만 받는다 (문서 근거, 사용자 지적 2026-08-21)</h3>
 <p>Operation Manual 8.14 "검사 가져오기"(p.204): <b>"VXvue에서 생성된 IMG 파일만 가져올 수 있습니다."</b> DICOM/DICOMDIR로만 Export하면 파일 자체는 정상 생성돼도 <b>뷰어로 다시 가져올 방법이 없다</b> — Expected Result 2("뷰어로 import 성공한다")를 검증하려면 File Format에 <b>IMG를 반드시 함께 선택</b>해야 한다.</p>
 <p>8.13.1(p.200)에 따르면 File Format은 "최소 1개 이상 다중 설정"할 수 있다(실측 확인: DICOM과 IMG를 동시에 체크해도 서로 배타적이지 않다 — DICOM/DICOMDIR끼리만 배타적). 그래서 이 자동화는 <b>DICOM(태그 대조용)과 IMG(Import 전제조건)를 함께 선택</b>하고 Start한다. 실측(2026-08-21): 한 번의 Export로 <code>dcm\...\*.dcm</code>과 <code>S{Series}I{Instance}.img</code>가 같은 대상 폴더에 함께 생성됨을 확인했다.</p>

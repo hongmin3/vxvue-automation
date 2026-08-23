@@ -62,7 +62,7 @@ ENV_ROW_LABELS = {
 }
 
 RESULT_HEADERS = ["자동화 판정", "판정 일시", "PASS", "FAIL", "MANUAL", "SKIP",
-                  "BLOCKED", "실패 항목", "수동 확인 항목", "증적"]
+                  "BLOCKED", "실패 항목", "수동 확인 항목", "증거"]
 
 NOT_RUN = "미수행"
 
@@ -264,6 +264,6 @@ def _write_row(ws, row, col_of, hits, stamp):
         _set(ws, row, col_of[k], total[k])
 
     for name, items in (("실패 항목", fails), ("수동 확인 항목", manuals),
-                        ("증적", evidence)):
+                        ("증거", evidence)):
         cell = ws.cell(row, col_of[name], "\n".join(items) if items else "")
         cell.alignment = Alignment(vertical="top", wrap_text=True)

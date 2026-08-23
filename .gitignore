@@ -10,6 +10,7 @@ Log/
 Reports/
 Temp/
 work/
+regression.pid
 
 # 로컬 탐색 스크립트
 _probe_*.py

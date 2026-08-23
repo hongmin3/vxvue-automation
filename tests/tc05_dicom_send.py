@@ -62,11 +62,13 @@ SCREEN = "DICOM - General"
 SOP_IMAGE = "1.2.840.10008.5.1.4.1.1.1.1"
 SOP_DOSE_SR = "1.2.840.10008.5.1.4.1.1.88.67"
 
-# Setting > DICOM - General 의 "Send Dose SR" 컨트롤 ID는 실측으로 확정해야
-# 한다. 확정되지 않은 상태에서 임의의 ID를 누르면 다른 설정을 바꿔 버리므로,
-# 값을 모르는 동안은 **누르지 않고** 화면의 컨트롤 구성만 보고한다
-# (`VXvue/CLAUDE.md` 3절 — 근거 없는 조작 금지).
-SEND_DOSE_SR_CHECK_ID = None
+# Setting > DICOM - General 의 "Send Dose SR" 컨트롤 ID(실측 2026-08-21).
+# "Send Dose SR" Static(y=276) 옆의 Yes/No 라디오 쌍 — TC13의 폴더 자동
+# 감지 Yes/No(31366/31367)와 같은 구조. Service Manual p.136 4.9.1 /
+# 사양서4 p.88 VP-707로 위치는 이미 알려져 있었고, 이번 세션에 컨트롤
+# ID를 확정했다.
+SEND_DOSE_SR_YES_ID = 31421
+SEND_DOSE_SR_NO_ID = 31422
 
 
 def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
@@ -77,124 +79,151 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
     os.makedirs(evidence_dir, exist_ok=True)
     step = 1
 
-    # --- Step 1: Setting > DICOM - General 의 Send Dose SR 확인 ---------
+    # --- Step 1: Setting > DICOM - General 의 Send Dose SR을 Yes로 -------
+    def _field(cid):
+        return next((c for c in S.content_controls(ui) if c.ctrl_id == cid), None)
+
+    was_yes = None
     try:
         found = S.goto_screen(ui, SCREEN)
-        vals = S.screen_values(ui, title_text=SCREEN) if found is not None else {}
     except Exception as exc:                              # noqa: BLE001
-        found, vals = None, {}
+        found = None
         r.add(step, "Setting > %s 화면 진입" % SCREEN, FAIL, actual=str(exc))
-    if found is not None:
-        radios = vals.get("unreadable_state_controls") or []
-        r.add(step, "Setting > %s 화면에서 Send Dose SR 항목 확인" % SCREEN,
-              MANUAL,
-              expected="Send Dose SR = Yes",
-              actual="화면 진입 성공 / 상태를 읽을 수 없는 컨트롤 %d개" % len(radios),
-              note="**Send Dose SR의 컨트롤 ID를 아직 실측으로 확정하지 못했다.** "
-                   "이 화면의 라디오/체크박스는 owner-draw라 상태를 표준 API로 읽을 "
-                   "수 없고, 어느 컨트롤이 Send Dose SR인지 확정하지 않은 상태에서 "
-                   "누르면 다른 설정을 바꿔 버린다(CLAUDE.md 3절 — 근거 없는 조작 "
-                   "금지). 따라서 이 Step은 **사람이 화면에서 Yes인지 확인**해야 "
-                   "한다. 확정 방법: `python run.py ui-probe`로 이 화면을 덤프하고 "
-                   "라벨 위치와 컨트롤 ID를 대조해 config.json에 기록할 것.")
-    step += 1
-
-    # --- Step 2: 촬영 → 영상 선택 → Send -------------------------------
-    if do_acquire:
-        try:
-            flow = W.open_and_acquire(
-                ui, cfg,
-                patient_id=(cfg.get("test_data") or {}).get("mwl_patient_id"),
-                projection=projection, step=exam_step,
-                evidence_dir=evidence_dir, map_procedure_name=map_procedure)
-        except Exception as exc:                          # noqa: BLE001
-            r.add(step, "전송할 영상 준비 (MWL 오픈 + Step 등록 + 촬영)",
-                  FAIL, actual=str(exc))
-            r.finalize()
-            return r
-        opened = flow["opened"]
-        acq = flow["acquire"] or {"acquired": False, "before": 0, "after": 0,
-                                  "seconds": 0, "state": "", "dialogs": [],
-                                  "note": "Step 등록 실패로 촬영하지 않았다"}
-        r.add(step, "전송할 영상 준비 (MWL 오픈 + Demo 촬영)",
-              PASS if acq["acquired"] else FAIL,
-              expected="영상 1장 이상 획득",
-              actual="영상 %d → %d장 (%.1f초) / 상태=%r / 처리한 팝업=%s"
-                     % (acq["before"], acq["after"], acq["seconds"], acq["state"],
-                        acq["dialogs"] or "없음"),
-              note="MWL 조회 %s. 촬영 흐름은 TC02와 같은 `core/workflow`를 쓴다."
-                   % opened.get("summary", ""))
-        if not acq["acquired"]:
-            r.finalize()
-            return r
+    if found is None:
+        r.add(step, "Setting > %s 화면 진입" % SCREEN, FAIL,
+              actual="화면을 찾지 못함" if found is None else "")
     else:
-        r.add(step, "전송할 영상 준비", SKIP,
-              note="--no-acquire로 실행되어 이미 열려 있는 영상을 사용한다.")
+        yes_radio, no_radio = _field(SEND_DOSE_SR_YES_ID), _field(SEND_DOSE_SR_NO_ID)
+        if yes_radio is None or no_radio is None:
+            r.add(step, "Send Dose SR Yes/No 라디오 확인", MANUAL,
+                  expected="Yes(%d)/No(%d) 라디오 존재" % (SEND_DOSE_SR_YES_ID, SEND_DOSE_SR_NO_ID),
+                  actual="찾지 못함 — 화면 구조가 실측과 달라졌을 수 있음")
+        else:
+            was_yes = S.checkbox_checked(ui, yes_radio)
+            if was_yes:
+                r.add(step, "Send Dose SR = Yes (체크리스트 Step1)", PASS,
+                      expected="Yes", actual="이미 Yes였음(건드리지 않음)")
+            else:
+                ui.click(yes_radio, settle=0.6)
+                yes2 = _field(SEND_DOSE_SR_YES_ID)
+                now_yes = yes2 is not None and S.checkbox_checked(ui, yes2)
+                ack = S.update(ui, ack_timeout=8) if now_yes else None
+                r.assert_true(step, "Send Dose SR = Yes (체크리스트 Step1)", now_yes,
+                              expected="Yes로 전환 + Update",
+                              actual="전환 확인, 완료 팝업: %s" % (ack or "없음") if now_yes
+                              else "전환 반영 확인 실패")
     step += 1
 
-    log_off = bunny_mod.log_size(cfg)
-    t0 = time.time() - 5
-    W.select_first_image(ui)
-    sent = W.send(ui, scope="all")
-    r.add(step, "DICOM Send 실행 (All Images)",
-          PASS if sent.get("dialog") else FAIL,
-          expected="전송 범위 팝업에서 All Images 선택",
-          actual="팝업 표시=%s / 누른 버튼 id=%s"
-                 % (sent.get("dialog"), sent.get("clicked")),
-          note="All Images를 택하는 이유: 체크리스트 Test Data가 'Image, 스냅샷 영상, "
-               "Dose SR 전송됨'을 기대하므로 검사에 속한 객체 전부를 보내야 한다.")
-    step += 1
+    # Send Dose SR을 이번 실행에서 Yes로 바꿨으면(was_yes == False) 시험이
+    # 끝난 뒤 반드시 원복한다 — 다른 TC/회귀가 이 설정 변경의 영향을 받지
+    # 않게 한다(TC13의 TAB 구분자 원복과 같은 원칙).
+    try:
+        # --- Step 2: 촬영 → 영상 선택 → Send ---------------------------
+        if do_acquire:
+            try:
+                flow = W.open_and_acquire(
+                    ui, cfg,
+                    patient_id=(cfg.get("test_data") or {}).get("mwl_patient_id"),
+                    projection=projection, step=exam_step,
+                    evidence_dir=evidence_dir, map_procedure_name=map_procedure)
+            except Exception as exc:                          # noqa: BLE001
+                r.add(step, "전송할 영상 준비 (MWL 오픈 + Step 등록 + 촬영)",
+                      FAIL, actual=str(exc))
+                return r.finalize()
+            opened = flow["opened"]
+            acq = flow["acquire"] or {"acquired": False, "before": 0, "after": 0,
+                                      "seconds": 0, "state": "", "dialogs": [],
+                                      "note": "Step 등록 실패로 촬영하지 않았다"}
+            r.add(step, "전송할 영상 준비 (MWL 오픈 + Demo 촬영)",
+                  PASS if acq["acquired"] else FAIL,
+                  expected="영상 1장 이상 획득",
+                  actual="영상 %d → %d장 (%.1f초) / 상태=%r / 처리한 팝업=%s"
+                         % (acq["before"], acq["after"], acq["seconds"], acq["state"],
+                            acq["dialogs"] or "없음"),
+                  note="MWL 조회 %s. 촬영 흐름은 TC02와 같은 `core/workflow`를 쓴다."
+                       % opened.get("summary", ""))
+            if not acq["acquired"]:
+                return r.finalize()
+        else:
+            r.add(step, "전송할 영상 준비", SKIP,
+                  note="--no-acquire로 실행되어 이미 열려 있는 영상을 사용한다.")
+        step += 1
 
-    # --- 수신 확인 -----------------------------------------------------
-    res = bunny_mod.wait_for_store(cfg, count=1, timeout=150,
-                                   log_offset=log_off, files_newer_than=t0)
-    r.add(step, "Storage SCP 수신 확인 (C-STORE Status + 파일)",
-          PASS if res["ok"] else FAIL,
-          expected="C-STORE 응답 Status 0000h + 수신 파일 1건 이상",
-          actual=res["note"],
-          note=bunny_mod.precondition_note(cfg))
-    step += 1
+        log_off = bunny_mod.log_size(cfg)
+        t0 = time.time() - 5
+        W.select_first_image(ui)
+        sent = W.send(ui, scope="all")
+        r.add(step, "DICOM Send 실행 (All Images)",
+              PASS if sent.get("dialog") else FAIL,
+              expected="전송 범위 팝업에서 All Images 선택",
+              actual="팝업 표시=%s / 누른 버튼 id=%s"
+                     % (sent.get("dialog"), sent.get("clicked")),
+              note="All Images를 택하는 이유: 체크리스트 Test Data가 'Image, 스냅샷 영상, "
+                   "Dose SR 전송됨'을 기대하므로 검사에 속한 객체 전부를 보내야 한다.")
+        step += 1
 
-    # --- 전송된 객체 종류 판정 (이 TC의 핵심) ---------------------------
-    classes = {}
-    for path in res["files"]:
-        tags = dicomlite.read_tags(path, ["SOPClassUID", "Modality", "PatientID"])
-        classes.setdefault(tags.get("SOPClassUID") or "(판독 실패)", []).append(
-            os.path.basename(path))
-        r.attach(path)
+        # --- 수신 확인 ---------------------------------------------------
+        res = bunny_mod.wait_for_store(cfg, count=1, timeout=150,
+                                       log_offset=log_off, files_newer_than=t0)
+        r.add(step, "Storage SCP 수신 확인 (C-STORE Status + 파일)",
+              PASS if res["ok"] else FAIL,
+              expected="C-STORE 응답 Status 0000h + 수신 파일 1건 이상",
+              actual=res["note"],
+              note=bunny_mod.precondition_note(cfg))
+        step += 1
 
-    has_image = SOP_IMAGE in classes
-    has_dose = SOP_DOSE_SR in classes
-    r.add(step, "전송된 객체에 Image가 포함",
-          PASS if has_image else FAIL,
-          expected="SOP Class %s (Digital X-Ray Image Storage - For Presentation)"
-                   % SOP_IMAGE,
-          actual="; ".join("%s x%d" % (k, len(v)) for k, v in classes.items())
-                 or "수신 객체 없음")
-    step += 1
-
-    r.add(step, "전송된 객체에 Dose SR이 포함",
-          PASS if has_dose else MANUAL,
-          expected="SOP Class %s (X-Ray Radiation Dose SR)" % SOP_DOSE_SR,
-          actual="Dose SR 수신 %s" % ("확인됨" if has_dose else "확인되지 않음"),
-          note=("확인됨." if has_dose else
-                "Dose SR이 수신되지 않았다. **이것만으로 결함이라 단정하지 않는다** — "
-                "전제가 두 가지이고 둘 다 이 실행에서 확정되지 않았다: (1) Setting > "
-                "DICOM - General 의 'Send Dose SR'이 Yes여야 한다(위 Step에서 사람 "
-                "확인 필요로 남겼다), (2) 가상 제너레이터 환경에서 선량 정보가 "
-                "생성되어야 Dose SR 객체가 만들어진다. 두 전제를 확인한 뒤 다시 "
-                "판정할 것. 체크리스트 Test Data의 '스냅샷 영상'은 Live View "
-                "스냅샷이므로 TC12 범위다."))
-    step += 1
-
-    if res["log_excerpt"]:
-        path = os.path.join(evidence_dir, "bunny_log_excerpt.txt")
-        try:
-            import io as _io
-            _io.open(path, "w", encoding="utf-8", newline="\n").write(res["log_excerpt"])
+        # --- 전송된 객체 종류 판정 (이 TC의 핵심) -------------------------
+        classes = {}
+        for path in res["files"]:
+            tags = dicomlite.read_tags(path, ["SOPClassUID", "Modality", "PatientID"])
+            classes.setdefault(tags.get("SOPClassUID") or "(판독 실패)", []).append(
+                os.path.basename(path))
             r.attach(path)
-        except OSError:
-            pass
 
-    r.finalize()
-    return r
+        has_image = SOP_IMAGE in classes
+        has_dose = SOP_DOSE_SR in classes
+        r.add(step, "전송된 객체에 Image가 포함",
+              PASS if has_image else FAIL,
+              expected="SOP Class %s (Digital X-Ray Image Storage - For Presentation)"
+                       % SOP_IMAGE,
+              actual="; ".join("%s x%d" % (k, len(v)) for k, v in classes.items())
+                     or "수신 객체 없음")
+        step += 1
+
+        r.add(step, "전송된 객체에 Dose SR이 포함",
+              PASS if has_dose else (MANUAL if was_yes is not True else FAIL),
+              expected="SOP Class %s (X-Ray Radiation Dose SR)" % SOP_DOSE_SR,
+              actual="Dose SR 수신 %s" % ("확인됨" if has_dose else "확인되지 않음"),
+              note=("확인됨." if has_dose else
+                    ("Send Dose SR = Yes를 위 Step에서 확인·적용했는데도 Dose SR이 "
+                     "수신되지 않았다 — 결함 가능성이 있다." if was_yes is True else
+                     "Dose SR이 수신되지 않았다. Send Dose SR 라디오를 못 찾아 Yes 전환을 "
+                     "확인하지 못했으므로(위 Step MANUAL) 이 결과만으로 결함이라 단정하지 "
+                     "않는다. 체크리스트 Test Data의 '스냅샷 영상'은 Live View 스냅샷이므로 "
+                     "TC12 범위다.")))
+        step += 1
+
+        if res["log_excerpt"]:
+            path = os.path.join(evidence_dir, "bunny_log_excerpt.txt")
+            try:
+                import io as _io
+                _io.open(path, "w", encoding="utf-8", newline="\n").write(res["log_excerpt"])
+                r.attach(path)
+            except OSError:
+                pass
+    finally:
+        if was_yes is False:
+            no_radio = _field(SEND_DOSE_SR_NO_ID)
+            revert_ok = False
+            if no_radio is not None:
+                ui.click(no_radio, settle=0.6)
+                no2 = _field(SEND_DOSE_SR_NO_ID)
+                revert_ok = no2 is not None and S.checkbox_checked(ui, no2)
+                if revert_ok:
+                    S.update(ui, ack_timeout=8)
+            r.assert_true(step, "Send Dose SR 원복(No)", revert_ok,
+                          expected="테스트 종료 후 원래 값(No)으로 복원",
+                          actual="복원 완료" if revert_ok else
+                          "복원 실패 — 사람이 Setting > DICOM - General에서 직접 확인할 것")
+
+    return r.finalize()

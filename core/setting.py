@@ -727,11 +727,192 @@ def scroll_down(ui, notches=-4, settle=0.18):
     return True
 
 
-def _file_dialog_submit(ui, path, timeout=20):
+# --- 표준 '폴더 찾아보기'(SHBrowseForFolder) 대화상자 --------------------
+# `core/workflow.set_import_location()`(Import Study 전용)와 같은 원리를
+# 화면 무관하게 재사용할 수 있게 뽑았다 — 트리를 OCR로 읽으면 한글·잘린
+# 라벨에서 틀린 사고가 실측됐다(`core/shelltree.py` 참고). 표준 컨트롤이므로
+# `TVM_*` 메시지로 정확히 읽고 선택한다.
+BROWSE_FOLDER_DIALOG_TITLE = "폴더 찾아보기"
+BROWSE_FOLDER_OK_ID = 1
+BROWSE_FOLDER_CANCEL_ID = 2
+BROWSE_FOLDER_TREE_CLASS = "SysTreeView32"
+
+
+def _browse_find_drive_node(tree, letter, shallow_timeout=2.0):
+    """드라이브 문자로 노드를 찾는다(바로 아래 또는 'This PC' 한 단계 아래)."""
+    tag = "(%s:)" % letter.rstrip(":").upper()
+    root = tree.root()
+    tree.expand_and_wait(root)
+    hit, label = tree.find_child(root, lambda s: s.upper().endswith(tag))
+    if hit:
+        return hit, [label]
+    for hitem, label in tree.children(root):
+        if not tree.expand_and_wait(hitem, timeout=shallow_timeout):
+            continue
+        sub, sublabel = tree.find_child(hitem, lambda s: s.upper().endswith(tag))
+        if sub:
+            return sub, [label, sublabel]
+    return None, []
+
+
+def browse_to_folder(ui, dest, timeout=20):
+    """이미 떠 있는 표준 '폴더 찾아보기' 창에서 `dest` 폴더를 선택하고 확인한다.
+
+    호출부가 먼저 Browse 버튼을 눌러 이 창을 띄운 뒤 부른다. `dest`의 각
+    경로 구성요소를 정확한 텍스트로 대조하며 내려가고(`core.shelltree.ShellTree`),
+    없는 폴더는 새로 만들지 않고 실패로 보고한다.
+
+    반환: {"ok", "trail", "note"}
+    """
+    import os
+    from .shelltree import ShellTree
+    from .ui import children, top_windows
+
+    end = time.time() + timeout
+    browse = None
+    while time.time() < end:
+        browse = next((w for w in top_windows(ui.pid)
+                       if (w.text or "").strip() == BROWSE_FOLDER_DIALOG_TITLE), None)
+        if browse is not None:
+            break
+        time.sleep(0.4)
+    if browse is None:
+        return {"ok": False, "trail": [],
+                "note": "'%s' 창이 %d초 안에 뜨지 않았다." % (BROWSE_FOLDER_DIALOG_TITLE, timeout)}
+
+    def _cancel():
+        hit = [c for c in children(browse.hwnd, 4)
+               if c.ctrl_id == BROWSE_FOLDER_CANCEL_ID and c.visible]
+        if hit:
+            ui.click(hit[0], settle=0.8)
+
+    tree_ctrl = next((c for c in children(browse.hwnd, 6)
+                      if c.cls == BROWSE_FOLDER_TREE_CLASS and c.visible), None)
+    if tree_ctrl is None:
+        _cancel()
+        return {"ok": False, "trail": [], "note": "폴더 트리를 찾지 못했다."}
+
+    drive, tail = os.path.splitdrive(os.path.normpath(dest))
+    parts = [p for p in tail.split(os.sep) if p]
+    with ShellTree(tree_ctrl.hwnd) as tree:
+        node, trail = _browse_find_drive_node(tree, drive or dest[:2])
+        if node is None:
+            _cancel()
+            return {"ok": False, "trail": trail, "note": "드라이브 %s 노드를 찾지 못했다." % drive}
+        for part in parts:
+            want_label = part.strip().casefold()
+            if not tree.expand_and_wait(node):
+                _cancel()
+                return {"ok": False, "trail": trail,
+                        "note": "'%s'를 펼치지 못했다(지나온 경로 %s)." % (part, trail)}
+            found, label = tree.find_child(
+                node, lambda s, w=want_label: s.strip().casefold() == w)
+            if found is None:
+                _cancel()
+                return {"ok": False, "trail": trail,
+                        "note": ("트리에서 '%s' 폴더를 찾지 못했다(지나온 경로 %s). "
+                                 "없는 폴더를 새로 만들지 않는다." % (part, trail))}
+            trail.append(label)
+            node = found
+        tree.select(node)
+
+    ok_btn = next((c for c in children(browse.hwnd, 4)
+                   if c.ctrl_id == BROWSE_FOLDER_OK_ID and c.visible), None)
+    if ok_btn is None:
+        _cancel()
+        return {"ok": False, "trail": trail, "note": "확인 버튼을 찾지 못했다."}
+    ui.click(ok_btn, settle=1.5)
+    return {"ok": True, "trail": trail, "note": "트리 경로 %s 선택 후 확인." % trail}
+
+
+# --- 표준 Windows 공용 대화상자의 "파일 형식" 콤보 -----------------------
+# 이 콤보(ctrl_id=1136)는 VXvue 컨트롤이 아니라 **Windows 레거시 공용
+# 저장/열기 대화상자 자체의 표준 컨트롤 ID**다(comdlg32 OFN 템플릿의
+# cmb1 — VXvue 화면이 아니므로 이 값을 실측이 필요한 "회사 자산"으로 보지
+# 않는다). 표준 컨트롤이므로 CLAUDE.md 3절 원칙대로 owner-draw 추정이나
+# OCR 대신 Win32 메시지로 다룬다.
+#
+# 실측(2026-08-21): `CB_GETLBTEXT`는 Windows가 **자동으로 프로세스 간
+# 마샬링해 주는** 메시지 목록에 있다(`WM_GETTEXT`와 같은 부류) — 다른
+# 표준 컨트롤(SysHeader32/SysTreeView32)에 쓰던 `core/winmsg.RemoteMem`
+# (VirtualAllocEx로 대상 프로세스에 버퍼를 만드는 방식) 없이도, **이
+# 프로세스의 로컬 버퍼 주소를 그대로 lParam으로 넘기는 것만으로** 다른
+# 프로세스(VXvue.exe)의 콤보 항목을 읽을 수 있었다(RemoteMem 방식은 이
+# 메시지에서 오히려 CB_ERR을 반환했다 — 대상이 이미 자동 마샬링되는
+# 메시지라 직접 그 프로세스 주소공간에 버퍼를 만들면 어긋난다).
+FILE_TYPE_COMBO_ID = 1136
+
+CB_GETCOUNT = 0x0146
+CB_GETCURSEL = 0x0147
+CB_GETLBTEXT = 0x0148
+CB_GETLBTEXTLEN = 0x0149
+CB_SETCURSEL = 0x014E
+
+
+def _file_type_combo(dlg_hwnd):
+    from .ui import children
+    return next((c for c in children(dlg_hwnd, 4)
+                if c.ctrl_id == FILE_TYPE_COMBO_ID and c.cls == "ComboBox"), None)
+
+
+def file_type_options(dlg_hwnd):
+    """저장/열기 대화상자의 '파일 형식' 콤보 항목 전체를 읽는다.
+
+    반환: [(index, text), ...]. 콤보가 없으면 빈 리스트.
+    """
+    import ctypes
+    from . import winmsg as WM
+
+    combo = _file_type_combo(dlg_hwnd)
+    if combo is None:
+        return []
+    n = WM.send(combo.hwnd, CB_GETCOUNT) or 0
+    out = []
+    for i in range(n):
+        ln = WM.send(combo.hwnd, CB_GETLBTEXTLEN, i) or 0
+        buf = ctypes.create_unicode_buffer(ln + 2)
+        WM.send(combo.hwnd, CB_GETLBTEXT, i, ctypes.addressof(buf))
+        out.append((i, buf.value))
+    return out
+
+
+def select_file_type(dlg_hwnd, contains):
+    """'파일 형식' 콤보에서 `contains`(대소문자 무시)를 포함하는 항목을 고른다.
+
+    사양서4(260820) p.60 VP-688 — Save Sample이 만드는 파일의 구분자는
+    화면의 Data Delimiter 콤보가 아니라 **이 대화상자에서 고르는 파일
+    형식**(9종: CSV UTF-8/comma/SHIFT-JIS, Unicode-tab/Text-tab/
+    Text-tab-SHIFT-JIS, Unicode-comma/Text-comma/Text-comma-SHIFT-JIS)
+    으로 결정된다. TAB 구분자로 예시를 받으려면 이 함수로 명시적으로
+    선택해야 한다.
+
+    반환: (성공 여부, 선택된 문구 또는 실패 사유)
+    """
+    from . import winmsg as WM
+
+    combo = _file_type_combo(dlg_hwnd)
+    if combo is None:
+        return False, "파일 형식 콤보(%d)를 찾지 못함" % FILE_TYPE_COMBO_ID
+    options = file_type_options(dlg_hwnd)
+    match = next((i for i, text in options if contains.lower() in text.lower()), None)
+    if match is None:
+        return False, "'%s'를 포함하는 항목 없음(전체: %s)" % (contains, [t for _, t in options])
+    WM.send(combo.hwnd, CB_SETCURSEL, match)
+    cur = WM.send(combo.hwnd, CB_GETCURSEL) or 0
+    if cur != match:
+        return False, "선택 반영 확인 실패(기대 인덱스 %d, 실제 %s)" % (match, cur)
+    return True, options[match][1]
+
+
+def _file_dialog_submit(ui, path, timeout=20, file_type_contains=None):
     """표준 '열기'/'다른 이름으로 저장' 대화상자에 경로를 넣고 확정한다.
 
     파일명 Edit은 컨트롤 ID 1148, 확정 버튼은 ID 1이다(실측). 경로를 직접
     타이핑하므로 폴더 탐색이 필요 없다.
+
+    `file_type_contains`를 주면 파일명을 넣기 전에 '파일 형식' 콤보에서
+    그 문구를 포함하는 항목을 먼저 선택한다(예: "tab delimited") — Save
+    Sample처럼 형식 선택이 산출물 구조를 바꾸는 대화상자에 쓴다.
     """
     import os
     from .ui import children
@@ -739,6 +920,11 @@ def _file_dialog_submit(ui, path, timeout=20):
     dlg = ui.wait_dialog(timeout=timeout)
     if dlg is None:
         return False, "파일 대화상자가 나타나지 않았습니다."
+
+    if file_type_contains:
+        ok_type, note_type = select_file_type(dlg.hwnd, file_type_contains)
+        if not ok_type:
+            return False, "파일 형식 선택 실패: %s" % note_type
 
     # 대화상자 창은 나타났지만 자식 컨트롤(파일명 Edit 등)이 아직 다 그려지지
     # 않은 채로 조회되는 경우가 실측됐다(2026-08-19, TC13 Import Patient에서

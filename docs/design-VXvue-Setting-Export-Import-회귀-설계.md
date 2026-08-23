@@ -80,7 +80,7 @@ diff가 그대로 리포트가 된다.
 | `C:\ProgramData\VXvue\Viewer.xml` 해시 | SHA-256 (1.3절 검증용, 별도 분류) |
 | export `.vxs` 내부 엔트리별 CRC (Data.bak 제외) | `zipfile.infolist()` |
 
-UI 캡처는 **증적**으로만 남긴다(사람 검토용). 판정 근거로 삼지 않는다.
+UI 캡처는 **증거**로만 남긴다(사람 검토용). 판정 근거로 삼지 않는다.
 
 ## 3. 개선한 시나리오 — 3단 비교
 

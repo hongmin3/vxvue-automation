@@ -22,6 +22,9 @@
   python run.py tc05                TC05 DICOM 전송(Image + Dose SR 수신 객체 판정)
   python run.py tc07                TC07 DICOM Print(수신 필름 목록으로 판정)
   python run.py tc08                TC08 Study Export(E 드라이브 기준, #21049 회귀)
+  python run.py tc11                TC11 AI 분석(CAD, AI Tool 창 확인까지 — 결과물 생성은 SKIP)
+  python run.py tc12                TC12 카메라/Live View(오버레이 창·데모 영상 표시 확인)
+  python run.py tc13                TC13 Study List Import(txt/csv, --skip-folder-watch로 축소 가능)
   python run.py report-sample       현재 환경 헤더만 넣은 빈 리포트 생성(형식 확인용)
   python run.py run-regression      체크리스트 전체 회귀. 구현된 TC는 실제로 실행하고,
                                      나머지는 automation_scope.json 수준을 리포트에
@@ -382,10 +385,26 @@ def cmd_tc08(cfg, args):
                           purge_export=not args.keep_export)
 
 
+def cmd_tc11(cfg, args):
+    """TC11 AI 분석(CAD) — AI Tool 클릭 -> AI Medical findings tool 창 확인(결과물 생성은 SKIP)."""
+    return _run_tc_module(cfg, args, "tests.tc11_ai_analysis",
+                          do_acquire=not args.no_acquire,
+                          map_procedure=args.map_procedure,
+                          projection=args.projection, exam_step=args.step)
+
+
+def cmd_tc12(cfg, args):
+    """TC12 카메라/Live View — Live View 클릭 -> 오버레이 창·데모 영상 표시 확인."""
+    return _run_tc_module(cfg, args, "tests.tc12_camera_live_view",
+                          do_acquire=not args.no_acquire,
+                          map_procedure=args.map_procedure,
+                          projection=args.projection, exam_step=args.step)
+
+
 def cmd_tc13(cfg, args):
     from tests import tc13_import_patient as tc13
     ui = _ready_ui(cfg)
-    result = tc13.run(ui, cfg, with_folder_watch=getattr(args, "with_folder_watch", False))
+    result = tc13.run(ui, cfg, with_folder_watch=not getattr(args, "skip_folder_watch", False))
     env = result_mod.collect_env(cfg) if not args.no_env else None
     paths = result_mod.write_reports([result], os.path.join(HERE, "Reports"), env=env)
     print("\n판정: %s" % result.verdict)
@@ -556,6 +575,8 @@ COMMANDS = {
     "tc08": cmd_tc08,
     "xipl-license": cmd_xipl_license,
     "vxvue-license": cmd_vxvue_license,
+    "tc11": cmd_tc11,
+    "tc12": cmd_tc12,
     "tc13": cmd_tc13,
     "tc14": cmd_tc14,
     "snapshot": cmd_snapshot,
@@ -646,11 +667,11 @@ def main(argv=None):
     p.add_argument("--only",
                    help="run-regression에서 특정 TC만 실행한다(쉼표 구분, 디버깅용). "
                         "예: --only TC_WindowsUpdate_14")
-    p.add_argument("--with-folder-watch", action="store_true",
-                   help="tc13에서 'Import Patient Information From a Specific Folder' "
-                        "기능(Import Patient Order와 상호 배타)까지 켜서 확인한다. "
-                        "아직 라이브 미검증 경로라 기본은 끔(경고: 이 옵션 없이도 "
-                        "관련 컨트롤 존재 여부는 보고된다).")
+    p.add_argument("--skip-folder-watch", action="store_true",
+                   help="tc13의 'Import Patient Information From a Specific Folder' "
+                        "실행 검증(Yes 전환 -> 폴더 감지 -> No 원복)을 건너뛴다. "
+                        "2026-08-21 라이브 검증 완료로 기본은 수행함(PASS/FAIL) — "
+                        "라디오 존재만 확인하고 싶을 때만 이 옵션을 준다.")
     args = p.parse_args(argv)
 
     cfg = load_config(args.config)

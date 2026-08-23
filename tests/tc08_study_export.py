@@ -60,7 +60,7 @@ export/import를 보는 테스트라서."** → `_pick_drive()`가 `dest`의 드
 
 "export 된 영상 오픈하여 확인"이라는 Expected Result를 **뷰어로 열어 보는 대신
 파일 태그를 직접 읽어** 확인한다 — 사람이 눈으로 보는 것보다 대조 항목이 명확하고
-증적으로 남는다.
+증거로 남는다.
 
 ## VXvue의 Import는 DICOM이 아니라 IMG만 받는다 (문서 근거, 사용자 지적 2026-08-21)
 
@@ -570,7 +570,7 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
           note=("Export Manager는 별도 최상위 프로세스다(실측: %s). "
                 % exe)
                + ("**에러 팝업이 떴다 — 알려진 결함 %s의 재발 가능성이 있다.** "
-                  "팝업 문구를 증적으로 남겼으니 원본 이슈와 대조할 것."
+                  "팝업 문구를 증거로 남겼으니 원본 이슈와 대조할 것."
                   % KNOWN_DEFECT if defect_hit else
                   "체크리스트 Comment의 알려진 결함 %s는 이번 실행에서 에러 팝업으로 "
                   "재현되지 않았다." % KNOWN_DEFECT))
@@ -651,7 +651,7 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
                                 if not k.startswith("_")),
               note="Expected Result의 'export 된 영상 오픈하여 확인'을 뷰어로 여는 "
                    "대신 파일 태그를 직접 읽어 확인한다 — 대조 항목이 명확하고 "
-                   "증적으로 남는다.")
+                   "증거로 남는다.")
         r.attach(dicoms[0])
         step += 1
 

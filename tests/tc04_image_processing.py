@@ -236,7 +236,7 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
               expected="팔레트의 Proc. 버튼",
               actual="팔레트에서 Proc.을 찾지 못했다(읽어낸 툴: %s)"
                      % (", ".join(sorted(palette)) or "없음"),
-              note="이 환경에 노출되지 않았거나 라벨 판독에 실패했다. 증적 캡처"
+              note="이 환경에 노출되지 않았거나 라벨 판독에 실패했다. 증거 캡처"
                    "(Evidence/tc04)를 확인할 것.")
         step += 1
     else:
@@ -278,7 +278,7 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
               expected="팔레트의 XIPL 버튼",
               actual="재판독한 팔레트에서도 XIPL을 찾지 못했다(읽어낸 툴: %s)"
                      % (", ".join(sorted(palette)) or "없음"),
-              note="이 환경에 노출되지 않았거나 라벨 판독에 실패했다. 증적 캡처"
+              note="이 환경에 노출되지 않았거나 라벨 판독에 실패했다. 증거 캡처"
                    "(Evidence/tc04)를 확인할 것.")
         step += 1
     else:

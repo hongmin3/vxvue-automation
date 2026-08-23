@@ -80,6 +80,8 @@ IMPLEMENTED = {
     "TC_WindowsUpdate_05": ("tests.tc05_dicom_send", {}),
     "TC_WindowsUpdate_07": ("tests.tc07_dicom_print", {}),
     "TC_WindowsUpdate_08": ("tests.tc08_study_export", {}),
+    "TC_WindowsUpdate_11": ("tests.tc11_ai_analysis", {}),
+    "TC_WindowsUpdate_12": ("tests.tc12_camera_live_view", {}),
     "TC_WindowsUpdate_13": ("tests.tc13_import_patient", {}),
     "TC_WindowsUpdate_14": ("tests.tc14_setting_display", {}),
 }
@@ -425,6 +427,8 @@ QUICK_KWARGS = {
     "TC_WindowsUpdate_05": {"do_acquire": False},
     "TC_WindowsUpdate_07": {"do_acquire": False},
     "TC_WindowsUpdate_08": {"do_acquire": False},
+    "TC_WindowsUpdate_11": {"do_acquire": False},
+    "TC_WindowsUpdate_12": {"do_acquire": False},
     "TC_WindowsUpdate_14": {"sample": True},
 }
 

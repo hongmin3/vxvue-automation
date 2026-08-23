@@ -161,8 +161,15 @@ def _tesseract(cfg):
     return pytesseract
 
 
-def _ocr_line(pytesseract, bbox, scale=3):
-    """한 줄 영역을 확대해 OCR한다(작은 글씨의 인식률을 올리기 위해)."""
+def _ocr_line(pytesseract, bbox, scale=3, ui=None):
+    """한 줄 영역을 확대해 OCR한다(작은 글씨의 인식률을 올리기 위해).
+
+    `ui`가 있으면 캡처 직전 `ensure_foreground()`를 다시 불러 다른 창(터미널
+    등)이 그 자리를 덮은 상태로 캡처되는 것을 막는다(실측 2026-08-21 —
+    `core/screen.looks_contaminated()` 참고).
+    """
+    if ui is not None:
+        ui.ensure_foreground()
     from PIL import ImageGrab
     img = ImageGrab.grab(bbox=bbox, all_screens=True)
     if scale > 1:
@@ -232,7 +239,7 @@ def read_screen(ui, cfg, evidence_dir=None):
         from .ui import children
         for kid in children(lc.hwnd, 2):
             if kid.cls == "SysHeader32":
-                info["header"] = _ocr_line(tess, kid.rect)
+                info["header"] = _ocr_line(tess, kid.rect, ui=ui)
                 break
 
     # 행 순회. 사양서1 p.7이 옵션 최대 16개를 허용하므로 스크롤이 필요할 수
@@ -240,7 +247,7 @@ def read_screen(ui, cfg, evidence_dir=None):
     seen = []
 
     def on_row(_page, _index, row_ctrl):
-        raw = _ocr_line(tess, row_ctrl.rect) if tess is not None else ""
+        raw = _ocr_line(tess, row_ctrl.rect, ui=ui) if tess is not None else ""
         seen.append(_parse_row(len(seen) + 1, raw, row_ctrl.rect))
 
     setting.iter_list_rows(ui, lc, on_row)
@@ -251,6 +258,9 @@ def read_screen(ui, cfg, evidence_dir=None):
 
 def _parse_row(index, raw, rect):
     """행 OCR 원문에서 키/종류/만료일을 뽑는다."""
+    from . import screen as screen_mod
+
+    contaminated = screen_mod.looks_contaminated(raw)
     flat = raw.upper().replace(" ", "")
     keys = KEY_RX.findall(flat)
     kind = None
@@ -265,6 +275,10 @@ def _parse_row(index, raw, rect):
     return {"index": index, "raw": raw, "rect": rect,
             "key": keys[0] if keys else "",
             "kind": kind, "expiry": expiry,
+            # 실측(2026-08-21): 다른 창이 이 행 자리를 덮은 캡처에서 나온
+            # OCR 결과로 보이면 종류 판별 실패를 FAIL 근거로 쓰지 않는다
+            # (core/screen.looks_contaminated()).
+            "contaminated": contaminated,
             # Information 열이 목록 폭보다 길면 제품이 "..."로 줄여 그린다
             # (실측: "Demo License 2100-08-18(Shima...").
             "truncated": "..." in raw or "…" in raw}
@@ -367,6 +381,7 @@ def check(ui, cfg, result, first_step=1, evidence_dir=None):
     found_kinds = [r["kind"] for r in info["rows"] if r["kind"]]
     missing = [k for k in required if k not in found_kinds]
     unknown = [r["index"] for r in info["rows"] if not r["kind"]]
+    contaminated_rows = [r["index"] for r in info["rows"] if r.get("contaminated")]
     detail = "; ".join(
         "행%d %s%s" % (r["index"], r["kind"] or "(종류 판별 실패)",
                        " 만료 %s" % r["expiry"] if r["expiry"] else "")
@@ -375,6 +390,17 @@ def check(ui, cfg, result, first_step=1, evidence_dir=None):
         result.add(step, "필요 라이선스 종류 표시", result_mod.MANUAL,
                    expected=", ".join(KIND_LABELS.get(k, k) for k in required),
                    note="OCR 불가로 Information 열을 읽지 못했다.")
+    elif contaminated_rows and missing:
+        # 실측(2026-08-21): 캡처 영역에 다른 창(터미널 등)이 겹쳐 OCR이 그
+        # 창의 내용을 읽은 사례가 있었다 — 그 경우 종류 판별 실패를 제품
+        # 결함으로 단정하지 않는다(core/screen.looks_contaminated()).
+        result.add(step, "필요 라이선스 종류 표시 (%s)" % ", ".join(required),
+                   result_mod.MANUAL,
+                   expected=" / ".join(KIND_LABELS.get(k, k) for k in required),
+                   actual=detail,
+                   note="행 %s의 캡처가 다른 창(터미널 등)에 오염된 것으로 "
+                        "보여 판별 실패를 FAIL로 단정하지 않는다 — 재실행해서 "
+                        "재확인할 것(누락 판정: %s)." % (contaminated_rows, ", ".join(missing)))
     else:
         result.add(step, "필요 라이선스 종류 표시 (%s)" % ", ".join(required),
                    result_mod.PASS if not missing else result_mod.FAIL,

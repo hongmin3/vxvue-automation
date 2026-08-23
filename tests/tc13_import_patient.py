@@ -51,6 +51,17 @@ IMPORT_PATIENT_IDS = {
     "save_sample_button": 30629,
     "preview_grid": 31178,
 }
+# Column Mapping 영역(실측 2026-08-21). Service Manual 4.6.7절 "입력 데이터의
+# 형태와 동일하게 Column mapping 항목을 선택하고, Move Down/Move Up 버튼으로
+# 순서를 정렬하십시오" — 이 리스트가 그 항목이다. 각 행은 owner-draw라
+# 라벨은 OCR로, 체크 상태는 `core.setting.checkbox_checked()`로 읽는다.
+# 사양서4(260820) p.60 VP-688 Column Mapping 표: Patient ID/Patient Name만
+# "필수(체크 해제 불가)" — 나머지는 전부 선택 해제 가능하다.
+COLUMN_MAPPING_LIST_ID = 31114
+COLUMN_MAPPING_MOVE_UP_ID = 30554
+COLUMN_MAPPING_MOVE_DOWN_ID = 30555
+COLUMN_MAPPING_ADD_BLANK_ID = 30627
+COLUMN_MAPPING_DELETE_BLANK_ID = 30628
 RESERVED_IMPORT_BUTTON_ID = 30392
 RESERVED_TAB_ID = 31203        # Registration 상단 탭: Scheduled/Unscheduled/Reserved
 MAIN_NAV_TAB_CONTAINER = 31197
@@ -109,8 +120,14 @@ def field(ui, cid):
     return found[0] if found else None
 
 
-def _read_sample(ui, work_dir):
+def _read_sample(ui, work_dir, sample_name="PatientListSample.csv",
+                 file_type_contains=None):
     """Save Sample 버튼을 눌러 현재 설정 그대로의 예시 파일을 받는다.
+
+    `file_type_contains`를 주면 Save-As 대화상자의 '파일 형식' 콤보에서 그
+    문구를 포함하는 항목을 명시적으로 선택한다 — 사양서4 p.60 VP-688 근거:
+    이 파일의 구분자는 화면의 Data Delimiter 콤보가 아니라 **이 선택**으로
+    결정된다(`core.setting.select_file_type`).
 
     반환: (파일 경로, delimiter, header 컬럼 리스트, 예시 데이터 행)
     """
@@ -120,8 +137,8 @@ def _read_sample(ui, work_dir):
         return None, "Save Sample 버튼(%d)을 찾지 못함" % ids["save_sample_button"]
 
     ui.click(btn, settle=1.0)
-    sample_path = os.path.join(work_dir, "PatientListSample.csv")
-    ok, note = S._file_dialog_submit(ui, sample_path)
+    sample_path = os.path.join(work_dir, sample_name)
+    ok, note = S._file_dialog_submit(ui, sample_path, file_type_contains=file_type_contains)
     if not ok or not os.path.exists(sample_path):
         return None, "Save Sample 파일 생성 실패: %s" % note
 
@@ -260,7 +277,7 @@ def _verify_in_reserved_list(ui, r, work_dir):
                   expected="목록에 '%s'(Study Description) 표시" % TEST_VALUES["Study Description"],
                   actual=("표시됨(Result=%s, 행 %d개)" % (count_text, len(best_rows))
                           if found else
-                          "OCR에서 찾지 못함(Result=%s, 행 %d개, 증적: %s)"
+                          "OCR에서 찾지 못함(Result=%s, 행 %d개, 증거: %s)"
                           % (count_text, len(best_rows), img_path)),
                   note="목록 행은 owner-draw 단일 윈도우라 표준 API로 셀 텍스트를 읽을 수 "
                        "없어 캡처+OCR로 확인한다(pytesseract).")
@@ -315,28 +332,32 @@ def _tab_delimiter_regression(ui, r, work_dir):
     r.add(6, "Data Delimiter -> TAB 변경", "PASS",
           "TAB으로 변경, Update 완료", "완료 팝업: %s" % (ack or "(없음)"))
 
-    sample, err = _read_sample(ui, work_dir)
-    if sample is None or sample["delimiter"] != "\t":
-        # 실측(2026-08-19): 콤보 UI 값과 DB(CONFIGURATION_IMPORT_PATIENT_OPTION
-        # Type=716)는 TAB(값 '6')으로 정상 반영됐음을 별도로 확인했다 — 즉
-        # 설정 변경 자체는 실제로 적용된다. 그런데도 이 화면에서 곧바로 다시
-        # 누른 Save Sample은 구분자를 COMMA로 생성했다 — Save Sample이 "지금
-        # 화면에 로드된" 값이 아니라 화면 진입 시점에 캐시된 값을 쓰거나,
-        # Save Sample 자체가 Data Delimiter와 무관하게 항상 COMMA로 예시를
-        # 만드는 것일 수 있다(둘 중 어느 쪽인지 이번 세션에서 확정하지 못함).
-        # FAIL이 아니라 MANUAL로 남긴다 — 자동화가 잘못됐다는 뜻이 아니라
-        # "Save Sample과 Data Delimiter의 관계를 사람이 한 번 더 확인해야
-        # 한다"는 뜻이다.
-        r.add(6, "TAB 구분자 반영 확인(Save Sample 재확보)", "MANUAL",
-              expected="Save Sample 결과 구분자=TAB",
-              actual=err or ("구분자=%r" % (sample or {}).get("delimiter")),
-              note="DB(CONFIGURATION_IMPORT_PATIENT_OPTION Type=716)는 TAB로 정상 반영됨을 "
-                   "별도 확인함 — Save Sample이 화면 재진입 없이는 최신값을 못 읽는 것인지, "
-                   "Data Delimiter와 무관하게 항상 COMMA로 예시를 만드는지 확인 필요")
-    else:
-        r.add(6, "TAB 구분자 반영 확인(Save Sample 재확보)", "PASS",
-              "구분자=TAB", "컬럼 %d개" % len(sample["header"]))
-
+    # 사양서4(260820) p.60 VP-688 근거(2026-08-21 문서 조사): Save Sample이
+    # 만드는 파일의 구분자는 화면의 Data Delimiter 콤보가 아니라 **Save-As
+    # 대화상자에서 고르는 파일 형식**(9종 중 tab 계열)으로 결정된다고 문서에
+    # 적혀 있다. 이를 실제로 자동화해 검증을 시도했으나(같은 날 라이브 실측)
+    # **세 가지 방법 모두 실패**했다 — ① `CB_SETCURSEL` + `CB_GETCURSEL`로
+    # 확인(콤보 표시값은 바뀜), ② 그 뒤 `WM_COMMAND`/`CBN_SELCHANGE` 통지를
+    # 수동으로 보냄, ③ 콤보를 실제로 열고 화면 좌표를 계산해 항목을 마우스로
+    # 클릭. 세 방법 모두 대화상자에 표시되는 값은 원하는 형식으로 보였지만
+    # **실제 저장된 파일은 항상 COMMA였다**(바이트 단위로 확인:
+    # `Patient ID,Patient Name,...`). 이 화면의 Data Delimiter 콤보를 TAB으로
+    # 바꾸고 Update 후 화면을 재진입해도(최신값 재로딩 확인됨) 결과는 같았다.
+    # 즉 **자동화 조작의 한계인지, 문서(VP-688)와 실제 동작이 어긋난 결함인지
+    # 이번 세션에서 확정하지 못했다** — 추측으로 결함이라 단정하지 않고
+    # MANUAL로 남긴다(`core.setting.select_file_type`/`file_type_options`는
+    # 콤보 항목을 정확히 열거·선택하는 재사용 가능한 유틸로 남겨 둔다).
+    sample, err = _read_sample(ui, work_dir, sample_name="PatientListSample_TAB.txt",
+                               file_type_contains="tab delimited")
+    r.add(6, "TAB 구분자 반영 확인(Save-As 형식 선택)", "MANUAL",
+          expected="Save-As 대화상자에서 'Text(tab delimited)' 형식을 선택하면 "
+                   "Save Sample 결과 구분자=TAB (사양서4 p.60 VP-688)",
+          actual=(err if sample is None else "구분자=%r(형식 선택은 반영됐으나 실제 파일은 "
+                                             "여전히 이 값)" % sample["delimiter"]),
+          note="위 docstring 참고 — SendMessage(CB_SETCURSEL)/WM_COMMAND 통지/실제 마우스"
+               "클릭 세 방법 모두 화면 표시는 바뀌었지만 저장 파일의 구분자는 바뀌지 않았다. "
+               "사양과 실제 동작의 불일치 가능성이 있어 사람 확인이 필요하다.")
+    if sample is not None and sample["delimiter"] == "\t":
         header, example = sample["header"], sample["example"]
         row = [TEST_VALUES_TAB.get(col.strip(), example[i] if i < len(example) else "")
                for i, col in enumerate(header)]
@@ -384,83 +405,435 @@ def _tab_delimiter_regression(ui, r, work_dir):
 
 FOLDER_WATCH_LABEL_HINTS = ("Specific Folder", "Target Directory")
 
+# 실측(2026-08-21): "Use Import Patient Information From a Specific Folder"는
+# 체크박스가 아니라 **Yes/No 라디오**다(이전 세션에 라벨 근처 CheckBox를 찾다
+# 실패해 MANUAL로 남겼던 원인). Target Directory는 표시 전용 Edit이라 표준
+# '폴더 찾아보기' 트리(`core.setting.browse_to_folder`)로만 정할 수 있다.
+FOLDER_WATCH_YES_ID = 31366
+FOLDER_WATCH_NO_ID = 31367
+TARGET_DIRECTORY_EDIT_ID = 30082
+TARGET_DIRECTORY_BROWSE_ID = 30653
 
-def _folder_watch_step(ui, r, work_dir, with_folder_watch):
+# 실측(2026-08-21): 이 기능을 Yes로 켜면 Registration > Reserved의 수동
+# Import 버튼(RESERVED_IMPORT_BUTTON_ID=30392)이 사라지고, 그 자리에
+# **Auto Patient Import 버튼**과 **Patient Import Status**(성공/실패/전체
+# 건수 문구)가 나타난다 — 사양서1(260820) p.87~88 VP-474와 정확히 일치.
+RESERVED_AUTO_IMPORT_BUTTON_ID = 30671
+RESERVED_PATIENT_IMPORT_STATUS_ID = 30021
+
+
+def _goto_registration_reserved(ui):
+    """메인 네비 Registration -> Reserved 탭. 성공하면 True."""
+    from core.ui import children
+    tabs = [c for c in ui.controls(max_depth=8) if c.ctrl_id == MAIN_NAV_TAB_CONTAINER]
+    if not tabs:
+        return False, "메인 네비 Tab을 찾지 못함"
+    nav_items = [c for c in children(tabs[0].hwnd, 2) if c.text.strip() == "TabItem"]
+    reg_tab = next((c for c in nav_items if c.ctrl_id == MAIN_NAV_REGISTRATION), None)
+    if reg_tab is None:
+        return False, "Registration TabItem을 찾지 못함"
+    ui.click(reg_tab, settle=1.2)
+    reserved_tabs = [c for c in ui.controls(max_depth=8) if c.ctrl_id == RESERVED_TAB_ID]
+    if not reserved_tabs:
+        return False, "Reserved 탭을 찾지 못함"
+    ui.click(reserved_tabs[0], settle=1.2)
+    time.sleep(0.4)
+    return True, ""
+
+
+def _folder_watch_step(ui, r, cfg, work_dir, with_folder_watch=True):
     """Import Patient Information From a Specific Folder 경로(폴더 자동 감지).
 
-    Service Manual 4.6.7절(p.96) 원문: "본 기능 설정 시 Registration > Reserved
-    > Import Patient Order 기능을 사용할 수 없습니다" — 즉 이 기능과 지금까지
-    구현한 수동 Import(Step1~6)는 **상호 배타**다. 이 화면의 체크박스/버튼
-    구조는 이번 세션까지 실측한 적이 없다 — 컨트롤 좌표를 추정해 클릭하지
-    않는다(CLAUDE.md 3절). 라벨이 확인되면 그 존재만 보고하고,
-    `with_folder_watch=True`일 때만(별도 명시적 실행) 조심스럽게 켜고 곧바로
-    되돌린다. 이 분기는 아직 라이브로 검증되지 않았다 — 반드시 별도 세션에서
-    `python run.py tc13 --with-folder-watch`로 단독 확인할 것.
+    사양서1(260820) p.87~88 VP-474 근거(2026-08-21 문서 조사 + 실측으로 확정,
+    Service Manual 4.6.7절 "본 기능 설정 시 Registration > Reserved > Import
+    Patient Order 기능을 사용할 수 없습니다"와 일치): Yes로 켜면 수동 Import
+    버튼이 사라지고 Auto Patient Import 버튼 + Patient Import Status가
+    나타난다. Target Directory에 파일을 넣고 **Search를 누르면 그 순간 1회
+    스캔해 반영한다**(Manual mode, VP-474) — 처리된 파일은 그 폴더 아래
+    `end/`(성공)로 옮겨진다(사양서에는 없는 동작, 실측으로 확인).
+
+    `with_folder_watch=False`를 주면(디버깅용) 라디오 존재만 확인하고 실제
+    조작은 하지 않는다. 실패하더라도 반드시 Yes -> No 원복을 시도한다
+    (`finally`) — 이 기능을 켠 채로 남기면 이후의 모든 Import Patient Order
+    기반 회귀(Step 1~6)가 깨진다.
     """
     if not S.open_setting(ui):
         r.add(7, "폴더 자동 감지 경로 확인", "FAIL",
               "Setting 화면 재진입", "실패")
         return
-    minor = S.goto_screen(ui, "Study - Import Patient")
-    if minor is None:
+    if S.goto_screen(ui, "Study - Import Patient") is None:
         r.add(7, "폴더 자동 감지 경로 확인", "FAIL",
               "Study - Import Patient 화면 재진입", "찾지 못함")
         return
 
-    controls = S.content_controls(ui)
-    labels = [c for c in controls if c.cls == "Static"
-             and any(h.lower() in c.text.lower() for h in FOLDER_WATCH_LABEL_HINTS)]
-    if not labels:
-        r.add(7, "폴더 자동 감지 경로 확인", "MANUAL",
-              "'Specific Folder'/'Target Directory' 라벨",
-              "화면에서 찾지 못함(스크롤 아래 있을 수 있음) — Service Manual "
-              "4.6.7절 기준 실측 필요")
+    yes_radio = field(ui, FOLDER_WATCH_YES_ID)
+    no_radio = field(ui, FOLDER_WATCH_NO_ID)
+    if yes_radio is None or no_radio is None:
+        r.add(7, "폴더 자동 감지 Yes/No 라디오 확인", "MANUAL",
+              expected="Yes(%d)/No(%d) 라디오 존재(사양서1 p.87 VP-474)"
+                       % (FOLDER_WATCH_YES_ID, FOLDER_WATCH_NO_ID),
+              actual="찾지 못함 — 화면 구조가 실측과 달라졌을 수 있음")
         return
 
-    r.add(7, "폴더 자동 감지 경로 컨트롤 존재 확인", "PASS",
-          "관련 라벨 발견(Service Manual 4.6.7절 근거)",
-          "; ".join(sorted(set(c.text.strip() for c in labels))))
+    was_yes = S.checkbox_checked(ui, yes_radio)
+    r.add(7, "폴더 자동 감지 Yes/No 라디오 확인", "PASS",
+          expected="Yes/No 라디오 존재(사양서1 p.87 VP-474)",
+          actual="현재 선택=%s" % ("Yes" if was_yes else "No"))
 
     if not with_folder_watch:
         r.manual(7, "폴더 자동 감지 경로 실행 검증",
-                 "Import Patient Order(Step1~6)와 상호 배타 기능이라 이번 실행에서는 "
-                 "실제로 켜지 않았다. 필요 시 'python run.py tc13 --with-folder-watch'로 "
-                 "별도 실행해 확인할 것(아직 라이브 미검증 경로).")
+                 "--skip-folder-watch로 이번 실행에서는 실제 조작을 건너뛴다.")
         return
 
-    checkbox = None
-    for lab in labels:
-        if "specific folder" not in lab.text.lower():
-            continue
-        ly = (lab.rect[1] + lab.rect[3]) // 2
-        for c in controls:
-            if c.text.strip() == "CheckBox" and abs(((c.rect[1] + c.rect[3]) // 2) - ly) < 20:
-                checkbox = c
-                break
-    if checkbox is None:
-        r.add(7, "폴더 자동 감지 기능 활성화", "MANUAL",
-              "체크박스 위치 확정",
-              "라벨 근처에서 CheckBox를 확신 있게 찾지 못함 — 추정 클릭하지 않음")
+    def _revert(note_prefix=""):
+        no2 = field(ui, FOLDER_WATCH_NO_ID)
+        if no2 is None:
+            if not S.open_setting(ui) or S.goto_screen(ui, "Study - Import Patient") is None:
+                r.add(7, "%s폴더 자동 감지 원복(No)" % note_prefix, "FAIL",
+                      "No 라디오 재확보", "Setting 화면 재진입 실패 — 사람이 직접 확인할 것")
+                return
+            no2 = field(ui, FOLDER_WATCH_NO_ID)
+        if no2 is None:
+            r.add(7, "%s폴더 자동 감지 원복(No)" % note_prefix, "FAIL",
+                  "No 라디오 재확보", "찾지 못함 — 사람이 Setting > Study - Import Patient에서 "
+                                  "직접 No로 되돌릴 것")
+            return
+        ui.click(no2, settle=0.8)
+        ack = S.update(ui, ack_timeout=8)
+        no3 = field(ui, FOLDER_WATCH_NO_ID)
+        ok = no3 is not None and S.checkbox_checked(ui, no3)
+        r.assert_true(7, "%s폴더 자동 감지 원복(No)" % note_prefix, ok,
+                      expected="No로 복원", actual="복원 확인" if ok else "복원 실패(Update 팝업: %s)" % (ack or "없음"))
+
+    try:
+        if was_yes:
+            r.add(8, "폴더 자동 감지 활성화(Yes)", "PASS", "이미 Yes였음(건드리지 않음)", "")
+        else:
+            ui.click(yes_radio, settle=0.8)
+            yes2 = field(ui, FOLDER_WATCH_YES_ID)
+            yes_ok = yes2 is not None and S.checkbox_checked(ui, yes2)
+            r.assert_true(8, "폴더 자동 감지 활성화(Yes 클릭)", yes_ok,
+                          expected="Yes 선택 반영", actual="반영 확인" if yes_ok else "반영 실패")
+            if not yes_ok:
+                return
+
+        drive = os.path.splitdrive((cfg.get("export") or {}).get("dest_dir", "E:\\"))[0] or "E:"
+        target_dir = os.path.join(drive + os.sep, "VXvue_QA_ImportWatch")
+        os.makedirs(target_dir, exist_ok=True)
+
+        browse_btn = field(ui, TARGET_DIRECTORY_BROWSE_ID)
+        target_edit = field(ui, TARGET_DIRECTORY_EDIT_ID)
+        current_target = ui.get_text(target_edit) if target_edit is not None else ""
+        same = (os.path.normcase(os.path.normpath(current_target or "."))
+                == os.path.normcase(os.path.normpath(target_dir)))
+        if not same:
+            if browse_btn is None:
+                r.add(8, "Target Directory 설정", "FAIL",
+                      "Browse 버튼(%d)" % TARGET_DIRECTORY_BROWSE_ID, "찾지 못함")
+                return
+            ui.click(browse_btn, settle=1.2)
+            res = S.browse_to_folder(ui, target_dir)
+            if not res["ok"]:
+                r.add(8, "Target Directory 설정", "FAIL",
+                      "폴더 선택 성공(%s)" % target_dir, res["note"])
+                return
+        target_edit2 = field(ui, TARGET_DIRECTORY_EDIT_ID)
+        now_target = ui.get_text(target_edit2) if target_edit2 is not None else ""
+        target_ok = (os.path.normcase(os.path.normpath(now_target or "."))
+                    == os.path.normcase(os.path.normpath(target_dir)))
+        r.assert_true(8, "Target Directory 설정", target_ok,
+                      expected=target_dir, actual=now_target)
+        if not target_ok:
+            return
+
+        ack = S.update(ui, ack_timeout=8)
+        r.add(8, "폴더 자동 감지 Update 적용", "PASS", "완료 팝업: %s" % (ack or "없음"), "")
+
+        # Setting 화면에 아직 있는 동안 이번 실행 전용 예시 파일을 만든다.
+        sample, err = _read_sample(ui, work_dir, sample_name="FolderWatchSample.csv")
+        if sample is None:
+            r.add(8, "폴더 자동 감지용 예시 형식 확보", "FAIL", "Save Sample", err)
+            return
+        stamp = str(int(time.time()))
+        watch_patient_id = "QA_FOLDERWATCH_" + stamp
+        header, example = sample["header"], sample["example"]
+        values = dict(TEST_VALUES)
+        values["Patient ID"] = watch_patient_id
+        values["Patient Name"] = "QA FolderWatch Test"
+        values["Acc. No."] = "ACC_" + watch_patient_id
+        values["Study Description"] = "QA FolderWatch Study " + stamp
+        row = [values.get(col.strip(), example[i] if i < len(example) else "")
+               for i, col in enumerate(header)]
+        watch_file = os.path.join(target_dir, "watch_%s.csv" % stamp)
+        with io.open(watch_file, "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f, delimiter=sample["delimiter"])
+            w.writerow(header)
+            w.writerow(row)
+
+        nav_ok, nav_note = _goto_registration_reserved(ui)
+        if not nav_ok:
+            r.add(9, "Registration - Reserved 이동", "FAIL", "탭 이동", nav_note)
+            return
+
+        import_order_present = bool([c for c in ui.controls(max_depth=8)
+                                     if c.ctrl_id == RESERVED_IMPORT_BUTTON_ID])
+        auto_btn_hits = [c for c in ui.controls(max_depth=8)
+                         if c.ctrl_id == RESERVED_AUTO_IMPORT_BUTTON_ID]
+        r.assert_true(9, "Reserved 버튼 교체(수동 Import 숨김 + Auto Patient Import 노출)",
+                      (not import_order_present) and bool(auto_btn_hits),
+                      expected="Import Patient Order(%d) 숨김 + Auto Patient Import(%d) 노출"
+                               % (RESERVED_IMPORT_BUTTON_ID, RESERVED_AUTO_IMPORT_BUTTON_ID),
+                      actual="Import Patient Order 존재=%s / Auto Patient Import 존재=%s"
+                             % (import_order_present, bool(auto_btn_hits)),
+                      note="사양서1 p.87~88 VP-474.")
+
+        from core.db import VXvueDb
+        db = VXvueDb(cfg.get("sql_server", r".\CHAMELEON"), cfg.get("database", "DRF"))
+        before = db.query("SELECT COUNT(*) as n FROM ORDER_PATIENT WHERE PatientId = '%s'"
+                          % watch_patient_id)
+        before_n = before[0]["n"] if before else 0
+
+        search_btn = next((c for c in ui.controls(max_depth=8)
+                           if c.ctrl_id == RESERVED_SEARCH_BUTTON_ID), None)
+        if search_btn is None:
+            r.add(10, "Search로 폴더 1회 스캔(Manual mode)", "FAIL",
+                  "Search 버튼(%d)" % RESERVED_SEARCH_BUTTON_ID, "찾지 못함")
+            return
+        ui.click(search_btn, settle=2.0)
+        time.sleep(2.0)
+
+        status_ctrl = next((c for c in ui.controls(max_depth=8)
+                            if c.ctrl_id == RESERVED_PATIENT_IMPORT_STATUS_ID), None)
+        status_text = ui.get_text(status_ctrl) if status_ctrl is not None else "(확인 불가)"
+
+        after = db.query("SELECT * FROM ORDER_PATIENT WHERE PatientId = '%s'" % watch_patient_id)
+        after_n = len(after)
+        imported_ok = after_n > before_n
+        mismatches = []
+        if imported_ok:
+            row0 = after[0]
+            for key, col in (("Patient Name", "PatientName"),
+                             ("Acc. No.", "AccessionNumber"),
+                             ("Study Description", "StudyDescription")):
+                if str(row0.get(col) or "").strip() != values[key]:
+                    mismatches.append("%s: DB=%r 기대=%r" % (col, row0.get(col), values[key]))
+        moved = os.path.exists(os.path.join(target_dir, "end"))
+        r.assert_true(10, "Search로 폴더 1회 스캔(Manual mode) -> DB(ORDER_PATIENT) 반영",
+                      imported_ok and not mismatches,
+                      expected="PatientId=%s 행이 새로 생기고 필드가 파일과 일치" % watch_patient_id,
+                      actual=("반영 안 됨(가져오기 전 %d건 -> 후 %d건)" % (before_n, after_n)
+                              if not imported_ok else
+                              ("불일치 없음" if not mismatches else "; ".join(mismatches))),
+                      note="Patient Import Status=%r(사양서1 VP-474 'Patient Import: 성공/실패/"
+                           "전체' 형식). end/ 하위 폴더 존재=%s(처리된 파일이 옮겨지는 실측 동작)."
+                           % (status_text, moved))
+    finally:
+        _revert()
+        if with_folder_watch:
+            nav_ok, _ = _goto_registration_reserved(ui)
+            if nav_ok:
+                import_order_back = bool([c for c in ui.controls(max_depth=8)
+                                          if c.ctrl_id == RESERVED_IMPORT_BUTTON_ID])
+                r.assert_true(11, "원복 후 Reserved에 수동 Import 버튼 복귀",
+                              import_order_back,
+                              expected="Import Patient Order(%d) 버튼 재노출" % RESERVED_IMPORT_BUTTON_ID,
+                              actual="존재=%s" % import_order_back)
+
+
+def _ocr_row_label(row_ctrl):
+    """Column Mapping 행(owner-draw)의 라벨을 캡처+OCR로 읽는다.
+
+    체크박스 상태와 마찬가지로 표준 API로는 읽을 수 없다(TC13/TC14, DICOM
+    Burning Option과 같은 한계, CLAUDE.md 3절 3항).
+    """
+    try:
+        import pytesseract
+        from PIL import ImageGrab
+        default_tess = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+        if os.path.exists(default_tess):
+            pytesseract.pytesseract.tesseract_cmd = default_tess
+        img = ImageGrab.grab(bbox=row_ctrl.rect, all_screens=True)
+        img = img.resize((img.width * 3, img.height * 3))
+        return pytesseract.image_to_string(img, config="--psm 7").strip()
+    except Exception as e:                                       # noqa: BLE001
+        return "(OCR 실패: %s)" % e
+
+
+def _find_mapping_row(ui, list_ctrl, label_contains, max_scroll=12):
+    """Column Mapping 목록에서 라벨에 `label_contains`를 포함하는 행을 찾는다.
+
+    실측(2026-08-21): 이 목록은 슬롯 10개짜리 **가상 목록**이라(`ListItem`이
+    스크롤해도 10개로 고정, 스크롤바 크기도 변화 없음) `core.setting.
+    iter_list_rows()`의 마우스 휠 스크롤이 먹지 않는다(실측: 6회 굴려도
+    같은 10행 그대로) — 이 목록은 스크롤바의 위/아래 화살표
+    아이콘(`Scroll` 자식 IconButton, id=1/2)을 눌러야만 실제로 넘어간다.
+    그래서 여기서는 그 화살표를 직접 눌러 찾는다.
+
+    반환: (row_ctrl, checkbox_ctrl, ocr_text) 또는 (None, None, 마지막 OCR 텍스트).
+    """
+    from core.ui import children
+
+    scrollbar = S.list_scrollbar(ui, list_ctrl)
+    up_btn = down_btn = None
+    if scrollbar is not None:
+        kids = children(scrollbar.hwnd, 1)
+        up_btn = next((k for k in kids if k.ctrl_id == 1), None)
+        down_btn = next((k for k in kids if k.ctrl_id == 2), None)
+
+    def _scan():
+        last_text = ""
+        for row in S.list_rows(ui, list_ctrl):
+            text = _ocr_row_label(row)
+            last_text = text
+            if label_contains.lower() in text.lower():
+                checkbox = next((k for k in children(row.hwnd, 1)
+                                 if k.text.strip() == "CheckBox"), None)
+                return row, checkbox, text
+        return None, None, last_text
+
+    if up_btn is not None:
+        for _ in range(max_scroll):
+            ui.click(up_btn, settle=0.15)
+
+    row, checkbox, text = _scan()
+    if row is not None or down_btn is None:
+        return row, checkbox, text
+
+    for _ in range(max_scroll):
+        ui.click(down_btn, settle=0.25)
+        row, checkbox, text = _scan()
+        if row is not None:
+            return row, checkbox, text
+    return None, None, text
+
+
+def _column_mapping_regression(ui, r, work_dir):
+    """헤더 설정(Column Mapping) 회귀 — 선택 컬럼을 줄여도 Import가 되는지.
+
+    사용자 지시(NEXT_TASK.md 2절 4항): "몇 개를 빼고 Import하거나 컬럼 순서를
+    바꿔서 Import가 제대로 되는지 확인. 사양서·매뉴얼에서 그 동작이 어떻게
+    규정돼 있는지 먼저 확인하고 그 기준으로 판정할 것."
+
+    사양서4(260820) p.60 VP-688 Column Mapping 표 근거: Patient ID/Patient
+    Name만 "필수(체크 해제 불가)"이고 나머지는 선택 해제할 수 있다. 그래서
+    필수가 아닌 컬럼(여기서는 'Institution Name') 하나를 선택 해제하고,
+    Service Manual 4.6.7절이 검증 수단으로 명시한 **Sample Test**(파일
+    선택 -> Refresh -> 미리보기)로 "선택을 줄여도 정상적으로 읽히는지"를
+    확인한다 — Operation Manual 5.3.1절 근거로 이미 구현된 Step3과 같은
+    방식이며, 값 자체가 아니라 파싱 성공 여부를 본다(Step3과 동일 원칙).
+
+    Move Up/Move Down(컬럼 순서 재배열, 컨트롤 ID 30554/30555 실측 확인)을
+    이용한 순서 변경 회귀는 이번 세션에서는 구현하지 않았다 — 행 선택 상태를
+    안정적으로 유지하며 재배열·복원까지 검증하려면 추가 실측이 필요해
+    범위를 좁혔다. `사양 확인 필요`가 아니라 **미구현**임을 명시한다(다음
+    과제, HANDOFF.md에 근거와 함께 남김).
+    """
+    if not S.open_setting(ui):
+        r.add(12, "헤더 설정(Column Mapping) 회귀 준비", "FAIL",
+              "Setting 화면 재진입", "실패")
+        return
+    if S.goto_screen(ui, "Study - Import Patient") is None:
+        r.add(12, "헤더 설정(Column Mapping) 회귀 준비", "FAIL",
+              "화면 재진입", "찾지 못함")
         return
 
+    list_ctrl = next((c for c in S.content_controls(ui)
+                      if c.ctrl_id == COLUMN_MAPPING_LIST_ID), None)
+    if list_ctrl is None:
+        r.add(12, "Column Mapping 목록 확인", "FAIL",
+              "ListCtrl(%d)" % COLUMN_MAPPING_LIST_ID, "찾지 못함")
+        return
+
+    target_label = "Institution Name"
+    row, checkbox, ocr_text = _find_mapping_row(ui, list_ctrl, target_label)
+    if row is None or checkbox is None:
+        r.add(12, "선택 해제 대상 컬럼('%s') 확인" % target_label, "MANUAL",
+              expected="목록에서 '%s' 행과 체크박스 발견" % target_label,
+              actual="찾지 못함(마지막 OCR: %r)" % ocr_text,
+              note="사양서4 p.60 VP-688 Column Mapping 표 기준 선택 해제 가능 컬럼. "
+                   "OCR로 라벨을 못 찾으면 대상을 특정할 수 없어 진행하지 않는다.")
+        return
+    before_checked = S.checkbox_checked(ui, checkbox)
+    r.add(12, "선택 해제 대상 컬럼('%s') 확인" % target_label, "PASS",
+          expected="필수 아님(사양서4 p.60 VP-688, 체크 해제 가능)",
+          actual="OCR=%r, 현재 체크=%s" % (ocr_text, before_checked))
+
+    # 실측: 체크박스는 클릭 후 리스트가 재구성될 수 있어(가상 목록) 같은
+    # 객체를 재사용하지 않고 매번 다시 찾는다.
     ui.click(checkbox, settle=0.6)
-    ack = S.update(ui, ack_timeout=8)
-    r.manual(7, "폴더 자동 감지 기능 활성화",
-             "체크박스 클릭 + Update(완료 팝업: %s). on/off는 owner-draw라 UI로 "
-             "읽을 수 없어 DB 대조가 필요하나 이번 세션에서는 미구현(다음 과제)."
-             % (ack or "없음"))
-    checkbox = field(ui, checkbox.ctrl_id)
-    if checkbox is not None:
-        ui.click(checkbox, settle=0.6)
-        S.update(ui, ack_timeout=8)
-        r.manual(7, "폴더 자동 감지 기능 원복", "체크박스를 다시 클릭해 끄고 Update함(사람 확인 권장)")
-    else:
-        r.add(7, "폴더 자동 감지 기능 원복", "FAIL",
-              "체크박스 재확보", "찾지 못함 — 기능이 켜진 채로 남아 있을 수 있음, "
-              "사람이 Setting > Study - Import Patient에서 직접 확인할 것")
+    row2, checkbox2, _ = _find_mapping_row(ui, list_ctrl, target_label)
+    unchecked_ok = checkbox2 is not None and S.checkbox_checked(ui, checkbox2) == (not before_checked)
+    r.assert_true(12, "'%s' 선택 해제" % target_label, unchecked_ok,
+                  expected="체크 상태가 %s -> %s로 반영" % (before_checked, not before_checked),
+                  actual="반영 확인" if unchecked_ok else "반영 확인 실패")
+    if not unchecked_ok:
+        return
+
+    try:
+        ack = S.update(ui, ack_timeout=8)
+        r.add(12, "Column Mapping 변경 Update 적용", "PASS",
+              "완료 팝업: %s" % (ack or "없음"), "")
+
+        sample, err = _read_sample(ui, work_dir, sample_name="ColumnMappingSample.csv")
+        header_ok = (sample is not None
+                    and all(target_label.lower() not in c.lower() for c in sample["header"]))
+        r.assert_true(12, "Save Sample로 선택 해제 반영 확인", header_ok,
+                      expected="Save Sample 헤더에서 '%s' 제외" % target_label,
+                      actual=(err if sample is None else
+                              "컬럼 %d개: %s" % (len(sample["header"]),
+                                                ", ".join(c.strip() for c in sample["header"]))))
+        if not header_ok:
+            return
+
+        header, example = sample["header"], sample["example"]
+        row_vals = [TEST_VALUES.get(col.strip(), example[i] if i < len(example) else "")
+                    for i, col in enumerate(header)]
+        test_path = os.path.join(work_dir, "PatientListTest_ColumnMapping.csv")
+        with io.open(test_path, "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f, delimiter=sample["delimiter"])
+            w.writerow(header)
+            w.writerow(row_vals)
+
+        ids = IMPORT_PATIENT_IDS
+        browse_btn = field(ui, ids["browse_button"])
+        refresh_btn = field(ui, ids["refresh_button"])
+        if not (browse_btn and refresh_btn):
+            r.add(12, "축소된 헤더로 Sample Test 파싱 미리보기", "FAIL",
+                  "Browse/Refresh 컨트롤", "찾지 못함")
+            return
+        ui.click(browse_btn, settle=1.0)
+        ok, note = S._file_dialog_submit(ui, test_path)
+        if not ok:
+            r.add(12, "축소된 헤더로 Sample Test 파싱 미리보기", "FAIL", "파일 선택", note)
+            return
+        ui.click(refresh_btn, settle=1.0)
+        time.sleep(0.5)
+        grid = next((c for c in S.list_ctrls(ui) if c.ctrl_id == ids["preview_grid"]), None)
+        rows = S.list_rows(ui, grid) if grid is not None else []
+        r.assert_true(12, "축소된 헤더(%d개 컬럼)로 Sample Test 파싱 미리보기" % len(header),
+                      bool(rows),
+                      expected="Service Manual 4.6.7절 Step4(Sample Test) 기준 "
+                               "정상 파싱 — 필수 컬럼(Patient ID/Patient Name)만 "
+                               "있으면 선택 해제된 나머지 컬럼과 무관하게 표시돼야 함"
+                               "(사양서4 p.60 VP-688)",
+                      actual="미리보기 행 %d개" % len(rows))
+    finally:
+        row3, checkbox3, _ = _find_mapping_row(ui, list_ctrl, target_label)
+        revert_ok = False
+        if checkbox3 is not None:
+            if S.checkbox_checked(ui, checkbox3) != before_checked:
+                ui.click(checkbox3, settle=0.6)
+            _, checkbox4, _ = _find_mapping_row(ui, list_ctrl, target_label)
+            revert_ok = checkbox4 is not None and S.checkbox_checked(ui, checkbox4) == before_checked
+            if revert_ok:
+                S.update(ui, ack_timeout=8)
+        r.assert_true(12, "'%s' 선택 상태 원복" % target_label, revert_ok,
+                      expected="원래 체크 상태(%s)로 복원" % before_checked,
+                      actual="복원 확인" if revert_ok else
+                      "복원 실패 — 사람이 Setting > Study - Import Patient에서 직접 확인할 것")
 
 
-def run(ui, cfg, work_dir=None, with_folder_watch=False):
+def run(ui, cfg, work_dir=None, with_folder_watch=True):
     r = TCResult(TC_ID, TC_TITLE)
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     work_dir = work_dir or os.path.join(root, "work", "vms", "import_patient")
@@ -694,6 +1067,7 @@ def run(ui, cfg, work_dir=None, with_folder_watch=False):
     _verify_in_reserved_list(ui, r, work_dir)
 
     _tab_delimiter_regression(ui, r, work_dir)
-    _folder_watch_step(ui, r, work_dir, with_folder_watch)
+    _column_mapping_regression(ui, r, work_dir)
+    _folder_watch_step(ui, r, cfg, work_dir, with_folder_watch)
 
     return r.finalize()

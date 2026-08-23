@@ -307,7 +307,7 @@ def write_txt(results, path, env=None):
             if chk.note:
                 L.append("              비고 : %s" % chk.note)
         if r.evidence:
-            L.append("  [증적]")
+            L.append("  [증거]")
             for e in r.evidence:
                 L.append("    - %s" % e)
         if r.timings:
@@ -440,7 +440,7 @@ def write_reports(results, out_dir, run_name=None, env=None):
                                 e(t["outcome"]), e(t["detail"])))
             parts.append("</table>")
         if r.evidence:
-            parts.append("<div class='meta'>증적: " +
+            parts.append("<div class='meta'>증거: " +
                          ", ".join("<code>%s</code>" % e(p) for p in r.evidence) + "</div>")
 
     html_path = base + ".html"

@@ -23,6 +23,26 @@ SSIM_THRESHOLD = 0.99
 BLANK_STDDEV = 6.0
 BLANK_DOMINANT_RATIO = 0.985
 
+# 실측(2026-08-21 전체 회귀): Echo/라이선스 화면의 OCR 캡처에 이 자동화를
+# 구동하는 Claude Code 세션 자신의 JSON 로그(tool_use_id/session_id 등)가
+# 읽힌 사례가 있었다 — VXvue를 foreground로 올린 뒤에도 그 순간 다른 창이
+# 같은 화면 좌표를 덮은 것으로 보인다(콘솔 창이 출력마다 잠깐 포커스를
+# 가져가는 경우 등). ImageGrab은 좌표 기준으로 화면에 보이는 것을 그대로
+# 찍으므로 이 오염을 구조적으로 막을 수 없어, 캡처 직전 `ensure_foreground()`
+# 재호출(예방) + 결과 문구의 오염 신호 탐지(사후 확인)를 함께 쓴다.
+_CONTAMINATION_MARKERS = ("tool_use_id", "session_id", "tool_progress",
+                          "task_started", "toolu_", "subtype")
+
+
+def looks_contaminated(text):
+    """OCR로 읽은 문구가 VXvue가 아닌 다른 창(터미널 등)의 내용으로 보이는지.
+
+    참이면 그 캡처는 판정 근거로 쓰지 않는다 — "근거를 못 얻은 것"과
+    "근거가 오염된 것"을 구분해 남기기 위함(VXvue/CLAUDE.md 3절).
+    """
+    low = (text or "").lower()
+    return any(m in low for m in _CONTAMINATION_MARKERS)
+
 
 def capture(path, bbox=None, all_screens=False):
     """화면(또는 영역)을 캡처해 저장하고 경로를 반환한다.

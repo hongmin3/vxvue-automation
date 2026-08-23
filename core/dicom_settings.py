@@ -210,25 +210,40 @@ def echo(ui, kind, timeout=15, poll=1.0, evidence_path=None):
     except ImportError:
         pytesseract = None
 
+    from . import screen as screen_mod
+
     end = time.time() + timeout
     last_text = ""
+    contaminated_once = False
     while time.time() < end:
         time.sleep(poll)
+        # 캡처 직전 다시 foreground를 확인한다 — 실측(2026-08-21)으로,
+        # VXvue를 foreground로 올린 뒤에도 폴링 중 다른 창(터미널 등)이
+        # 잠깐 그 자리를 덮어 OCR이 그 창의 내용을 읽은 사례가 있었다.
+        ui.ensure_foreground()
         img = ImageGrab.grab(bbox=panel_rect, all_screens=True)
         if evidence_path:
             img.save(evidence_path)
         if pytesseract is None:
             continue
         try:
-            last_text = pytesseract.image_to_string(img)
+            text = pytesseract.image_to_string(img)
         except Exception as e:                                   # noqa: BLE001
             return False, "OCR 실행 실패: %s" % e
+        if screen_mod.looks_contaminated(text):
+            contaminated_once = True
+            continue
+        last_text = text
         lowered = last_text.lower()
         if "verification succeeded" in lowered or "succeeded" in lowered:
             return True, last_text.strip()[-500:]
         if "failed" in lowered or "refused" in lowered:
             return False, last_text.strip()[-500:]
-    return False, ("시간 내 성공/실패 문구를 찾지 못함: %s" % last_text.strip()[-500:])
+    note = "시간 내 성공/실패 문구를 찾지 못함: %s" % last_text.strip()[-500:]
+    if contaminated_once:
+        note += " [주의: 캡처 중 다른 창이 겹친 것으로 보이는 프레임을 " \
+                "제외했다 — 이 결과는 오염 없는 캡처만으로 판정한 것이다]"
+    return False, note
 
 
 def ensure_burning_options(ui, ack_timeout=10):

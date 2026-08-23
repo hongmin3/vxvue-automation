@@ -33,7 +33,7 @@ VXvue 자동화는 이 선례들의 **설계 원칙**을 재사용하고, 코드
 
 | 선례 | 위치 | 재사용 대상 |
 |---|---|---|
-| Bellalun Viewer 자동화 | `Bellalun Viewer\auto` | 폴더 구조, 상태 기반 대기, PASS/FAIL 증적 정책, GPU 미탑재 SKIP 규칙, `automation_scope.json` 분류, 리포트(csv/json/html/txt) 포맷, 의존성 최소화 원칙(Win32 ctypes + Pillow + pytesseract + openpyxl만 사용, pywinauto/psutil/pydicom 불필요) |
+| Bellalun Viewer 자동화 | `Bellalun Viewer\auto` | 폴더 구조, 상태 기반 대기, PASS/FAIL 증거 정책, GPU 미탑재 SKIP 규칙, `automation_scope.json` 분류, 리포트(csv/json/html/txt) 포맷, 의존성 최소화 원칙(Win32 ctypes + Pillow + pytesseract + openpyxl만 사용, pywinauto/psutil/pydicom 불필요) |
 | Setting 화면 검증 도구 | `Bellalun Viewer\ORG\Setting Export\bellalunSetting.py` | TC_WindowsUpdate_14(Setting 화면 표시) 자동화의 개념적 원형 — 탭 순회 클릭 → 지정 영역 스크린샷 → SSIM 구조적 유사도 비교(임계값 0.99) → CSV 리포트. VXvue는 좌표 캘리브레이션 대신 가능하면 Win32 컨트롤 ID/UI Automation으로 순회하는 방식으로 고도화 검토(3.5절) |
 | VX.LIVE.SERVER 데모 설정 자동화 | `VX_LIVE_SERVER_데모모드_자동화\setup_demo.ps1` | TC_WindowsUpdate_12(카메라 연동)의 Precondition 자동 구성 — 데모 이미지셋 23종 검증·보충, 데모 트리거 파일 생성을 이미 무인 실행 가능. 단, 이 PC엔 VX.LIVE.SERVER가 미설치 상태(4.3절) |
 | Model Version Checker v2.3 | `모델버전체크자동화\dist\ModelVersionChecker_v2.3` | 리포트 상단 "패키지 정보" 섹션 — `--product "VXvue"` 실행 시 VXvue/XIPL/VX.LIVE.SERVER 등 구성요소 버전을 릴리즈노트와 대조해 TXT/JSON으로 출력. 2절 리포트 헤더에 그대로 결합 |

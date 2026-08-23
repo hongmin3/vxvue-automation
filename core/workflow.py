@@ -2057,12 +2057,22 @@ KNOWN_TOOLS = (
     "Guide", "LPI", "Undo", "Redo", "Edit",
     "Extra Tool", "Soft Tissue", "Live View", "Compare", "Save Pro",
     "Send", "Print", "Reject", "Suspend", "Close", "Close All",
+    # `section="annotation"`(30402) 팝업(실측 2026-08-21, TC11 착수):
+    # Ellipse/Circle/AI Tool/Rect ROI/Delete.
+    "Ellipse", "Circle", "AI Tool", "Rect ROI", "Delete",
 )
 
 
 def read_tool_palette(ui, cfg=None, section="tools", evidence_dir=None,
-                      refresh=False):
+                      refresh=False, search_area=None):
     """툴 팝업을 열고 **즉시 캡처**해 라벨 -> 클릭 좌표를 읽는다.
+
+    `search_area`를 주지 않으면 `_PALETTE_SEARCH`(`tools`용으로 실측한 고정
+    영역)를 쓴다. 다른 섹션(예: `annotation`)의 팝업은 화면상 위치가 달라
+    그 영역 밖에 그려질 수 있다(실측 2026-08-21, TC11 착수 — `annotation`
+    팝업이 위쪽으로 잘려 검출 자체가 안 됐다) — 그런 섹션은 호출부가
+    `_palette_area(_section_button(ui, section))`으로 그 버튼 기준 영역을
+    계산해 넘긴다.
 
     반환: {"XIPL": (x, y), "Proc.": (x, y), ...}
 
@@ -2096,9 +2106,10 @@ def read_tool_palette(ui, cfg=None, section="tools", evidence_dir=None,
     if btn is None or tess is None:
         return {}
 
+    area = search_area or _PALETTE_SEARCH
     ui.click(btn, settle=0.05)
     time.sleep(PALETTE_OPEN_DELAY)
-    shot = ImageGrab.grab(bbox=_PALETTE_SEARCH, all_screens=True)   # 열린 동안
+    shot = ImageGrab.grab(bbox=area, all_screens=True)   # 열린 동안
     if evidence_dir:
         os.makedirs(evidence_dir, exist_ok=True)
         try:
@@ -2106,11 +2117,11 @@ def read_tool_palette(ui, cfg=None, section="tools", evidence_dir=None,
         except Exception:                                    # noqa: BLE001
             pass
 
-    box = _detect_palette_box(shot, (_PALETTE_SEARCH[0], _PALETTE_SEARCH[1]))
+    box = _detect_palette_box(shot, (area[0], area[1]))
     if box is None:
         return {}
-    crop = shot.crop((box[0] - _PALETTE_SEARCH[0], box[1] - _PALETTE_SEARCH[1],
-                      box[2] - _PALETTE_SEARCH[0], box[3] - _PALETTE_SEARCH[1]))
+    crop = shot.crop((box[0] - area[0], box[1] - area[1],
+                      box[2] - area[0], box[3] - area[1]))
 
     want = dict((_norm_label(t), t) for t in KNOWN_TOOLS if _norm_label(t))
     found = {}
@@ -2146,16 +2157,18 @@ def read_tool_palette(ui, cfg=None, section="tools", evidence_dir=None,
 
 
 def click_tool(ui, cfg=None, name="XIPL", section="tools", evidence_dir=None,
-               settle=2.5):
+               settle=2.5, search_area=None):
     """확장 툴 팝업에서 툴 하나를 누른다.
 
     팝업이 약 2.1초만 열려 있으므로(실측), **좌표를 미리 확보해 두고** 팝업을
     열자마자 클릭한다. 좌표가 없으면 먼저 `read_tool_palette()`로 읽는다.
+    `search_area`는 `read_tool_palette()`에 그대로 전달한다(`tools` 이외의
+    섹션에 필요).
 
     반환: {"ok": bool, "name": 요청, "matched": 실제 라벨, "point": (x,y),
            "available": [읽어낸 라벨...]}
     """
-    palette = read_tool_palette(ui, cfg, section, evidence_dir)
+    palette = read_tool_palette(ui, cfg, section, evidence_dir, search_area=search_area)
     if not palette:
         return {"ok": False, "name": name, "matched": None, "point": None,
                 "available": []}

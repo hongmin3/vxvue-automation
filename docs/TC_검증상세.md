@@ -132,7 +132,7 @@ p.94 `VP-528 - Live View` / 사양서2 p.57 `VP-616 - Integrated Image CAD`
 | 3 | Hardware Key(Edit 30089) 표시 확인 | 비어 있지 않아야 한다(이 값으로 라이선스를 발급받는다 — Service Manual p.43) | PASS/FAIL |
 | 4 | Add(30879) / Change(30881) / Delete(30880) 버튼 존재 확인 | 3개 모두 존재해야 한다. **누르지 않는다** — 라이선스 변경은 복구가 어려운 파괴적 조작 | PASS/FAIL |
 | 5 | 라이선스 목록(ListCtrl 31116)의 행 수를 **속성으로** 센다(빈 행은 hidden이므로 `list_rows()`가 정확히 걸러낸다) | 화면 행 수 = 설치된 `.lic` 파일 수 | PASS/FAIL |
-| 6 | 각 행을 캡처+OCR해 `Information` 열 문구로 라이선스 종류를 판별한다(`Demo License` / `Computer Aided Detection` / `Live View`) | `config.json`의 `license.required`(기본 Demo/CAD/LiveView)가 전부 표시돼야 한다. 사양서1 p.7 근거: 현재 지원되는 VXvue Option은 CAD와 Live View뿐 | PASS/FAIL |
+| 6 | 각 행을 캡처+OCR해 `Information` 열 문구로 라이선스 종류를 판별한다(`Demo License` / `Computer Aided Detection` / `Live View`). 캡처 직전 `ensure_foreground()`를 다시 불러 다른 창이 그 자리를 덮은 상태로 찍히는 것을 막고, 그래도 OCR 결과에 오염 신호(`core/screen.looks_contaminated()`)가 섞여 있으면 그 행은 별도로 표시한다(2026-08-24 추가 — 실측: 이 자동화를 구동하는 터미널 창의 JSON 로그가 섞여 읽힌 사례) | `config.json`의 `license.required`(기본 Demo/CAD/LiveView)가 전부 표시돼야 한다. 사양서1 p.7 근거: 현재 지원되는 VXvue Option은 CAD와 Live View뿐. **판별 실패 행 중 캡처 오염이 확인되면 FAIL이 아니라 MANUAL**로 남긴다 | PASS/FAIL/MANUAL |
 | 7 | 화면에서 읽은 키를 `.lic` 파일 키와 대조한다. OCR 혼동쌍(1/L/I, 0/O, 5/S, 8/B, 2/Z)을 접어 비교 | 모든 행이 파일 중 하나와 일치. **불일치는 FAIL이 아니라 MANUAL** — OCR은 `1`을 `L`로 읽는 오인식이 있고(실측: `B35C-F1EAG`→`B35C-FLEAG`) 키의 1차 근거는 파일이다 | PASS/MANUAL |
 | 8 | `Information` 열이 목록 폭에 맞춰 `...`로 줄여 표시되는지 확인 | 잘린 행이 있으면 그 사실을 MANUAL로 남긴다(실측: `Demo License 2100-08-18(Shima...` — Company Code 뒷부분을 읽을 수 없다) | MANUAL(잘렸을 때만) |
 | 9 | Demo License 행의 만료일 판독 | 만료일이 표시돼야 한다. **만료 임박 여부의 PASS/FAIL 기준으로 쓰지 않는다** — 사양서1 p.7: "VXvue / DxWorks do not check the license expiration date." | PASS/MANUAL |
@@ -153,7 +153,7 @@ Port=30098).
 | n | Storage인 경우 먼저 로컬 `Bunny.exe`가 떠 있는지 확인하고 없으면 실행한다(포트 3000이 열려야 Echo가 성립) | Bunny 실행 확인 | (아래 판정에 포함) |
 | n | DB(`AE_LIST`)에 그 AE Title+Port가 이미 있는지 확인 → 없으면 화면에서 Add로 등록, 있으면 목록에서 그 행을 선택 | 등록 상태여야 한다 | PASS/FAIL |
 | n | Storage인 경우 Burning Option 3종(Annotation 31503 / Information 31504 / Orientation 31505)을 전부 체크하고 Update. 체크박스가 owner-draw라 상태를 못 읽어 **캡처 기반 색 판별**(체크 시 나타나는 황금색 `(223,182,56)`)로 이미 체크된 건 다시 누르지 않는다 | 3종 모두 체크 상태 | (판정 note에 상태 기록) |
-| n | Echo(C-ECHO) 버튼을 눌러 로그 영역을 캡처+OCR로 판독 | `succeeded`가 나와야 한다 | PASS/FAIL |
+| n | Echo(C-ECHO) 버튼을 눌러 로그 영역을 캡처+OCR로 판독. 폴링마다 캡처 직전 `ensure_foreground()`를 다시 불러 다른 창 겹침을 줄이고, OCR 결과에 오염 신호(`core/screen.looks_contaminated()`)가 보이면 그 프레임은 버리고 계속 폴링한다(2026-08-24 추가 — 실측: 이 자동화를 구동하는 터미널의 JSON 로그가 로그 영역에 겹쳐 찍혀 `succeeded`를 못 찾은 사례, 격리 재캡처로는 정상 확인) | `succeeded`가 나와야 한다. 시간 내 못 찾으면 오염 프레임을 제외했다는 사실을 note에 남긴다 | PASS/FAIL |
 
 ---
 
@@ -400,7 +400,7 @@ TC02와 다른 점: TC02는 "정보 일치"를, 이 TC는 **"전송된 객체의
 | 5 | MWL 오픈 + 촬영 | 영상 1장 이상 | PASS/FAIL |
 | 6 | Print 실행 — Database `Print`(30293) → 확인 팝업 → 필름 구성 화면의 Print(`30718`) | **두 번의 확인이 필요하다**(실측 2026-08-21). 두 번째 클릭이 빠지면 필름 구성만 되고 아무것도 전송되지 않는다(이전 버전의 거짓양성 원인) | PASS/FAIL |
 | 7 | `GET /api/jobs`에서 **Calling AE=VXVUE의 신규 필름**을 기다린다 | 1건 이상 신규 수신. 'Print 성공'의 유일한 객관적 근거 | PASS/FAIL |
-| 8 | 수신 필름의 속성(id / film_size / received_at) 기록 | 증적으로 남긴다 | PASS |
+| 8 | 수신 필름의 속성(id / film_size / received_at) 기록 | 증거로 남긴다 | PASS |
 | 9 | **수신 필름의 픽셀을 OCR해 Overlay 반영 확인** — `/api/jobs/<id>/preview`(JPEG)를 받아 네 모서리 띠만 잘라 확대해 읽는다 | `E.I.` / `DOI` / `Acc. No` / `Performing Physician`이 필름에 전부 그려져 있다. 제품 UI가 아니라 **받은 쪽 픽셀**로 판정한다 | PASS/FAIL |
 | 10 | 시험 후 정리 — 열린 검사 닫기 | 열린 검사 0개. 남으면 다음 시험의 시작 상태가 불분명해진다 | PASS/FAIL |
 
