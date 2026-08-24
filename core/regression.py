@@ -45,6 +45,15 @@ TC가 연쇄 실패한 사례가 있다 — `Bellalun Viewer/auto/PORTABILITY_AU
 (`preflight.memory_pressure()`)를 함께 남긴다 — 이 시험 PC는 물리 메모리
 여유가 항상 기준 아래라(사용자 지시로 차단하지 않음) 실패 원인이 자원 부족인지
 제품 문제인지 사후에 구분할 근거가 필요하다.
+
+**단, MWL 서버 등록(Phase 3)이 실패하면 예외다** — 이 회귀에 구현된 TC 대부분이
+MWL로 검사를 열며 시작하므로, MWL 등록·Echo가 실패한 채로 Phase 4를 계속
+돌리면 전부 같은 원인으로 줄줄이 실패해 리포트만 길어지고 새로운 정보가
+없다(사용자 지시, 2026-08-25). 그래서 `_run_dicom_registration()`이
+`mwl_ok=False`를 돌려주면 Phase 4를 건너뛰고 구현 여부와 무관하게 **모든
+TC를 `_downstream_fail()`로 즉시 FAIL 처리한 뒤 회귀를 끝낸다.** Storage/
+Print만 실패한 경우는 이 게이트에 걸리지 않는다 — 그 SCP를 실제로 쓰는
+TC05/TC07에서만 개별 FAIL로 드러나고 나머지 TC는 정상 진행한다.
 """
 
 import os
@@ -367,6 +376,16 @@ def _run_license_check(cfg, ui, evidence_dir):
 
 
 def _run_dicom_registration(cfg, ui):
+    """반환: (TCResult, mwl_ok).
+
+    `mwl_ok`는 **MWL 서버 등록이 시도됐고 그중 하나라도 실패했으면** False다
+    (사용자 지시, 2026-08-25: MWL 서버 세팅부터 실패하면 그 뒤 TC를 계속
+    돌려봤자 전부 의미 없이 실패할 뿐이므로, `run()`이 이 값을 보고 Phase 4
+    전체를 건너뛰고 모든 TC를 FAIL로 종료한다). MWL 등록 대상이 config에
+    아예 없으면(등록 시도 자체가 없었으면) 게이트를 걸 근거가 없으므로
+    True로 둔다 — Storage/Print만 실패한 경우는 여기서 막지 않는다(그 SCP를
+    실제로 쓰는 TC05/07에서만 개별 FAIL로 드러난다).
+    """
     from . import dicom_settings
     from .db import VXvueDb
 
@@ -376,10 +395,17 @@ def _run_dicom_registration(cfg, ui):
     if not specs:
         r.add(1, "등록 대상 서버", result_mod.SKIP,
               note="config.json의 dicom.servers_to_register가 비어 있다.")
-        return r.finalize()
+        return r.finalize(), True
+    mwl_specs = [s for s in specs if s.get("kind") == "MWL"]
+    mwl_ok = True
     try:
         db = VXvueDb(cfg.get("sql_server", r".\CHAMELEON"), cfg.get("database", "DRF"))
         rows = dicom_settings.ensure_registered(ui, cfg, db)
+        mwl_rows = [row for row in rows if row.get("kind") == "MWL"]
+        if mwl_specs and (len(mwl_rows) < len(mwl_specs)
+                         or any(not (row.get("registered") and row.get("echo_ok"))
+                                for row in mwl_rows)):
+            mwl_ok = False
         for i, row in enumerate(rows, 1):
             ok = row.get("registered") and row.get("echo_ok")
             r.add(i, "%s SCP: %s" % (row.get("kind"), row.get("name")),
@@ -391,9 +417,13 @@ def _run_dicom_registration(cfg, ui):
         if missing > 0:
             r.add(len(rows) + 1, "등록 대상 누락", result_mod.FAIL,
                   expected="%d건 처리" % len(specs), actual="%d건 처리" % len(rows))
+            if len(mwl_rows) < len(mwl_specs):
+                mwl_ok = False
     except Exception as exc:                              # noqa: BLE001
         _fail_from_exception(r, len(r.checks) + 1, "DICOM 서버 등록", exc, cfg)
-    return r.finalize()
+        if mwl_specs:
+            mwl_ok = False
+    return r.finalize(), mwl_ok
 
 
 # --- Phase 4: TC 실행 --------------------------------------------------
@@ -474,6 +504,23 @@ def _placeholder(tc_id, scope_by_id, override_note=None):
                 "세션에서 구현해야 한다." % level)
     r.add(1, "automation_scope.json 기준 현재 수준: %s" % level, verdict,
           expected="자동 수행", actual="이번 회귀에서 수행하지 않음", note=note)
+    r.finalize()
+    return r
+
+
+def _downstream_fail(tc_id, reason):
+    """상류 단계(MWL 서버 등록 등)가 실패해 이 TC를 아예 실행하지 않고
+    강제로 FAIL 처리할 때 쓴다(사용자 지시, 2026-08-25).
+
+    `_placeholder()`와 달리 `automation_scope.json`의 수준(MANUAL/PARTIAL 등)을
+    보지 않는다 — "아직 자동화가 없다"가 아니라 "자동화는 있지만 그 앞
+    단계가 실패해서 의미 있게 실행할 수 없었다"는 다른 상황이라, 애매한
+    MANUAL로 묻히지 않고 항상 FAIL로 남긴다.
+    """
+    r = result_mod.TCResult(tc_id, TC_LABELS.get(tc_id, tc_id))
+    r.add(1, "상류 단계 실패로 실행 안 함", result_mod.FAIL,
+          expected="MWL 서버 등록 성공 후 정상 실행",
+          actual="실행하지 않음", note=reason)
     r.finalize()
     return r
 
@@ -630,7 +677,22 @@ def run(cfg, ui_factory, approve_destructive=False, reset_baseline=False,
 
     # Phase 3
     _log("Phase 3 — DICOM 서버 연동 확인·구성")
-    results.append(_run_dicom_registration(cfg, ui))
+    dicom_result, mwl_ok = _run_dicom_registration(cfg, ui)
+    results.append(dicom_result)
+    if not mwl_ok:
+        # 사용자 지시(2026-08-25): MWL 서버 세팅부터 실패하면 그 뒤 TC를
+        # 계속 돌려봤자(대부분 MWL 오픈으로 시작하므로) 의미 없이 줄줄이
+        # 실패할 뿐이다 — Phase 4를 아예 건너뛰고 전부 FAIL로 종료한다.
+        _log("MWL 서버 등록 실패 — Phase 4(TC 실행)를 건너뛰고 전체 FAIL로 종료한다.")
+        for tc_id in run_order(set(all_ids) | set(IMPLEMENTED)):
+            if only and tc_id not in only:
+                continue
+            results.append(_downstream_fail(
+                tc_id, "MWL 서버 등록·Echo가 실패해(DICOM_Servers 결과 참고) 이번 "
+                       "회귀에서 이 TC를 실행하지 않았다. MWL 없이는 검사를 열 수 "
+                       "없어 이후 대부분의 TC가 같은 원인으로 실패할 뿐이므로 "
+                       "실행을 중단했다(사용자 지시, 2026-08-25)."))
+        return results
 
     # Phase 4
     _log("Phase 4 — TC 실행%s" % (" (짧은 회귀)" if quick else ""))
