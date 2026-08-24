@@ -75,6 +75,7 @@ python run.py tc04                  # Image Processing (촬영 처리 + Proc. + 
 python run.py tc05                  # DICOM 전송 (수신 객체의 SOP Class UID로 판정)
 python run.py tc07                  # DICOM Print (받은 쪽 필름 목록으로 판정)
 python run.py tc08                  # Study Export (E 드라이브)
+python run.py tc11                  # AI 분석(CAD) — 실제 검증 샘플 영상으로 분석 실행
 python run.py tc13                  # 환자정보 Import 회귀 (TAB 구분자 결함 회귀 포함)
 python run.py tc14                  # Setting 각 탭 순회·표시 확인 (--deep으로 전수 검증)
 python run.py setting-export-import # Export → 변경 → Import → 보존 검증 (3단 비교)
@@ -99,6 +100,7 @@ python run.py snapshot / snapshot-diff / vxs-info / db-ae / mwl-list / scope / e
 | 설정 55화면이 정상 표시되는가 | 실행 시점에 만든 **메뉴 지도** + 화면별 본문 표시 확인 (`--deep`이면 스크롤 전수 노출·값 추출까지) |
 | 촬영할 부위·Step을 제대로 골랐는가 | 인체도 **파란 점 검출 → 국소대비 OCR → 정답지 소거 → 클릭 후 Step 목록 대조** 4단계 (색으로 찾지 않는다 — 4.1절) |
 | 영상처리가 성공했는가 | XIPL 서버 로그(UTF-16LE)에 `Parameter file not found`가 없고 DB `INSTANCE`가 늘어남 |
+| AI(CAD) 분석이 실제로 동작하는가 | 사내 검증 샘플 영상을 데모 영상으로 등록(무작위 선택) → 분석 실행 → 옵션 체크박스 3종의 체크/해제가 영상 표시에 실제로 반영되는지 **SSIM**으로, 'Copy original image' 저장은 DB `INSTANCE` 증가로 확인 (GPU 없이도 CPU 모드로 정확한 소견을 검출함을 실측) |
 | Export/Import가 값을 보존하는가 | DB 62개 테이블 스냅샷 **3단 비교**(S1≠S0 확인 후 S2=S0) |
 
 리포트는 **TXT / CSV / JSON / HTML** 4종으로 생성되고, 모든 포맷 상단에 체크리스트

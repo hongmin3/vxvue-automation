@@ -568,29 +568,60 @@ Expected Result: *최초 실행 시 GPU 환경이면 Serialization 진행 후 'A
 findings tool' 창 표시, 분석 결과가 영상 위에 표시됨.* Test Data: *동물용
 뷰어는 미지원, GPU 없으면 Serialization 없이 CPU 모드.*
 
-이 PC는 GPU가 없다(Intel Iris Xe 내장 그래픽만) — UI 흐름과 화면 구성까지만
-검증하고 실제 분석 결과 생성(Request an analysis 클릭)은 SKIP한다.
+**2026-08-24 후속(사용자 지시)로 SKIP을 없앴다** — GPU가 없는 이 PC에서도
+CPU 모드로 실제 분석까지 실행하고, 사내 공유폴더의 VXCAD-CXR 검증 샘플로
+분석 결과가 실제 소견과 일치하는지, 옵션 체크박스의 체크/해제가 실제로
+반영되는지까지 확인한다.
 
 | Step | 코드가 하는 일 | Expected Result(판정 기준) | 판정 |
 |---|---|---|---|
 | 1 | VXvue 본체 라이선스 파일 존재 확인(Precondition, 종류 판별은 VXvue_License가 담당) | 사양서5 p.63~64 VP-770 — AI Engine 사용에 필요 | PASS/MANUAL |
-| 2 | MWL 오픈 + 촬영 | 영상 1장 이상 획득 | PASS/FAIL |
-| 3 | Viewer 모드 전환 | Tools 섹션 노출 | PASS/FAIL |
-| 4 | annotation 팝업에서 AI Tool 좌표 확보 — OCR로 'AI Tool' 라벨을 직접 못 읽으면(8px 라벨, 'Extra Tool' 등으로 오인식) 안정적으로 읽히는 Ellipse/Circle/Delete 좌표로 격자 칸을 보간 | 사양서2 p.150 VP-616 — 좌표 확보 자체가 목적 | PASS/MANUAL |
-| 5 | AI Tool 클릭 → 'AI Medical findings tool' 창 표시 확인. **클릭 전 2.5초 대기 후 팔레트를 다시 연다**(2026-08-24 수정 — 아래 참고), 그래도 안 뜨면 최대 3회 재시도 | Operation Manual 근거 — 클릭 시 이 창이 뜬다 | PASS/FAIL |
-| 6 | 'Request an analysis' 버튼(30736) 존재 확인 | 체크리스트 Step6 근거 | PASS/FAIL |
-| 7 | 옵션 체크박스 3종(Insert findings name/Insert probability text/Copy original image, 31509/31510/31512) 존재 확인 | 사양서2 p.150-152 VP-616 | PASS/FAIL |
-| 8 | 'Request an analysis' 실행 및 분석 결과 검증 | **SKIP** — GPU 없는 환경에서 실제로 눌러 어떤 대기·오류가 나는지는 사람이 판단 | MANUAL |
-| 9 | 창 닫기(제목줄 X, `-4`) — try/finally로 이 파일이 직접 책임진다(닫지 못하면 다음 실행의 Registration 탭 전환이 15초 타임아웃으로 막힘, 실측) | 창 닫힘 | PASS/MANUAL |
-| 10 | 열린 검사 닫기 | 열린 검사 0개 | PASS/MANUAL |
+| 2 | **VXCAD-CXR 검증 샘플 영상을 데모 영상으로 등록**(2026-08-24 신설) — 로컬 캐시(`auto/TestData/tc11_ai_samples/`, git 제외)의 3종(Nodule Mass/Pleural Effusion/Pneumothorax) 중 무작위로 하나를 골라 `<data_dir>\DemoImage\Default.img`로 교체(Service Manual p.170-171 5.2.5절), 실행 끝에 반드시 원복 | 교체·등록 성공. 캐시가 없으면 기존 기본 데모 영상 그대로(MANUAL) | PASS/MANUAL |
+| 3 | MWL 오픈 + 촬영 — Step 2가 교체한 샘플이 촬영됨 | 영상 1장 이상 획득 | PASS/FAIL |
+| 4 | Viewer 모드 전환 | Tools 섹션 노출 | PASS/FAIL |
+| 5 | annotation 팝업에서 AI Tool 좌표 확보 — OCR로 'AI Tool' 라벨을 직접 못 읽으면(8px 라벨, 'Extra Tool' 등으로 오인식) 안정적으로 읽히는 Ellipse/Circle/Delete 좌표로 격자 칸을 보간 | 사양서2 p.150 VP-616 — 좌표 확보 자체가 목적 | PASS/MANUAL |
+| 6 | AI Tool 클릭 → 'AI Medical findings tool' 창 표시 확인. **클릭 전 2.5초 대기 후 팔레트를 다시 연다**(2026-08-24 수정 — 아래 참고), 그래도 안 뜨면 최대 3회 재시도 | Operation Manual 근거 — 클릭 시 이 창이 뜬다 | PASS/FAIL |
+| 7 | 'Request an analysis' 버튼(30736) 존재 확인 | 체크리스트 Step6 근거 | PASS/FAIL |
+| 8 | 옵션 체크박스 3종(Insert findings name/Insert probability text/Copy original image, 31509/31510/31512) 존재 확인 | 사양서2 p.150-152 VP-616 | PASS/FAIL |
+| 9 | **'Request an analysis' 실제 클릭 + 완료 확인**(2026-08-24 SKIP→실행) — 다른 팝업(제목이 다른 #32770)이 새로 뜨면 에러/경고로 분류해 반영, 아니면 영상 표시 영역(`UIInstanceMedicalFindings`, ctrl_id 880902) 캡처가 더는 안 바뀔 때까지(SSIM≥0.995 2회 연속, 최대 90초) 대기 | 에러 없이 완료 | PASS/FAIL/MANUAL |
+| 10 | **'Insert findings name' 체크 해제→재체크 반영 확인**(신설) — 해제 전/후/재체크 캡처를 SSIM 비교 | 사양서2 p.150-152 VP-616 — 해제 시 달라지고(<0.9999) 재체크 시 복원(≥0.9999) | PASS/MANUAL |
+| 11 | **'Insert probability text' 체크 해제→재체크 반영 확인**(신설) — 위와 동일 방식 | 위와 동일 | PASS/MANUAL |
+| 12 | **'Copy original image' 체크(기본값) 상태로 OK 닫기 → 새 영상 저장 확인**(신설) — DB `INSTANCE` 행 수(`core/workflow.instance_count()`)가 OK(30688) 클릭 후 +1 되는지 확인 | 사양서2 p.150-152 VP-616 — 진단 결과 Annotation이 추가된 영상이 원본 복사 후 새로 저장돼야 한다 | PASS/MANUAL |
+| 13 | 창 닫기 — Step 12에서 이미 OK로 닫혔으면 그 사실만 기록, 아니면 제목줄 X(`-4`)로 닫는다(try/finally로 이 파일이 직접 책임짐, 닫지 못하면 다음 실행의 Registration 탭 전환이 15초 타임아웃으로 막힘, 실측) | 창 닫힘 | PASS/MANUAL |
+| 14 | 데모 영상 원복(Default.img) | 원복 성공 | PASS/FAIL |
+| 15 | 열린 검사 닫기 | 열린 검사 0개 | PASS/MANUAL |
 
-**Step 5 타이밍 버그(2026-08-24 발견·수정)**: `read_tool_palette()`의 툴 팝업은
+**Step 6 타이밍 버그(2026-08-24 발견·수정)**: `read_tool_palette()`의 툴 팝업은
 docstring에 이미 적혀 있듯 **약 2.1초 뒤 스스로 닫힌다**(0.32s 열림 → 2.42s
-닫힘). Step 4가 좌표를 읽자마자 그 팝업이 아직 열려 있는 상태로 Step 5가
+닫힘). Step 5가 좌표를 읽자마자 그 팝업이 아직 열려 있는 상태로 Step 6이
 곧바로 섹션 버튼을 다시 누르면 **토글로 팝업이 닫혀버리고** 뒤이은 클릭이
 빈 화면(영상 표시 영역)을 누르는 경쟁 상태였다 — OCR 처리 속도가 매번 달라
 간헐적으로만 재현됐다(전체 회귀 1회, 단독 재실행 2회에서 재현). 클릭 전
 2.5초를 기다려 팝업이 확실히 닫힌 뒤 다시 여는 것으로 해소했다.
+
+**Step 9 실측(중요)**: 클릭 **전** 캡처에 이미 분석 결과(소견 Outline·확률)가
+표시돼 있었다 — CPU 모드에서는 창이 열리는 시점에 분석이 이미(또는 매우
+빠르게) 끝나 있는 것으로 보인다(정확한 트리거 시점은 문서로 확인되지
+않음). "화면 안정" 판정은 여전히 유효하다(클릭 전후로 계속 같은 상태를
+유지하는 것도 '안정'이다). 실제로 정확한 CAD 분석이 CPU 모드로 동작함을
+확인했다 — Pleural Effusion 샘플에서 Pleural Effusion 98% 검출(초록
+Outline 정확한 위치), Pneumothorax 샘플에서 Pneumothorax 54%/98% 2건
+검출(둘 다 `Cache/tc11_analysis_result.png`로 캡처 증거 확보). 소견명이
+주입한 샘플과 자동으로 일치하는지 OCR로 대조하지는 않는다 — 사람이 첨부된
+캡처로 확인한다(다음 과제).
+
+**Step 10/11 임계값 실측(2026-08-24)**: 영상 표시 영역 전체 기준으로는
+텍스트 한두 글자 변화가 SSIM에 크게 반영되지 않는다(측정값 0.9952~0.9993,
+"98%" 같은 짧은 Probability text는 Findings name보다도 덜 반영됨) — 배경
+X-ray가 차지하는 면적이 훨씬 크기 때문이다. 반면 재체크(복원) 시 SSIM은
+항상 정확히 1.0000이었다(이 환경은 캡처 노이즈가 없다). 그래서 임계값을
+0.995 → 0.999 → **0.9999**로 세 번 실측 조정했다 — 0.999로도 Probability
+text(0.9993)를 못 잡았다.
+
+**다루지 않은 것**: Detected list 행별 'Use' 체크박스(해제 시 그 항목의
+Annotation 전체가 숨겨짐), 'Copy original image' **미체크** 시 저장되지
+않는 예외 경로(분석을 한 번 더 도는 왕복이 필요해 비용이 크다) — 둘 다
+NEXT_TASK.md에 남긴다.
 
 ---
 

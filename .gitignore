@@ -12,6 +12,10 @@ Temp/
 work/
 regression.pid
 
+# 사내 공유폴더에서 캐시해 온 VXCAD-CXR 검증 샘플 영상(TC11) — 사내 자산,
+# 공개 저장소에 절대 포함하지 않는다(CLAUDE.md 6절).
+TestData/
+
 # 로컬 탐색 스크립트
 _probe_*.py
 
