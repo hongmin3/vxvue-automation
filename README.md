@@ -66,8 +66,13 @@ S0 스냅샷 ──> Export(A) ──> 설정 변경 ──> S1 스냅샷 ──
 ## 3. 지금 동작하는 것
 
 ```bash
-python run.py run-regression        # 전체 회귀 — 선행조건 → 라이선스 → DICOM 연동
-                                    #  → 구현된 TC를 **번호순**으로 → 리포트 (실측 39분)
+python run.py run-regression --reset-baseline   # 표준 전체 회귀(사용자 지시,
+                                    # 2026-08-24) — 설치 직후와 같은 클린
+                                    # DB/폴더 상태에서 시작. 선행조건 → 라이선스
+                                    # → DICOM 연동 → 구현된 TC를 **번호순**으로
+                                    # → 리포트 (실측 39분, baseline 복원 시간 별도)
+python run.py run-regression        # --reset-baseline 없이(임시 확인용 — 정식
+                                    # 판정에는 위 표준 명령을 쓸 것)
 python run.py run-regression --quick   # 짧은 회귀(범위 축소 — 정식 판정용이 아니다)
 python run.py tc02                  # MWL 조회 → Step 등록 → 촬영 → Send → Close → DB
 python run.py tc03                  # 영상 조작(Interpolation 설정 + 툴 적용 SSIM)
@@ -306,22 +311,32 @@ python work/launch_login.py
 
 ### 5.3 전체 회귀
 
+**표준 실행(사용자 지시, 2026-08-24)은 `--reset-baseline`을 포함한다** — 정식
+전체 회귀는 항상 설치 직후와 같은 클린 DB/폴더 상태에서 시작한다:
+
 ```bash
-python run.py run-regression
+python run.py run-regression --reset-baseline
 ```
+
+`--reset-baseline` 없는 `python run.py run-regression`은 코드 기본값으로는
+여전히 남겨 둔다(되돌릴 수 없는 조작을 명령 한 줄로 항상 켜 두지 않는다는
+원칙) — 그래서 매번 이 플래그를 직접 붙여야 하며, 빠뜨리면 Phase 1이 SKIP으로
+리포트에 남는다. 임시 확인(짧은 반복 테스트, 디버깅)에만 플래그 없이 쓰고,
+**정식 판정에는 항상 위 명령을 쓸 것.**
 
 Phase 순서대로 실행하고 **모든 결과를 리포트 1건으로 합친다.**
 
 | Phase | 내용 | 기본 동작 |
 |---|---|---|
 | 0 | `preflight` → `mwl-ensure`(당일 DX 처방 보장) → `xipl-license` | 항상 수행 |
-| 1 | DB/폴더를 클린 baseline으로 복원 (라이선스·로그는 왕복 백업으로 보존) | **건너뜀** — `--reset-baseline` 필요 |
+| 1 | DB/폴더를 클린 baseline으로 복원 (라이선스·로그는 왕복 백업으로 보존) | **건너뜀** — `--reset-baseline` 필요(정식 판정에는 항상 붙일 것) |
 | 2 | VXvue 자체 라이선스 확인 (Setting > System > License) | 항상 수행 |
 | 3 | DICOM SCP 등록 확인·구성 + C-ECHO (MWL / Storage / Print) | 항상 수행 |
 | 4 | 구현된 TC 실행 → (미구현 TC는 `automation_scope.json` 수준 표시) | 항상 수행 |
 
-**파괴적 옵션은 기본으로 실행하지 않고, 실행하지 않았다는 사실을 리포트에
-`SKIP`으로 남긴다.**
+**파괴적 옵션은 코드 기본값으로는 실행하지 않고, 실행하지 않았다는 사실을
+리포트에 `SKIP`으로 남긴다** — 그래서 정식 판정 실행에는 사람이든 자동화
+호출부든 매번 `--reset-baseline`을 명시적으로 붙여야 한다.
 
 **Setting Export/Import는 이 회귀에 들어 있지 않다**(사용자 지시, 2026-08-20).
 성격이 다르다 — 이 회귀는 Windows Update 후 제품이 정상 동작하는지 보는 것이고,
