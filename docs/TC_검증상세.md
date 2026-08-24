@@ -374,12 +374,12 @@ TC02와 다른 점: TC02는 "정보 일치"를, 이 TC는 **"전송된 객체의
 
 | Step | 코드가 하는 일 | Expected Result(판정 기준) | 판정 |
 |---|---|---|---|
-| 1 | Setting > DICOM - General 화면 진입 후 Send Dose SR 항목 확인 | **컨트롤 ID를 실측으로 확정하지 못했다** — 어느 컨트롤이 Send Dose SR인지 모르는 상태에서 누르면 다른 설정을 바꾼다. 사람이 확인해야 한다(확정 방법을 note에 적었다) | MANUAL |
+| 1 | Setting > DICOM - General 화면 진입 후 Send Dose SR Yes/No 라디오 확인(컨트롤 ID 2026-08-21 실측 확정), 이미 Yes면 건드리지 않고 No면 Yes로 바꾼다 | Yes 상태여야 한다. 컨트롤을 못 찾으면 MANUAL(근거 없는 조작 금지) | PASS/MANUAL |
 | 2 | MWL 오픈 + 촬영 | 영상 1장 이상 | PASS/FAIL |
 | 3 | Send(All Images) | 팝업 처리 성공. All Images를 택하는 이유: Test Data가 `Image, 스냅샷 영상, Dose SR 전송됨`을 기대하므로 검사의 객체 전부를 보내야 한다 | PASS/FAIL |
 | 4 | Bunny 로그 Status + 수신 파일 확인 | Status 0000h + 파일 1건 이상 | PASS/FAIL |
 | 5 | 수신 객체에 **Image**(`1.2.840.10008.5.1.4.1.1.1.1`) 포함 | 포함돼야 한다 | PASS/FAIL |
-| 6 | 수신 객체에 **Dose SR**(`1.2.840.10008.5.1.4.1.1.88.67`) 포함 | 포함되지 않으면 **MANUAL** — 전제 둘이 확정되지 않았다: (1) Send Dose SR이 Yes인지(Step 1이 MANUAL), (2) 가상 제너레이터에서 선량 정보가 생성되는지. 결함으로 단정하지 않는다 | PASS/MANUAL |
+| 6 | 수신 객체에 **Dose SR**(`1.2.840.10008.5.1.4.1.1.88.67`) 포함. 수신된 Image 객체의 `Modality` 태그를 함께 읽는다 | 포함되면 PASS. 안 포함이어도 **수신 Modality가 MG가 아니면 MANUAL** — DICOM Conformance Statement Rev.4.2 p.10 2.2.9절: "Dose structured report service as SCU is implemented ... for correctly transferred **MG** images." 이 자동화는 DX/Chest로 촬영하므로 Dose SR 미수신을 결함으로 단정하지 않는다(2026-08-24 실측: Modality=DX 확인, MG 절차 없이는 이 Step 결론을 낼 수 없다). Modality가 MG이고 Send Dose SR=Yes인데도 미수신이면 FAIL(결함 가능성) | PASS/MANUAL/FAIL |
 
 ---
 
@@ -556,6 +556,63 @@ Step 8의 태그 대조가 PatientID/PatientName을 계속 `None`으로 돌려�
 재귀적으로 건너뛰도록 고쳤다(TC02/05/07/08이 공유하는 모듈이라 전부에 이득이
 적용된다). 수정 전후로 Bunny 수신 파일(TC02/05/07)에 대해서도 결과가 그대로임을
 확인해 회귀가 없음을 검증했다.
+
+---
+
+## TC_WindowsUpdate_11 — AI 분석(CAD)
+
+코드: `tests/tc11_ai_analysis.py` · 실행: `python run.py tc11`
+
+체크리스트: *영상 촬영 후 AI Tool 버튼 클릭 → Request an analysis 선택.*
+Expected Result: *최초 실행 시 GPU 환경이면 Serialization 진행 후 'AI Medical
+findings tool' 창 표시, 분석 결과가 영상 위에 표시됨.* Test Data: *동물용
+뷰어는 미지원, GPU 없으면 Serialization 없이 CPU 모드.*
+
+이 PC는 GPU가 없다(Intel Iris Xe 내장 그래픽만) — UI 흐름과 화면 구성까지만
+검증하고 실제 분석 결과 생성(Request an analysis 클릭)은 SKIP한다.
+
+| Step | 코드가 하는 일 | Expected Result(판정 기준) | 판정 |
+|---|---|---|---|
+| 1 | VXvue 본체 라이선스 파일 존재 확인(Precondition, 종류 판별은 VXvue_License가 담당) | 사양서5 p.63~64 VP-770 — AI Engine 사용에 필요 | PASS/MANUAL |
+| 2 | MWL 오픈 + 촬영 | 영상 1장 이상 획득 | PASS/FAIL |
+| 3 | Viewer 모드 전환 | Tools 섹션 노출 | PASS/FAIL |
+| 4 | annotation 팝업에서 AI Tool 좌표 확보 — OCR로 'AI Tool' 라벨을 직접 못 읽으면(8px 라벨, 'Extra Tool' 등으로 오인식) 안정적으로 읽히는 Ellipse/Circle/Delete 좌표로 격자 칸을 보간 | 사양서2 p.150 VP-616 — 좌표 확보 자체가 목적 | PASS/MANUAL |
+| 5 | AI Tool 클릭 → 'AI Medical findings tool' 창 표시 확인. **클릭 전 2.5초 대기 후 팔레트를 다시 연다**(2026-08-24 수정 — 아래 참고), 그래도 안 뜨면 최대 3회 재시도 | Operation Manual 근거 — 클릭 시 이 창이 뜬다 | PASS/FAIL |
+| 6 | 'Request an analysis' 버튼(30736) 존재 확인 | 체크리스트 Step6 근거 | PASS/FAIL |
+| 7 | 옵션 체크박스 3종(Insert findings name/Insert probability text/Copy original image, 31509/31510/31512) 존재 확인 | 사양서2 p.150-152 VP-616 | PASS/FAIL |
+| 8 | 'Request an analysis' 실행 및 분석 결과 검증 | **SKIP** — GPU 없는 환경에서 실제로 눌러 어떤 대기·오류가 나는지는 사람이 판단 | MANUAL |
+| 9 | 창 닫기(제목줄 X, `-4`) — try/finally로 이 파일이 직접 책임진다(닫지 못하면 다음 실행의 Registration 탭 전환이 15초 타임아웃으로 막힘, 실측) | 창 닫힘 | PASS/MANUAL |
+| 10 | 열린 검사 닫기 | 열린 검사 0개 | PASS/MANUAL |
+
+**Step 5 타이밍 버그(2026-08-24 발견·수정)**: `read_tool_palette()`의 툴 팝업은
+docstring에 이미 적혀 있듯 **약 2.1초 뒤 스스로 닫힌다**(0.32s 열림 → 2.42s
+닫힘). Step 4가 좌표를 읽자마자 그 팝업이 아직 열려 있는 상태로 Step 5가
+곧바로 섹션 버튼을 다시 누르면 **토글로 팝업이 닫혀버리고** 뒤이은 클릭이
+빈 화면(영상 표시 영역)을 누르는 경쟁 상태였다 — OCR 처리 속도가 매번 달라
+간헐적으로만 재현됐다(전체 회귀 1회, 단독 재실행 2회에서 재현). 클릭 전
+2.5초를 기다려 팝업이 확실히 닫힌 뒤 다시 여는 것으로 해소했다.
+
+---
+
+## TC_WindowsUpdate_12 — 카메라/Live View
+
+코드: `tests/tc12_camera_live_view.py` · 실행: `python run.py tc12`
+
+체크리스트: *Live View 버튼 클릭 → 데모 영상 표시 확인, Step Analysis 설정
+후 확인, Include Snapshot Image 설정 후 전송.* Expected Result: *라이브 뷰
+화면에 실시간(데모) 영상 표시, Step 일치 시 초록/불일치 시 빨강 테두리,
+스냅샷 시 Storage Queue에 Image+Snapshot 추가.*
+
+| Step | 코드가 하는 일 | Expected Result(판정 기준) | 판정 |
+|---|---|---|---|
+| 1 | VX.LIVE.SERVER DEMO 모드 트리거 파일 존재 확인(Precondition) | `config.json` live_server.demo_flag_file | PASS/MANUAL |
+| 2 | MWL 오픈 + 촬영 | 영상 1장 이상 획득 | PASS/FAIL |
+| 3 | Viewer 모드 전환 | Tools 섹션 노출 | PASS/FAIL |
+| 4 | Tools 팝업에서 'Live View' 클릭 | 팔레트에서 발견 후 클릭 | PASS/FAIL |
+| 5 | Live View 오버레이 창('MainView') 표시 확인 — VXvue와 다른 프로세스(VX.LIVE.VIEW)가 소유한 별도 최상위 창이 영상 표시 영역과 같은 좌표에 겹쳐 뜬다(임베드 아님, 실측) | Operation Manual 9.13절 근거 | PASS/FAIL |
+| 6 | Play 클릭 → 영상 표시 영역 픽셀 평균 밝기 변화로 데모 영상 재생 판정(오버레이 창은 자식 컨트롤이 없어 OCR/owner-draw 판독 불가 — 다른 근거로 검증) | 정지(검은 화면)보다 재생 중 밝기가 뚜렷하게 높아야 함 | PASS/FAIL |
+| 7 | Step Analysis(초록/빨강 테두리) 및 Snapshot/Storage Queue 확인 | **MANUAL** — Setting > Integration > Camera의 Step Analysis 옵션 컨트롤 ID, Storage Queue 판독 방법 미실측(다음 과제) | MANUAL |
+| 8 | Live View 토글 off → 오버레이 창이 실제로 사라지는지 확인("눌렀다"가 아니라 창이 없어진 상태로 판정) | 토글 후 창 닫힘 | PASS/MANUAL |
 
 ---
 

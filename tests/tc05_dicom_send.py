@@ -174,14 +174,24 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
 
         # --- 전송된 객체 종류 판정 (이 TC의 핵심) -------------------------
         classes = {}
+        modalities = set()
         for path in res["files"]:
             tags = dicomlite.read_tags(path, ["SOPClassUID", "Modality", "PatientID"])
             classes.setdefault(tags.get("SOPClassUID") or "(판독 실패)", []).append(
                 os.path.basename(path))
+            if tags.get("Modality"):
+                modalities.add(tags.get("Modality"))
             r.attach(path)
 
         has_image = SOP_IMAGE in classes
         has_dose = SOP_DOSE_SR in classes
+        # 실측(2026-08-24): DICOM Conformance Statement Rev.4.2 p.10 2.2.9절
+        # "Dose structured report service as SCU is implemented ... for
+        # correctly transferred MG images." — Dose SR은 문서상 MG(유방촬영)
+        # 영상에만 적용된다. 이 자동화는 DX/Chest 절차로 촬영하므로(Procedure
+        # Mapping에 MG 경로가 없음), Dose SR 미수신을 이 Modality에서는
+        # 결함으로 단정하지 않는다 — MG 촬영으로 재검증해야 결론을 낼 수 있다.
+        is_mg = "MG" in modalities
         r.add(step, "전송된 객체에 Image가 포함",
               PASS if has_image else FAIL,
               expected="SOP Class %s (Digital X-Ray Image Storage - For Presentation)"
@@ -190,17 +200,32 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
                      or "수신 객체 없음")
         step += 1
 
-        r.add(step, "전송된 객체에 Dose SR이 포함",
-              PASS if has_dose else (MANUAL if was_yes is not True else FAIL),
+        if has_dose:
+            dose_verdict, dose_note = PASS, "확인됨."
+        elif not is_mg:
+            dose_verdict, dose_note = MANUAL, (
+                "촬영 Modality=%s(MG 아님) — DICOM Conformance Statement Rev.4.2 "
+                "p.10 2.2.9절: \"Dose structured report service as SCU is "
+                "implemented ... for correctly transferred MG images.\" Dose SR은 "
+                "문서상 MG(유방촬영) 영상에만 적용되므로, DX/Chest 촬영에서 Dose "
+                "SR이 없는 것을 이 결과만으로 결함이라 단정하지 않는다. Send Dose "
+                "SR=Yes와 무관하게 MG 촬영 경로로 재검증해야 결론을 낼 수 있다"
+                "(이 PC/Procedure Mapping에 MG 절차가 있는지 확인 필요)."
+                % (", ".join(sorted(modalities)) or "판독 실패"))
+        elif was_yes is not True:
+            dose_verdict, dose_note = MANUAL, (
+                "Dose SR이 수신되지 않았다. Send Dose SR 라디오를 못 찾아 Yes 전환을 "
+                "확인하지 못했으므로(위 Step MANUAL) 이 결과만으로 결함이라 단정하지 "
+                "않는다. 체크리스트 Test Data의 '스냅샷 영상'은 Live View 스냅샷이므로 "
+                "TC12 범위다.")
+        else:
+            dose_verdict, dose_note = FAIL, (
+                "촬영 Modality=MG이고 Send Dose SR = Yes를 위 Step에서 확인·적용했는데도 "
+                "Dose SR이 수신되지 않았다 — 결함 가능성이 있다.")
+        r.add(step, "전송된 객체에 Dose SR이 포함", dose_verdict,
               expected="SOP Class %s (X-Ray Radiation Dose SR)" % SOP_DOSE_SR,
               actual="Dose SR 수신 %s" % ("확인됨" if has_dose else "확인되지 않음"),
-              note=("확인됨." if has_dose else
-                    ("Send Dose SR = Yes를 위 Step에서 확인·적용했는데도 Dose SR이 "
-                     "수신되지 않았다 — 결함 가능성이 있다." if was_yes is True else
-                     "Dose SR이 수신되지 않았다. Send Dose SR 라디오를 못 찾아 Yes 전환을 "
-                     "확인하지 못했으므로(위 Step MANUAL) 이 결과만으로 결함이라 단정하지 "
-                     "않는다. 체크리스트 Test Data의 '스냅샷 영상'은 Live View 스냅샷이므로 "
-                     "TC12 범위다.")))
+              note=dose_note)
         step += 1
 
         if res["log_excerpt"]:

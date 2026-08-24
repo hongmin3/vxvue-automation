@@ -181,24 +181,51 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
     # 실제로 닫히지 않는다(실측 확인) — 이 파일이 직접 책임진다.
     dlg = None
     try:
-        ui.click(btn, settle=0.05)
-        time.sleep(W.PALETTE_OPEN_DELAY)
-        ui.click(point, settle=2.5)
+        # 실측(2026-08-24): 같은 좌표·같은 settle로 클릭해도 간헐적으로 창이
+        # 안 뜨는 사례가 있었다 — 원인은 `read_tool_palette()`(위 Step에서
+        # `_find_ai_tool_point()`가 호출) 자체 docstring에 이미 적혀 있었다:
+        # "팝업은 약 2.1초 뒤 스스로 닫힌다"(0.32s 열림 → 2.42s 닫힘). 그
+        # 팝업이 아직 열려 있는 상태에서 여기서 `ui.click(btn, ...)`을 또
+        # 누르면 **토글로 오히려 팝업이 닫혀버리고**, 뒤이은 `click(point)`은
+        # 빈 화면(영상 표시 영역)을 누르는 셀이 된다 — OCR/보간 처리 속도가
+        # 매번 달라 팝업이 아직 열려 있을 때도, 이미 닫혔을 때도 있어
+        # 간헐적으로 재현됐다. **팝업이 확실히 닫힌 뒤 다시 여는 것**으로
+        # 이 경쟁 상태를 없앤다(추측이 아니라 팝업 자체의 실측 수명 2.42초
+        # 근거). 그래도 안 뜨면 최대 3회까지 재시도한다.
+        MAX_ATTEMPTS = 3
+        attempts = 0
+        for attempts in range(1, MAX_ATTEMPTS + 1):
+            if attempts > 1:
+                _, retry_point, _ = _find_ai_tool_point(ui, cfg, evidence_dir)
+                if retry_point is None:
+                    break
+                point = retry_point
+            time.sleep(2.5)  # 팝업이 스스로 닫히는 걸 확실히 기다린 뒤 다시 연다
+            ui.click(btn, settle=0.05)
+            time.sleep(W.PALETTE_OPEN_DELAY)
+            ui.click(point, settle=2.5)
 
-        # `ui.dialog_text()`는 창 제목이 아니라 **내부 Static 라벨**(예:
-        # "Dog Normal Variation ...", "VHS: ")을 이어붙인 값을 돌려준다 —
-        # 창 제목과 비교하면 항상 어긋난다(실측). `ui.dialog(title=...)`가
-        # 창의 `text`(=제목, `_text_of(hwnd)`)로 직접 거른다.
-        end = time.time() + 10
-        while time.time() < end:
-            d = ui.dialog(title=AI_TOOL_DIALOG_TITLE)
-            if d is not None:
-                dlg = d
+            # `ui.dialog_text()`는 창 제목이 아니라 **내부 Static 라벨**(예:
+            # "Dog Normal Variation ...", "VHS: ")을 이어붙인 값을 돌려준다 —
+            # 창 제목과 비교하면 항상 어긋난다(실측). `ui.dialog(title=...)`가
+            # 창의 `text`(=제목, `_text_of(hwnd)`)로 직접 거른다.
+            end = time.time() + 8
+            while time.time() < end:
+                d = ui.dialog(title=AI_TOOL_DIALOG_TITLE)
+                if d is not None:
+                    dlg = d
+                    break
+                time.sleep(0.4)
+            if dlg is not None:
                 break
-            time.sleep(0.4)
         r.assert_true(step, "AI Tool 클릭 -> 'AI Medical findings tool' 창 표시", dlg is not None,
                       expected="Operation Manual 근거 — AI Tool 클릭 시 이 창이 뜬다",
-                      actual="표시됨" if dlg is not None else "10초 안에 나타나지 않음")
+                      actual=("표시됨(%d번째 시도)" % attempts) if dlg is not None
+                             else "%d회 재시도(각 8초 대기)에도 나타나지 않음" % MAX_ATTEMPTS,
+                      note=("" if attempts == 1 else
+                            "1회차에 뜨지 않아 재시도했다 — 같은 좌표/설정으로 클릭이 "
+                            "간헐적으로 반응하지 않는 사례를 진단 스크립트로 재현한 바 "
+                            "있다(2026-08-24). 여러 번 재현되면 원인을 더 조사할 것."))
         step += 1
 
         if dlg is not None:

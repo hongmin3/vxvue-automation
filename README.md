@@ -464,15 +464,20 @@ PASS·FAIL·MANUAL·SKIP·BLOCKED 건수 / 실패 항목 / 수동 확인 항목 
 
 | 실행 | 판정 합계 | 소요 |
 |---|---|---|
-| 2026-08-21 18:06 | PASS 90 / FAIL 2 / MANUAL 17 / SKIP 5 / BLOCKED 0 | 23분 |
+| 2026-08-24 08:10 | PASS 120 / FAIL 2 / MANUAL 13 / SKIP 5 / BLOCKED 0 | 21분 |
 
-**FAIL 2건은 제품 결함이 아니라 캡처 오염으로 규명됐다** — Echo/라이선스 화면
-판정이 화면 캡처(`ImageGrab`) 기반인데, 그 순간 이 자동화를 구동하는 터미널
-창이 같은 좌표를 덮어 OCR이 그 창의 내용을 읽었다(격리 재캡처로 실제 동작은
-정상임을 확인). 캡처 직전 foreground 재확인 + 오염 신호 탐지를 추가했다
-(`core/screen.looks_contaminated()`). 이 수정을 반영한 전체 회귀는 아직
-다시 돌리지 않았다 — 지금 상태는 `automation_scope.json`의 TC별 `level`과
-`Reports/`의 최근 리포트를 보는 것이 정확하다.
+이 실행은 화면 캡처 오염 방지 수정(`core/screen.looks_contaminated()`)이
+실제로 통했음을 확인했다 — 직전 회귀의 FAIL 2건(`VXvue_License`,
+`DICOM_Servers`)이 각각 MANUAL/PASS로 해소됐다. 대신 **새 FAIL 2건**이
+나왔고 둘 다 원인을 규명·수정했다: `TC_WindowsUpdate_05`는 Dose SR
+미수신이 결함이 아니라 DX 촬영에는 애초에 해당하지 않는 검증이었음을
+DICOM Conformance Statement로 확인해 MANUAL로 바꿨고, `TC_WindowsUpdate_11`
+은 툴 팝업이 스스로 닫히는 것과 재오픈 클릭이 경쟁하던 타이밍 버그를
+고쳤다. 두 수정 모두 개별 재실행으로 PASS를 확인했으나(TC05
+`PASS 6/FAIL 0/MANUAL 1`, TC11 `PASS 9/FAIL 0/MANUAL 1`), **셋을 함께
+반영한 전체 회귀 재실행은 두 차례 환경 문제로 끝까지 완료하지 못했다**
+(중간에 프로세스가 외부 요인으로 중단됨 — 제품/코드 결함 아님). 다음
+회귀 실행에서 최종 확인할 것.
 
 소요가 72분 → 39분으로 줄어든 경위는 4.7절에 있다(확인 범위를 줄인 것이 아니다).
 
