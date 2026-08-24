@@ -28,6 +28,19 @@
 | 3 | `DICOM_Servers` | MWL/Storage/Print 등록 확인 + C-ECHO | 항상 |
 | 4 | `TC_WindowsUpdate_*` | 구현된 TC 실행, 미구현은 scope 수준 표시 | 항상 |
 
+**Phase 4 중 VXvue가 실제로 죽으면**(`core/crash.py`, 사용자 지시 2026-08-24):
+`_run_tc()`가 매 TC 종료 후 `ui.pid`를 다시 확인한다. 죽어 있으면
+Windows Error Reporting이 남기는 덤프(`%LOCALAPPDATA%\CrashDumps\
+<프로세스명>.exe.<pid>.dmp`)로 **실제 크래시인지, 그냥 프로세스가
+사라진 것뿐인지**(사람이 닫았거나 다른 프로세스가 `taskkill`한 경우도
+`pid`는 똑같이 사라진다)를 구분해 FAIL Step을 추가한다 — `TCResult.
+verdict`는 FAIL이 하나라도 있으면 전체가 FAIL이므로, 그 TC의 이미 기록된
+Step들이 우연히 PASS/MANUAL이었어도 최종 판정은 FAIL로 확정된다. 그 뒤
+`ui.ensure_ready(exe_path=..., user_id=..., password=...)`로 재기동·재
+로그인해 다음 TC가 이어질 수 있게 한다. 라이브 검증(VXvue를 강제 종료한
+뒤 `_run_tc()` 직접 호출): 그 TC는 FAIL로 확정되고, 재기동된 VXvue의
+새 PID로 바로 다음 TC(`tc02`)가 정상적으로 PASS 13/0/0/0 완료됨을 확인.
+
 **Setting Export/Import는 이 회귀에 포함하지 않는다**(사용자 지시, 2026-08-20).
 검증 목적이 다르다 — 이 회귀는 Windows Update 후 제품 동작을 보고, 그쪽은 설정
 백업·복원 기능 자체의 회귀로 DB를 통째로 되돌린다(실측 1021초, 단일 항목 중
@@ -576,59 +589,85 @@ CPU 모드로 실제 분석까지 실행하고, 사내 공유폴더의 VXCAD-CXR
 | Step | 코드가 하는 일 | Expected Result(판정 기준) | 판정 |
 |---|---|---|---|
 | 1 | VXvue 본체 라이선스 파일 존재 확인(Precondition, 종류 판별은 VXvue_License가 담당) | 사양서5 p.63~64 VP-770 — AI Engine 사용에 필요 | PASS/MANUAL |
-| 2 | **VXCAD-CXR 검증 샘플 영상을 데모 영상으로 등록**(2026-08-24 신설) — 로컬 캐시(`auto/TestData/tc11_ai_samples/`, git 제외)의 3종(Nodule Mass/Pleural Effusion/Pneumothorax) 중 무작위로 하나를 골라 `<data_dir>\DemoImage\Default.img`로 교체(Service Manual p.170-171 5.2.5절), 실행 끝에 반드시 원복 | 교체·등록 성공. 캐시가 없으면 기존 기본 데모 영상 그대로(MANUAL) | PASS/MANUAL |
+| 2 | **VXCAD-CXR 검증 샘플 영상을 데모 영상으로 등록** — 로컬 캐시(`auto/TestData/tc11_ai_samples/`, git 제외)의 3종(Nodule Mass/Pleural Effusion/Pneumothorax) 중 무작위로 하나를 골라 `<data_dir>\DemoImage\Default.img`로 교체(Service Manual p.170-171 5.2.5절), 실행 끝에 반드시 원복 | 교체·등록 성공. 캐시가 없으면 기존 기본 데모 영상 그대로(MANUAL) | PASS/MANUAL |
 | 3 | MWL 오픈 + 촬영 — Step 2가 교체한 샘플이 촬영됨 | 영상 1장 이상 획득 | PASS/FAIL |
 | 4 | Viewer 모드 전환 | Tools 섹션 노출 | PASS/FAIL |
 | 5 | annotation 팝업에서 AI Tool 좌표 확보 — OCR로 'AI Tool' 라벨을 직접 못 읽으면(8px 라벨, 'Extra Tool' 등으로 오인식) 안정적으로 읽히는 Ellipse/Circle/Delete 좌표로 격자 칸을 보간 | 사양서2 p.150 VP-616 — 좌표 확보 자체가 목적 | PASS/MANUAL |
-| 6 | AI Tool 클릭 → 'AI Medical findings tool' 창 표시 확인. **클릭 전 2.5초 대기 후 팔레트를 다시 연다**(2026-08-24 수정 — 아래 참고), 그래도 안 뜨면 최대 3회 재시도 | Operation Manual 근거 — 클릭 시 이 창이 뜬다 | PASS/FAIL |
+| 6 | AI Tool 클릭 → 'AI Medical findings tool' 창 표시 확인. **클릭 전 2.5초 대기 후 팔레트를 다시 연다**(아래 참고), 그래도 안 뜨면 최대 3회 재시도 | Operation Manual 근거 — 클릭 시 이 창이 뜬다 | PASS/FAIL |
 | 7 | 'Request an analysis' 버튼(30736) 존재 확인 | 체크리스트 Step6 근거 | PASS/FAIL |
 | 8 | 옵션 체크박스 3종(Insert findings name/Insert probability text/Copy original image, 31509/31510/31512) 존재 확인 | 사양서2 p.150-152 VP-616 | PASS/FAIL |
-| 9 | **'Request an analysis' 실제 클릭 + 완료 확인**(2026-08-24 SKIP→실행) — 다른 팝업(제목이 다른 #32770)이 새로 뜨면 에러/경고로 분류해 반영, 아니면 영상 표시 영역(`UIInstanceMedicalFindings`, ctrl_id 880902) 캡처가 더는 안 바뀔 때까지(SSIM≥0.995 2회 연속, 최대 90초) 대기 | 에러 없이 완료 | PASS/FAIL/MANUAL |
-| 10 | **'Insert findings name' 체크 해제→재체크 반영 확인**(신설) — 해제 전/후/재체크 캡처를 SSIM 비교 | 사양서2 p.150-152 VP-616 — 해제 시 달라지고(<0.9999) 재체크 시 복원(≥0.9999) | PASS/MANUAL |
-| 11 | **'Insert probability text' 체크 해제→재체크 반영 확인**(신설) — 위와 동일 방식 | 위와 동일 | PASS/MANUAL |
-| 12 | **'Copy original image' 체크(기본값) 상태로 OK 닫기 → 새 영상 저장 확인**(신설) — DB `INSTANCE` 행 수(`core/workflow.instance_count()`)가 OK(30688) 클릭 후 +1 되는지 확인 | 사양서2 p.150-152 VP-616 — 진단 결과 Annotation이 추가된 영상이 원본 복사 후 새로 저장돼야 한다 | PASS/MANUAL |
-| 13 | 창 닫기 — Step 12에서 이미 OK로 닫혔으면 그 사실만 기록, 아니면 제목줄 X(`-4`)로 닫는다(try/finally로 이 파일이 직접 책임짐, 닫지 못하면 다음 실행의 Registration 탭 전환이 15초 타임아웃으로 막힘, 실측) | 창 닫힘 | PASS/MANUAL |
-| 14 | 데모 영상 원복(Default.img) | 원복 성공 | PASS/FAIL |
-| 15 | 열린 검사 닫기 | 열린 검사 0개 | PASS/MANUAL |
+| 9 | **'Request an analysis' 실제 클릭 + 완료 확인** — 다른 팝업(제목이 다른 #32770)이 새로 뜨면 에러/경고로 분류해 반영, 아니면 영상 표시 영역(`UIInstanceMedicalFindings`, ctrl_id 880902) 캡처가 더는 안 바뀔 때까지(SSIM≥0.995 2회 연속, 최대 90초) 대기 | 에러 없이 완료 | PASS/FAIL/MANUAL |
+| 10 | **검출된 소견명이 주입한 샘플과 일치하는지 확인** — Detected list 전체를 캡처해 OCR, 부분 문자열 포함 여부로 판정 | 사양서2 VP-616 — 주입한 소견명이 목록에 표시돼야 한다 | PASS/MANUAL |
+| 11 | **Detected list 각 행의 'Use' 체크박스를 하나씩 토글** — 검출된 행 전체를 순서대로(한 번에 한 행만) 해제→복원. 여러 행을 동시에 해제하는 **조합**은 다루지 않는다(2^N 비용) | 사양서2 VP-616 — 해제하면 그 항목의 Annotation이 사라지고 복원하면 돌아와야 한다 | PASS/FAIL/MANUAL |
+| 12 | **'Insert findings name' 체크박스의 실제 기본 상태를 읽고 토글 반영 확인** — 체크 여부를 가정하지 않고 `core.setting.checkbox_checked()`로 읽은 뒤 그 방향대로 토글·복원 | 사양서2 p.150-152 VP-616 — 토글하면 달라지고 복원하면 돌아와야 한다 | PASS/FAIL/MANUAL |
+| 13 | **'Insert probability text' 체크박스** — 위와 동일 방식 | 위와 동일 | PASS/FAIL/MANUAL |
+| 14 | **'Copy original image' 체크(기본값) 상태로 OK 닫기 → 새 영상 저장 확인** — 실제 체크 여부를 먼저 읽고 미체크면 체크로 바꾼 뒤, DB `INSTANCE` 행 수(`core/workflow.instance_count()`)가 OK(30688) 클릭 후 +1 되는지 확인 | 사양서2 p.150-152 VP-616 — 진단 결과 Annotation이 추가된 영상이 원본 복사 후 새로 저장돼야 한다 | PASS/FAIL/MANUAL |
+| 15 | **'Copy original image' 미체크 시 저장 안 됨(예외 경로) 확인** — Step 14가 이미 분석까지 끝낸 같은 영상을 AI Tool 재오픈으로 재사용(재획득 없음), 미체크로 바꾸고 OK로 닫아 INSTANCE 불변 확인 | 사양서2 VP-616 예외 조항 — 미체크면 저장되지 않아야 한다 | PASS/FAIL/MANUAL |
+| 16 | 창 닫기 — Step 15에서 이미 OK로 닫혔으면 그 사실만 기록, 아니면 제목줄 X(`-4`)로 닫는다(try/finally로 이 파일이 직접 책임짐, 닫지 못하면 다음 실행의 Registration 탭 전환이 15초 타임아웃으로 막힘, 실측) | 창 닫힘 | PASS/MANUAL |
+| 17 | 데모 영상 원복(Default.img) | 원복 성공 | PASS/FAIL |
+| 18 | 열린 검사 닫기 | 열린 검사 0개 | PASS/MANUAL |
 
-**Step 6 타이밍 버그(2026-08-24 발견·수정)**: `read_tool_palette()`의 툴 팝업은
+**Step 6 타이밍 버그(발견·수정)**: `read_tool_palette()`의 툴 팝업은
 docstring에 이미 적혀 있듯 **약 2.1초 뒤 스스로 닫힌다**(0.32s 열림 → 2.42s
 닫힘). Step 5가 좌표를 읽자마자 그 팝업이 아직 열려 있는 상태로 Step 6이
 곧바로 섹션 버튼을 다시 누르면 **토글로 팝업이 닫혀버리고** 뒤이은 클릭이
 빈 화면(영상 표시 영역)을 누르는 경쟁 상태였다 — OCR 처리 속도가 매번 달라
-간헐적으로만 재현됐다(전체 회귀 1회, 단독 재실행 2회에서 재현). 클릭 전
-2.5초를 기다려 팝업이 확실히 닫힌 뒤 다시 여는 것으로 해소했다.
+간헐적으로만 재현됐다. 클릭 전 2.5초를 기다려 팝업이 확실히 닫힌 뒤 다시
+여는 것으로 해소했다.
 
-**Step 9 실측(중요)**: 클릭 **전** 캡처에 이미 분석 결과(소견 Outline·확률)가
-표시돼 있었다 — CPU 모드에서는 창이 열리는 시점에 분석이 이미(또는 매우
-빠르게) 끝나 있는 것으로 보인다(정확한 트리거 시점은 문서로 확인되지
-않음). "화면 안정" 판정은 여전히 유효하다(클릭 전후로 계속 같은 상태를
-유지하는 것도 '안정'이다). 실제로 정확한 CAD 분석이 CPU 모드로 동작함을
-확인했다 — Pleural Effusion 샘플에서 Pleural Effusion 98% 검출(초록
-Outline 정확한 위치), Pneumothorax 샘플에서 Pneumothorax 54%/98% 2건
-검출(둘 다 `Cache/tc11_analysis_result.png`로 캡처 증거 확보). 소견명이
-주입한 샘플과 자동으로 일치하는지 OCR로 대조하지는 않는다 — 사람이 첨부된
-캡처로 확인한다(다음 과제).
+**Step 9 정정**: 처음엔 "클릭 전 캡처에 이미 분석 결과가 있었다 — 창이
+열리자마자 자동으로 분석이 끝나 있는 것 같다"고 적었는데 착각이었다.
+안정화 루프의 `before_shot`/`after_shot`을 서로 바꿔치기(swap)하며
+재사용하는 코드 때문에, 사후에 "before" 파일을 열어 보면 이미 최신(분석
+완료 후) 내용으로 덮여 있었던 것뿐이다. 실제로는 클릭이 분석을 트리거하고
+CPU 모드에서 약 2.5~4.7초 안에 완료된다(격리 재현 확인). 판정 로직(화면
+안정 여부만 비교) 자체는 옳았으므로 코드는 그대로다. 실제로 정확한 CAD
+분석이 CPU 모드로 동작함을 확인했다 — Pleural Effusion 샘플에서 Pleural
+Effusion 98% 검출(초록 Outline 정확한 위치), Pneumothorax 샘플에서
+Pneumothorax 54%/98% 2건 검출.
 
-**Step 10/11 임계값 실측(2026-08-24)**: 영상 표시 영역 전체 기준으로는
-텍스트 한두 글자 변화가 SSIM에 크게 반영되지 않는다(측정값 0.9952~0.9993,
-"98%" 같은 짧은 Probability text는 Findings name보다도 덜 반영됨) — 배경
-X-ray가 차지하는 면적이 훨씬 크기 때문이다. 반면 재체크(복원) 시 SSIM은
-항상 정확히 1.0000이었다(이 환경은 캡처 노이즈가 없다). 그래서 임계값을
-0.995 → 0.999 → **0.9999**로 세 번 실측 조정했다 — 0.999로도 Probability
-text(0.9993)를 못 잡았다.
+**Step 10 실측**: 처음엔 `core/listgrid.ListGrid`로 행 단위 판독을
+시도했는데, 분석 **전**(빈 목록) 상태에서 테스트해 행 rect가 화면과 안
+맞는 것으로 오판했다 — 분석 완료 후에는 행 rect가 정확했다(재확인).
+그래도 목록 전체를 캡처해 OCR하는 방식이 더 간단해 그대로 유지한다.
 
-**설계 범위 결정(사용자 지시, 2026-08-24)**: Detected list 행별 'Use'
-체크박스(해제 시 그 항목의 Annotation 전체가 숨겨짐)는 **조합으로
-검증하지 않는다** — 검출 항목 수(N)에 따라 조합이 2^N으로 늘어나 비용
-대비 가치가 낮다. 이 TC는 검출된 항목의 Use가 전부 기본값(체크)인 단일
-시나리오만 다루는 것으로 설계를 확정했다(다음 과제가 아니라 명시적 범위
-제외 — 지금 구현은 Use를 아예 건드리지 않아 이미 이 가정과 일치한다).
+**Step 11 실측**: Nodule Mass 2건 검출 시 첫 행만 Use를 해제하면 그 원만
+사라지고 둘째 원은 남았고, 복원하면 둘 다 돌아왔다(캡처로 시각 확인) —
+사용자 지시로 "조합은 다루지 않되 각 체크박스가 개별적으로 정상 동작하는지"
+는 검출된 행 수만큼(선형 비용) 전부 확인한다.
 
-**다루지 않은 것(다음 과제)**: 'Copy original image' **미체크** 시
-저장되지 않는 예외 경로(분석을 한 번 더 도는 왕복이 필요해 비용이 크다),
-검출 소견명이 주입한 샘플과 자동으로 일치하는지의 OCR 대조(현재는 사람이
-첨부 캡처로 확인) — NEXT_TASK.md에 남긴다.
+**Step 12/13 실측(중요, 라이브 관찰로 발견)**: 처음엔 "옵션 체크박스는
+사양서 기본값(체크)에서 시작한다"고 가정하고 무조건 (해제→재체크) 순서로
+클릭했다. 실측하니 'Insert findings name'이 여러 번의 라이브 실행에서
+매번 **미체크**로 시작했고, 한 실행에서는 'Copy original image'도
+미체크로 시작했다(직전 실행이 미체크 상태로 닫은 것과 일치) — **이
+옵션들은 분석마다 사양서 기본값으로 초기화되는 게 아니라 마지막 설정을
+기억하는 것으로 보인다**(정확한 저장 위치는 `사양 확인 필요`). 그래서
+클릭 전에 `core.setting.checkbox_checked()`(이 창도 Setting 화면과 같은
+금색 체크 표시 `(223,182,56)`를 씀, 실측 확인)로 실제 상태를 읽고 그
+방향대로 토글한다.
+
+**Step 10/11(구 번호) 임계값 실측**: 영상 표시 영역 전체 기준으로는 텍스트
+한두 글자 변화가 SSIM에 크게 반영되지 않는다(측정값 0.9952~0.9993, "98%"
+같은 짧은 Probability text는 Findings name보다도 덜 반영됨). 반면 재체크
+(복원) 시 SSIM은 항상 정확히 1.0000이었다(이 환경은 캡처 노이즈가 없다).
+그래서 임계값을 0.995 → 0.999 → **0.9999**로 세 번 실측 조정했다 — 0.999
+로도 Probability text(0.9993)를 못 잡았다.
+
+**MANUAL/FAIL 기준(라이브 관찰로 지적받아 재조정)**: 이 창은 캡처 노이즈가
+없다는 것을 실측으로 확인해 둔 만큼, Step 9~15의 SSIM/DB `INSTANCE` 검증은
+**컨트롤을 찾지 못해 시도조차 못한 경우만 MANUAL로 남기고, 시도했는데
+기대와 다르면 FAIL로 올린다** — 측정 불확실성이 아니라 결함으로 본다는
+뜻이다. 소견명 OCR 대조(Step 10)는 OCR 자체가 오독 가능성이 있어(License
+키 OCR과 같은 이유) 불일치를 여전히 MANUAL로 둔다.
+
+**설계 범위 결정(사용자 지시)**: Detected list 행별 'Use' 체크박스의
+**조합**(여러 행을 동시에 해제한 상태들)은 검증하지 않는다 — 검출 항목
+수(N)만큼 조합이 2^N으로 늘어나 비용 대비 가치가 낮다. 대신 각 행을
+하나씩(선형 비용) 토글해 메커니즘 자체는 전부 확인한다(Step 11).
+
+**다루지 않은 것(다음 과제)**: 이 옵션들의 상태가 왜/어디에 저장돼
+유지되는지(`사양 확인 필요`) — NEXT_TASK.md에 남긴다.
 
 ---
 

@@ -52,6 +52,7 @@ import time
 import traceback
 from datetime import date, datetime
 
+from . import crash as crash_mod
 from . import preflight as preflight_mod
 from . import result as result_mod
 
@@ -476,6 +477,45 @@ def _placeholder(tc_id, scope_by_id, override_note=None):
     return r
 
 
+def _check_crash(tc_id, cfg, ui, label, started, r):
+    """`mod.run()`이 끝난 뒤 VXvue가 실제로 죽었는지 확인하고, 죽었으면 그
+    TC를 FAIL로 확정한 뒤 다음 TC를 위해 재기동한다(사용자 지시, 2026-08-24).
+
+    `ui.pid`는 매번 살아있는지 다시 확인하므로(`VXvueUi.pid` 프로퍼티) 그냥
+    `None`이 됐다는 사실은 알 수 있지만, 그 이전 TC 모듈 코드는 각자 짜여진
+    방식대로(예외로 죽거나, "화면을 못 찾음"류의 MANUAL로 조용히) 반응했을
+    뿐 **"VXvue가 실제로 죽었다"는 진짜 원인을 리포트에 남기지 않는다.**
+    그래서 여기서 명시적으로 확인해 FAIL Step을 하나 추가한다 — `TCResult.
+    verdict`는 FAIL이 하나라도 있으면 전체가 FAIL이 되므로(`core/result.py`),
+    이미 기록된 Step들이 우연히 PASS/MANUAL이었어도 이 TC의 최종 판정은
+    FAIL로 확정된다.
+    """
+    if ui.pid:
+        return r
+    dumps = crash_mod.find_dumps(ui.process_name, since=started)
+    if dumps:
+        actual = "크래시 덤프 확인: %s" % dumps[-1]
+        note = ("VXvue가 이 TC 실행 중 실제로 크래시했다(Windows Error Reporting이 "
+                "%s에 남긴 덤프로 확인) — 그 이후 기록된 Step 결과는 신뢰할 수 없다. "
+                "다음 TC를 위해 재기동·재로그인한다." % crash_mod.CRASH_DUMP_DIR)
+    else:
+        actual = "프로세스가 사라졌지만 크래시 덤프는 없음"
+        note = ("원인 불명 — 사람/다른 프로세스의 종료(taskkill 등)였을 가능성도 있어 "
+                "크래시로 단정하지 않지만, 이 TC가 의도대로 끝나지 못한 것은 분명하다. "
+                "다음 TC를 위해 재기동·재로그인한다.")
+    r.add(len(r.checks) + 1, "VXvue 실행 중 종료 감지", result_mod.FAIL,
+          expected="시험 도중 VXvue가 종료되지 않아야 한다", actual=actual, note=note)
+    r.finalize(r.completed)
+    _log("%s: VXvue 종료 감지(%s) — 재기동한다" % (label, "크래시" if dumps else "원인 불명"))
+    try:
+        v = cfg.get("viewer") or {}
+        lg = v.get("login") or {}
+        ui.ensure_ready(exe_path=v.get("exe"), user_id=lg.get("id"), password=lg.get("password"))
+    except Exception as exc:                              # noqa: BLE001
+        _log("%s: 재기동 실패 — %s (다음 TC도 실패할 수 있다)" % (label, exc))
+    return r
+
+
 def _run_tc(tc_id, cfg, ui, evidence_root, extra_kwargs=None):
     """구현된 TC 모듈을 실행한다. 예외는 그 TC의 FAIL로 격리한다."""
     import importlib
@@ -512,12 +552,14 @@ def _run_tc(tc_id, cfg, ui, evidence_root, extra_kwargs=None):
                 r.finalize(r.completed)
         except Exception as exc:                          # noqa: BLE001
             _log("%s 검사 정리 실패: %s" % (label, exc))
+        r = _check_crash(tc_id, cfg, ui, label, started, r)
         _log("%s 완료: %s (%.0f초)" % (label, r.verdict, time.time() - started))
         return r
     except Exception as exc:                              # noqa: BLE001
         r = result_mod.TCResult(tc_id, label)
         _fail_from_exception(r, 1, "%s 실행" % label, exc, cfg)
         _log("%s 예외로 실패: %s" % (label, exc))
+        r = _check_crash(tc_id, cfg, ui, label, started, r)
         return r.finalize()
 
 

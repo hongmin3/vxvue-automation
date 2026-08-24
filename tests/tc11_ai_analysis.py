@@ -35,11 +35,15 @@ GPU/CPU 여부로 PASS를 가르지 않는다(사양서2 p.149-150 VP-616 — CP
 
 - AI Tool 버튼 존재·클릭 → "AI Medical findings tool" 창 표시
 - "Request an analysis" 클릭 → 화면 안정(에러 없이 완료)까지 확인
-- 결과가 실제로 주입한 소견과 일치하는지는 **사람이 첨부된 캡처로 확인**
-  한다(자동 OCR로 소견명·확률을 판독해 대조하지는 않는다 — 다음 과제)
+- 결과가 실제로 주입한 소견과 일치하는지 **Detected list를 통째로 캡처해
+  OCR로 자동 대조**(2026-08-24 — 아래 "검출 소견명 자동 대조" 절)
+- Detected list **각 행의 'Use' 체크박스**를 하나씩 토글해 그 항목의
+  Annotation이 실제로 사라지고/되돌아오는지 확인(행마다 개별, 여러 행을
+  동시에 해제하는 조합은 다루지 않음 — 아래 절)
 - 옵션 체크박스 3종(Insert findings name / Insert probability text /
   Copy original image)의 **존재뿐 아니라 체크/해제가 실제로 영상 표시에
-  반영되는지**까지 확인(아래 "옵션 체크/해제 검증" 절)
+  반영되는지**까지 확인(아래 "옵션 체크/해제 검증" 절) — Copy original
+  image는 체크·**미체크** 두 경로 모두 확인한다
 
 ## AI Tool 버튼 위치 (실측 2026-08-21)
 
@@ -70,12 +74,16 @@ Ellipse/Circle/Delete 좌표로 다시 계산한다).
 메커니즘으로, 사내 공유폴더에서 캐시해 온 3종 소견 중 실행마다 무작위로
 하나를 골라 등록하고 실행이 끝나면 반드시 원복한다).
 
-**실측(2026-08-24)**: "Request an analysis"를 눌러도 화면이 전혀 바뀌지
-않는 사례를 캡처로 확인했다 — 클릭 **전** 캡처에 이미 분석 결과(소견
-Outline·확률)가 표시돼 있었다. 즉 CPU 모드에서는 창이 열리는 시점에 분석이
-이미(또는 매우 빠르게) 끝나 있는 것으로 보인다(정확한 트리거 시점은 문서로
-확인되지 않음 — `사양 확인 필요`). "화면 안정" 판정은 여전히 유효하다
-(클릭 전후로 계속 같은 상태를 유지하는 것도 "안정"이다).
+**정정(2026-08-24)**: 처음엔 "클릭 전 캡처에 이미 분석 결과가 있었다 —
+CPU 모드는 창이 열리는 시점에 분석이 끝나 있는 것 같다"고 적었는데, 이는
+착각이었다. `_run_analysis()`의 안정화 루프가 매번 다른 파일명이 아니라
+`before_shot`/`after_shot` 두 변수를 **서로 바꿔치기**하며 재사용하는데,
+그 스왑 때문에 사후에 "before" 파일을 열어 봤을 때 이미 최신(분석 완료 후)
+내용으로 덮여 있었던 것뿐이다. 실제로는(`work/probe_detected_list6.py`로
+격리 재현) **"Request an analysis" 클릭이 분석을 실제로 트리거하고,
+CPU 모드에서 약 2.5~4.7초 안에 완료된다** — 창이 열리자마자 자동으로
+끝나 있는 게 아니다. 판정 로직(화면 안정 여부만 비교) 자체는 파일 이름과
+무관하게 항상 옳았으므로 코드는 고치지 않았다 — 이 설명만 정정한다.
 
 ## 옵션 체크/해제 검증 (사양서2 VP-616, 사용자 지시 2026-08-24)
 
@@ -90,20 +98,49 @@ p.150~152 VP-616 원문(영문) 근거로 실제 체크/해제 효과까지 확�
 
 Detected list 각 행에도 별도의 **Use** 체크박스가 있다(해제 시 그 항목의
 Annotation/이름/확률 전체가 숨겨짐, 기본 체크). **사용자 지시(2026-08-24):
-Use 체크박스는 조합으로 검증하지 않는다** — 검출 항목 수(N)에 따라
-2^N으로 늘어나는 조합을 전부 확인하는 건 비용 대비 가치가 낮다. 그래서
-이 TC는 **"검출된 항목의 Use가 전부 기본값(체크)인 단일 시나리오"만
-다루는 것으로 설계를 확정**한다 — 개별 Use를 해제해보는 조합 테스트는
-범위 밖(다음 과제 아님, 명시적 설계 결정)이다. 지금 구현은 Use 체크박스를
-아예 건드리지 않으므로 이미 이 가정과 일치한다.
+Use 체크박스의 조합(여러 행을 동시에 해제한 상태들)은 검증하지 않는다** —
+검출 항목 수(N)에 따라 2^N으로 늘어나는 조합을 전부 확인하는 건 비용
+대비 가치가 낮다. 그 대신 **각 행을 하나씩(한 번에 한 행만) 토글해
+메커니즘 자체가 개별적으로 정상 동작하는지는 전부 확인한다**(사용자
+후속 지시, 2026-08-24: "Use 조합은 설계 밖으로 넘겨도 각 체크박스를
+체크·해제 시 정상적으로 되는지까지는 확인하고 싶어") — 이건 선형(N)
+비용이라 조합(2^N)과는 다르다. `_verify_use_checkbox()`가 검출된 행
+전체를 순서대로 토글·복원한다(라이브 확인: Nodule Mass 2건 검출 시
+첫 행만 해제하면 그 원만 사라지고 둘째 원은 남음 → 복원하면 둘 다
+돌아옴 → 둘째 행도 같은 방식으로 확인).
 
 검증 방법: 영상 표시 영역(`UIInstanceMedicalFindings`, ctrl_id 880902,
 실측 2026-08-24)만 캡처해 체크 해제 전/후 SSIM을 비교한다(달라야 함),
 다시 체크하면 원래 캡처와 다시 비슷해져야 한다(복원 확인). **Copy original
-image**는 기본값(체크)인 상태로 OK 버튼(30688)을 눌러 닫고 DB `INSTANCE`
-행 수가 +1 되는지로 확인한다 — **미체크 시 저장되지 않는 예외 경로는
-자동화하지 않았다**(분석을 한 번 더 도는 왕복이 필요해 비용이 크다,
-다음 과제로 NEXT_TASK.md에 남긴다).
+image**는 두 경로 모두 확인한다(사용자 지시, 2026-08-24) — ① 기본값
+(체크) 상태로 OK 버튼(30688)을 눌러 닫으면 DB `INSTANCE`가 +1 되는지,
+② 그다음 **AI Tool을 다시 열어**(재획득 없이 같은 영상 재사용) 미체크로
+바꾸고 OK로 닫으면 INSTANCE가 **늘지 않는지**(예외 경로, VP-616).
+
+**실측 발견(2026-08-24, 사용자가 라이브로 관찰해 지적) — 옵션 체크박스가
+사양서 기본값과 다르게, 그리고 실행 간에도 유지된다.** 처음 두 번의 라이브
+실행에서 'Insert findings name'이 매번 **미체크**로 시작했고(사양서2
+VP-616 원문은 기본값을 "Checked"라고 적어 놓았다), 두 번째 실행에서는
+'Copy original image'도 미체크로 시작했다 — 정확히 **직전 실행이
+'Copy original image' 미체크 경로 검증(위 ②)을 끝내며 그 상태로 닫은 것과
+일치**한다. 즉 이 옵션들은 분석마다 사양서 기본값으로 초기화되는 게
+아니라 **마지막으로 설정한 값을 기억하는 것으로 보인다**(정확한 저장
+위치·범위는 문서로 확인되지 않음 — `사양 확인 필요`). 그래서 코드는
+이제 각 체크박스를 만지기 전에 **실제 상태를 읽는다**(`core.setting.
+checkbox_checked()` 재사용, Setting 화면과 같은 금색 체크 표시
+`(223,182,56)`를 이 창도 그대로 쓴다는 것을 실측으로 확인) — "기본
+체크"를 가정하고 무조건 (해제→재체크) 순서로 클릭하던 이전 코드는
+방향을 알 수 없어 틀릴 수 있었다(사용자 지적: "첫번째 옵션은 계속
+체크 안 하고 테스트하는 것 같은데 아니야?" — 정확했다).
+
+## 검출 소견명 자동 대조 (사용자 지시, 2026-08-24)
+
+Detected list의 헤더는 표준 `SysHeader32`라 `core/listgrid.ListGrid`로
+열 이름·셀 값을 읽을 수 있다(다른 화면의 목록과 같은 구조). 검출된 각 행의
+소견명을 이 절차가 데모 영상으로 등록한 `sample["finding"]`과 대소문자·
+공백을 무시하고 대조해, **적어도 한 행이 일치하면 PASS**로 본다(같은
+소견이 여러 위치에서 검출될 수 있음 — 실측: Pneumothorax 샘플에서
+Pneumothorax 54%/98% 2행 검출).
 """
 
 import os
@@ -137,6 +174,9 @@ IMAGE_AREA_CTRL_ID = 880902
 # 오른쪽이 Cancel(30642) — 그린 Outline을 지우고 닫는다(사양서2 VP-616).
 OK_BUTTON_ID = 30688
 CANCEL_BUTTON_ID = 30642
+# 실측(2026-08-24, work/probe_ai_dialog.py): Detected list. 헤더가
+# SysHeader32라 core/listgrid.ListGrid로 열 이름·셀 값을 읽을 수 있다.
+DETECTED_LIST_CTRL_ID = 31100
 
 
 def _find_ai_tool_point(ui, cfg, evidence_dir):
@@ -362,11 +402,15 @@ def _run_body(r, ui, cfg, evidence_dir, do_acquire, map_procedure,
                 step = _run_analysis(r, ui, dlg, req_btn, step)
                 # 분석이 안정된 뒤에만 옵션 반영을 의미 있게 확인할 수 있다.
                 if ui.dialog(title=AI_TOOL_DIALOG_TITLE) is not None:
+                    step = _verify_finding_match(r, ui, dlg, sample, step)
+                    step = _verify_use_checkbox(r, ui, dlg, step)
                     step = _verify_option_checkbox(r, ui, dlg, step, 31509,
                                                    "Insert findings name", "name")
                     step = _verify_option_checkbox(r, ui, dlg, step, 31510,
                                                    "Insert probability text", "prob")
                     step, already_closed = _verify_copy_original_image(r, ui, cfg, dlg, step)
+                    if already_closed:
+                        step = _verify_copy_unchecked(r, ui, cfg, evidence_dir, step)
             else:
                 r.add(step, "'Request an analysis' 실행 및 분석 결과 검증", MANUAL,
                       actual="버튼을 찾지 못해 실행하지 않음")
@@ -482,33 +526,51 @@ def _cache_path(name):
 
 
 def _verify_option_checkbox(r, ui, dlg, step, ctrl_id, label, cache_prefix):
-    """옵션 체크박스를 해제 -> 재체크하며 영상 표시 영역의 변화를 SSIM으로 확인한다.
+    """옵션 체크박스의 **실제 기본 상태**를 읽고, 토글 -> 되돌리기가 영상
+    표시 영역에 반영되는지 SSIM으로 확인한다.
 
-    사양서2(260731) p.150-152 VP-616 원문 근거 — 해제하면 그 텍스트가
-    영상에서 사라지고, 다시 체크하면 되돌아와야 한다. "존재만 확인"에서
-    "실제 반영까지 확인"으로 넓힌 것(사용자 지시, 2026-08-24).
+    사용자 지적(2026-08-24, 라이브 관찰): "AI 분석 창에서 첫번째 옵션은
+    계속 체크 안 하고 테스트하는 것 같다" — 정확했다. 실측해 보니 'Insert
+    findings name'(31509)은 **기본이 미체크**였다(캡처로 직접 확인,
+    `S.checkbox_checked()`가 쓰는 것과 같은 체크 표시 금색 `(223,182,56)`
+    이 그 칸에 없음). 사양서2(260731) p.150-152 VP-616 원문은 이 옵션의
+    기본값을 "Checked(Selected)"라고 적어 놓아 **실측과 어긋난다.** 이전
+    코드는 "기본 체크"를 가정하고 무조건 (해제 -> 재체크) 순서로 클릭했는데,
+    실제로 미체크 상태에서 시작하면 이 순서가 (체크 -> 재해제)로 뒤집혀
+    **어느 방향인지 기록하지 않은 채** "토글하면 달라진다"만 확인하고
+    끝냈다 — 방향을 밝히지 않은 것과 사양과 다른 기본값을 조용히 넘긴 것,
+    둘 다 이 사용자 지적으로 고친다.
+
+    이제 클릭 전에 `core.setting.checkbox_checked()`(Setting 화면과 같은
+    금색 체크 표시 판별, 이 AI 창도 같은 테마를 쓴다는 것을 실측으로
+    확인)로 실제 상태를 읽고, 그 방향을 그대로 기록하며, 사양서 기본값
+    (체크)과 다르면 그 사실을 note에 명시한다.
     """
     from core.ui import children
+    from core import setting as S
+
     ctrl = next((c for c in children(dlg.hwnd, 6) if c.ctrl_id == ctrl_id and c.visible), None)
     if ctrl is None:
-        r.add(step, "'%s' 체크 해제 시 영상 표시 반영 확인" % label, MANUAL,
+        r.add(step, "'%s' 체크박스 기본 상태 확인 및 토글 반영 확인" % label, MANUAL,
               expected="사양서2 p.150-152 VP-616",
               actual="체크박스(%d)를 찾지 못함" % ctrl_id)
         return step + 1
 
+    was_checked = S.checkbox_checked(ui, ctrl)
+
     rect, exact = _image_area_rect(dlg)
-    checked_shot = _cache_path("tc11_opt_%s_checked.png" % cache_prefix)
-    unchecked_shot = _cache_path("tc11_opt_%s_unchecked.png" % cache_prefix)
+    initial_shot = _cache_path("tc11_opt_%s_initial.png" % cache_prefix)
+    toggled_shot = _cache_path("tc11_opt_%s_toggled.png" % cache_prefix)
     restored_shot = _cache_path("tc11_opt_%s_restored.png" % cache_prefix)
 
-    screen_mod.capture(checked_shot, bbox=rect, all_screens=True)
+    screen_mod.capture(initial_shot, bbox=rect, all_screens=True)
     ui.click(ctrl, settle=1.0)
-    screen_mod.capture(unchecked_shot, bbox=rect, all_screens=True)
-    off_score = screen_mod.ssim(checked_shot, unchecked_shot)
+    screen_mod.capture(toggled_shot, bbox=rect, all_screens=True)
+    toggle_score = screen_mod.ssim(initial_shot, toggled_shot)
 
     ui.click(ctrl, settle=1.0)
     screen_mod.capture(restored_shot, bbox=rect, all_screens=True)
-    on_score = screen_mod.ssim(checked_shot, restored_shot)
+    restore_score = screen_mod.ssim(initial_shot, restored_shot)
 
     # 실측(2026-08-24): 전체 영상 영역 기준으로는 텍스트 한두 글자 변화가
     # SSIM에 크게 반영되지 않는다(측정값 0.9952~0.9993, Probability text는
@@ -518,16 +580,30 @@ def _verify_option_checkbox(r, ui, dlg, step, ctrl_id, label, cache_prefix):
     # 변화가 있었다"로 봐도 안전하다. 0.995~0.999는 둘 다 너무 느슨해 실제
     # 변화를 놓친 사례가 있었다(0.999로도 Probability text 0.9993을 못 잡음).
     THRESH = 0.9999
-    ok = off_score < THRESH and on_score >= THRESH
-    r.add(step, "'%s' 체크 해제/재체크 시 영상 표시 반영 확인" % label,
-          PASS if ok else MANUAL,
-          expected="사양서2 p.150-152 VP-616 — 해제하면 해당 text가 영상에서 사라지고, "
-                   "다시 체크하면 되돌아와야 한다",
-          actual="해제 시 SSIM=%.4f(< %.4f여야 함) / 재체크 시 SSIM=%.4f(>= %.4f여야 함)"
-                 % (off_score, THRESH, on_score, THRESH),
-          note=("" if exact else "UIInstanceMedicalFindings(880902)를 못 찾아 창 전체로 "
-                                  "비교했다 — 정밀도가 떨어질 수 있다."))
-    r.attach(unchecked_shot)
+    reflects = toggle_score < THRESH and restore_score >= THRESH
+    direction = "체크 -> 해제 -> 재체크" if was_checked else "미체크 -> 체크 -> 재해제"
+
+    default_note = ""
+    if not was_checked:
+        default_note = ("**실측: 이번 실행에서 기본 상태가 미체크였다 — 사양서2 VP-616 원문의 "
+                        "기본값(체크/Selected)과 다르다.** 제품이 이전 조작(다른 세션의 수동 "
+                        "테스트 등)의 값을 기억해 남긴 것인지, 이 옵션만 기본값이 실제로 다른 것인지 "
+                        "확정하지 못했다 — 사람 확인 필요. ")
+
+    # 실측(2026-08-24, 사용자 지적): 이 창은 캡처 노이즈가 없다는 것을 여러
+    # 번 확인했다(재체크 SSIM은 항상 정확히 1.0000) — 그래서 "체크박스를
+    # 찾아 클릭까지 했는데 화면이 안 바뀐다"는 측정 불확실성이 아니라
+    # 실제로 반영이 안 된 것으로 본다. **찾지 못해 시도조차 못 한 경우만
+    # MANUAL**이고, 시도했는데 기대와 다르면 FAIL이다.
+    r.add(step, "'%s' 체크박스 기본 상태 확인 및 토글 반영 확인" % label,
+          PASS if reflects else FAIL,
+          expected="사양서2 p.150-152 VP-616 — 기본값은 체크. 토글하면(%s) 영상 표시가 "
+                   "달라지고 원래 상태로 되돌아와야 한다" % direction,
+          actual="실측 기본 상태=%s / 토글 SSIM=%.4f(< %.4f여야 함) / 복원 SSIM=%.4f(>= %.4f여야 함)"
+                 % ("체크" if was_checked else "미체크", toggle_score, THRESH, restore_score, THRESH),
+          note=default_note + ("" if exact else "UIInstanceMedicalFindings(880902)를 못 찾아 "
+                                                 "창 전체로 비교했다 — 정밀도가 떨어질 수 있다."))
+    r.attach(toggled_shot)
     return step + 1
 
 
@@ -541,11 +617,27 @@ def _verify_copy_original_image(r, ui, cfg, dlg, step):
     않아야 한다.
     """
     from core.ui import children
-    ok_btn = next((c for c in children(dlg.hwnd, 6) if c.ctrl_id == OK_BUTTON_ID and c.visible), None)
+    from core import setting as S
+
+    kids = children(dlg.hwnd, 6)
+    ok_btn = next((c for c in kids if c.ctrl_id == OK_BUTTON_ID and c.visible), None)
+    copy_ctrl = next((c for c in kids if c.ctrl_id == 31512 and c.visible), None)
     if ok_btn is None:
         r.add(step, "'Copy original image' 체크(기본값) 상태로 OK 닫기 -> 새 영상 저장 확인",
               MANUAL, expected="사양서2 p.150-152 VP-616", actual="OK 버튼을 찾지 못함")
         return step + 1, False
+
+    # 실측(2026-08-24): 다른 옵션(Insert findings name)의 기본 상태가 사양과
+    # 달랐던 사례가 있어, 이 체크박스도 **가정하지 않고 실제로 읽는다** —
+    # 미체크 상태면 먼저 체크해서 "체크 상태로 닫는" 시나리오를 보장한다.
+    forced_check_note = ""
+    if copy_ctrl is not None and not S.checkbox_checked(ui, copy_ctrl):
+        ui.click(copy_ctrl, settle=0.5)
+        copy_ctrl2 = next((c for c in children(dlg.hwnd, 6) if c.ctrl_id == 31512 and c.visible), None)
+        now_checked = copy_ctrl2 is not None and S.checkbox_checked(ui, copy_ctrl2)
+        forced_check_note = ("실측: 'Copy original image'가 기본이 미체크였다(사양서 기본값과 "
+                             "다름) — 체크로 바꾼 뒤(%s) 이 검증을 진행했다. " %
+                             ("전환 확인됨" if now_checked else "전환 확인 실패"))
 
     patient_id = (cfg.get("test_data") or {}).get("mwl_patient_id")
     before = W.instance_count(cfg, patient_id)
@@ -558,11 +650,255 @@ def _verify_copy_original_image(r, ui, cfg, dlg, step):
         if after is not None and after > before:
             break
     ok = after == before + 1
+    # DB INSTANCE 행 수는 SQL 조회로 직접 읽는 값이라 캡처/OCR 같은 측정
+    # 불확실성이 없다 — OK를 실제로 눌렀는데 안 늘었으면 결함으로 본다(FAIL).
     r.add(step, "'Copy original image' 체크(기본값) 상태로 OK 닫기 -> 새 영상 저장 확인",
-          PASS if ok else MANUAL,
+          PASS if ok else FAIL,
           expected="OK로 닫으면 진단 결과 Annotation이 추가된 영상이 원본 복사 후 "
                    "새로 저장돼야 한다(INSTANCE +1)",
           actual="INSTANCE %s -> %s" % (before, after),
-          note="'Copy original image' 미체크 시 저장되지 않는 예외 경로(사양서2 VP-616)는 "
-               "이번 세션에서 자동화하지 않았다 — 다음 과제(NEXT_TASK.md).")
+          note=forced_check_note + "'Copy original image' 미체크 시 저장되지 않아야 하는 "
+               "예외 경로는 AI Tool을 다시 열어 별도로 확인한다(아래 Step 참고).")
     return step + 1, True
+
+
+def _verify_finding_match(r, ui, dlg, sample, step):
+    """검출된 소견명이 주입한 샘플과 일치하는지 Detected list를 OCR로 읽어
+    대조한다(사용자 지시 2026-08-24 — "사람이 캡처로 확인"에서 자동 대조로).
+
+    **실측(2026-08-24)으로 방식을 바꿨다.** 처음엔 `core/listgrid.ListGrid`
+    (헤더는 표준 `SysHeader32` API로, 셀은 행 rect로 잘라 OCR)로 시도했는데,
+    이 목록의 행(`ListItem`)은 `visible=False`로 보고되고(다른 화면의
+    목록과 다른 특성 — Database 등에서는 `visible`이 데이터 유무를
+    정확히 반영했지만 이 창은 아니다) `ListGrid.rows()`가 그 값을 필터로
+    쓰기 때문에 항상 빈 목록으로 읽혔다. 행 rect를 직접 잘라도 캡처가
+    완전히 빈 배경이었다(진단: `work/probe_detected_list.py` 계열,
+    HANDOFF.md 참고) — 개별 행의 rect 자체가 실제 화면 위치와 안 맞는
+    것으로 보인다. 그래서 **행 단위가 아니라 목록 전체 영역을 통째로
+    캡처해 OCR**하는 방식으로 바꿨다 — 헤더까지 포함해도 상관없다
+    (찾는 것은 부분 문자열 포함 여부뿐이다). 이 방식은 실제 분석 결과가
+    채워진 상태에서 라이브로 검증했다(`work/probe_detected_list6.py`).
+    """
+    from core.ui import children
+
+    if sample is None:
+        r.add(step, "검출된 소견명이 주입한 샘플과 일치하는지 확인", MANUAL,
+              actual="이번 실행에 주입한 샘플 정보가 없어(로컬 캐시 없음) 대조할 수 없음")
+        return step + 1
+
+    list_ctrl = next((c for c in children(dlg.hwnd, 6)
+                      if c.ctrl_id == DETECTED_LIST_CTRL_ID and c.visible), None)
+    if list_ctrl is None:
+        r.add(step, "검출된 소견명이 주입한 샘플과 일치하는지 확인", MANUAL,
+              expected="주입한 샘플=%s" % sample["finding"],
+              actual="Detected list(%d)를 찾지 못함" % DETECTED_LIST_CTRL_ID)
+        return step + 1
+
+    try:
+        import pytesseract
+        from PIL import ImageGrab
+        exe = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+        if os.path.exists(exe):
+            pytesseract.pytesseract.tesseract_cmd = exe
+    except ImportError:
+        r.add(step, "검출된 소견명이 주입한 샘플과 일치하는지 확인", MANUAL,
+              expected="주입한 샘플=%s" % sample["finding"], actual="pytesseract 미설치")
+        return step + 1
+
+    img = ImageGrab.grab(bbox=list_ctrl.rect, all_screens=True)
+    big = img.resize((img.width * 2, img.height * 2))
+    raw_text = pytesseract.image_to_string(big)
+    shot_path = _cache_path("tc11_detected_list.png")
+    img.save(shot_path)
+
+    def norm(s):
+        return "".join(ch for ch in (s or "").lower() if ch.isalnum())
+
+    want = norm(sample["finding"])
+    matched = want in norm(raw_text)
+
+    r.add(step, "검출된 소견명이 주입한 샘플과 일치하는지 확인",
+          PASS if matched else MANUAL,
+          expected="주입한 샘플=%s (사양서2 VP-616 — Detected list에 그 소견명이 표시돼야 한다)"
+                   % sample["finding"],
+          actual="Detected list OCR 판독: %s" % (" / ".join(raw_text.split(chr(10))).strip()
+                                                 or "(빈 값)"),
+          note=("" if matched else
+                "OCR 오독이거나 실제로 다른 소견이 검출된 것일 수 있다 — 첨부 캡처로 "
+                "사람이 재확인할 것."))
+    r.attach(shot_path)
+    return step + 1
+
+
+def _verify_use_checkbox(r, ui, dlg, step):
+    """Detected list의 **각 행**을 하나씩 토글해 그 소견의 Annotation(윤곽선/
+    이름/확률)이 영상에서 사라지고/되돌아오는지 확인한다(사양서2 VP-616).
+
+    사용자 지시(2026-08-24): "Use 조합은 설계 밖으로 넘겨도 각 체크박스를
+    체크·해제 시 정상적으로 되는지까지는 확인하고 싶어." — 그래서 **행이
+    여러 개면 한 번에 한 행씩만** 토글·복원한다(항상 한 행 빼고 나머지는
+    원래 상태). 이는 2^N으로 늘어나는 **조합**(여러 행을 동시에 해제한
+    상태들)이 아니다 — 검출 항목 수만큼 **선형으로** 늘어나는 개별 확인이라
+    비용이 설계 범위에서 뺀 조합 테스트와는 다르다.
+
+    실측(2026-08-24): 처음엔 분석 전(빈 목록) 상태에서 행 rect를 읽어
+    "rect가 실제 화면 위치와 안 맞는다"고 잘못 판단했었다 — 분석이 끝나
+    행이 실제로 채워진 뒤에는 rect가 정확했다(`work/probe_use_checkbox.py`
+    로 라이브 확인: Nodule Mass 2건 검출 후 첫 행 Use 해제 → 69% 원만
+    사라지고 10% 원은 남음 → 재체크 → 둘 다 복원). `visible` 속성도 분석
+    전에는 모든 행이 False였다가 분석 후 실제 데이터가 있는 행만 True로
+    바뀌는 것으로 확인됨 — Database 등 다른 화면과 같은 규칙이었다.
+    """
+    from core.ui import children
+    from core import setting as S
+
+    TITLE = "Detected list 각 행의 'Use' 체크 토글 시 Annotation 반영 확인"
+    EXPECTED = ("사양서2 VP-616 — 각 행의 Use를 해제하면 그 항목의 Annotation이 "
+                "사라지고, 다시 체크하면 되돌아와야 한다(행마다 하나씩만 토글 — "
+                "여러 행을 동시에 해제하는 조합은 다루지 않는다)")
+
+    list_ctrl = next((c for c in children(dlg.hwnd, 6)
+                      if c.ctrl_id == DETECTED_LIST_CTRL_ID and c.visible), None)
+    if list_ctrl is None:
+        r.add(step, TITLE, MANUAL, expected=EXPECTED,
+              actual="Detected list(%d)를 찾지 못함" % DETECTED_LIST_CTRL_ID)
+        return step + 1
+
+    rows = sorted([c for c in children(list_ctrl.hwnd, 3)
+                  if c.text.strip() == "ListItem" and c.visible],
+                 key=lambda c: c.rect[1])
+    if not rows:
+        r.add(step, TITLE, MANUAL, expected=EXPECTED,
+              actual="검출된 행이 없어(분석 결과 없음) 확인할 수 없음")
+        return step + 1
+
+    rect, exact = _image_area_rect(dlg)
+    THRESH = 0.9999
+    results = []
+    attachments = []
+    for i, row in enumerate(rows, start=1):
+        checkbox = next((c for c in children(row.hwnd, 1) if c.text.strip() == "CheckBox"), None)
+        if checkbox is None:
+            results.append("행%d: 체크박스를 찾지 못함" % i)
+            continue
+
+        was_checked = S.checkbox_checked(ui, checkbox)
+        initial_shot = _cache_path("tc11_use_row%d_initial.png" % i)
+        toggled_shot = _cache_path("tc11_use_row%d_toggled.png" % i)
+        restored_shot = _cache_path("tc11_use_row%d_restored.png" % i)
+
+        screen_mod.capture(initial_shot, bbox=rect, all_screens=True)
+        ui.click(checkbox, settle=1.0)
+        screen_mod.capture(toggled_shot, bbox=rect, all_screens=True)
+        toggle_score = screen_mod.ssim(initial_shot, toggled_shot)
+
+        ui.click(checkbox, settle=1.0)  # 다음 행을 보기 전에 반드시 원복 — 항상 한 행만 바뀐 상태를 유지
+        screen_mod.capture(restored_shot, bbox=rect, all_screens=True)
+        restore_score = screen_mod.ssim(initial_shot, restored_shot)
+
+        reflects = toggle_score < THRESH and restore_score >= THRESH
+        results.append("행%d(기본=%s): %s(토글SSIM=%.4f/복원SSIM=%.4f)"
+                       % (i, "체크" if was_checked else "미체크",
+                          "정상" if reflects else "불일치",
+                          toggle_score, restore_score))
+        attachments.append(toggled_shot)
+
+    # "찾지 못함"(시도조차 못 함)과 "불일치"(시도했는데 기대와 다름)를 구분한다
+    # — 후자는 이 창에 캡처 노이즈가 없다는 것을 실측했으므로 측정 불확실성이
+    # 아니라 결함으로 본다(FAIL). 전자만 있으면 MANUAL로 남긴다.
+    not_found = any("찾지 못함" in v for v in results)
+    mismatch = any("불일치" in v for v in results)
+    all_ok = bool(results) and not not_found and not mismatch
+    verdict = PASS if all_ok else (FAIL if mismatch else MANUAL)
+
+    r.add(step, TITLE, verdict,
+          expected=EXPECTED,
+          actual="; ".join(results),
+          note=("" if exact else "UIInstanceMedicalFindings(880902)를 못 찾아 창 전체로 "
+                                  "비교했다. ")
+               + "검출 항목 수(%d)만큼 한 행씩 순서대로 토글·복원했다(조합 아님)." % len(rows))
+    for shot in attachments:
+        r.attach(shot)
+    return step + 1
+
+
+def _reopen_ai_tool(ui, cfg, evidence_dir):
+    """AI Tool을 다시 연다 — 이미 한 번 연 뒤 재확인용이라 재시도는 하지 않는다."""
+    btn, point, note = _find_ai_tool_point(ui, cfg, evidence_dir)
+    if point is None:
+        return None, note
+    time.sleep(2.5)  # 팝업이 스스로 닫히는 걸 확실히 기다린 뒤 다시 연다(Step 6과 동일 근거)
+    ui.click(btn, settle=0.05)
+    time.sleep(W.PALETTE_OPEN_DELAY)
+    ui.click(point, settle=2.5)
+    end = time.time() + 8
+    dlg = None
+    while time.time() < end:
+        dlg = ui.dialog(title=AI_TOOL_DIALOG_TITLE)
+        if dlg is not None:
+            break
+        time.sleep(0.4)
+    return dlg, note
+
+
+def _verify_copy_unchecked(r, ui, cfg, evidence_dir, step):
+    """'Copy original image'를 미체크하고 OK로 닫으면 새 영상이 저장되지
+    **않아야** 한다(사양서2 VP-616 예외 경로). 사용자 지시(2026-08-24)로
+    자동화했다 — 이미 분석까지 끝난 같은 영상을 AI Tool을 다시 열어
+    재사용한다(재획득 없음, 왕복 비용을 줄인다).
+    """
+    from core.ui import children
+    from core import setting as S
+
+    dlg2, note = _reopen_ai_tool(ui, cfg, evidence_dir)
+    if dlg2 is None:
+        r.add(step, "'Copy original image' 미체크 시 저장 안 됨(예외 경로) 확인", MANUAL,
+              actual="AI Tool 창을 다시 열지 못함: %s" % note)
+        return step + 1
+
+    kids = children(dlg2.hwnd, 6)
+    copy_ctrl = next((c for c in kids if c.ctrl_id == 31512 and c.visible), None)
+    ok_btn = next((c for c in kids if c.ctrl_id == OK_BUTTON_ID and c.visible), None)
+    if copy_ctrl is None or ok_btn is None:
+        r.add(step, "'Copy original image' 미체크 시 저장 안 됨(예외 경로) 확인", MANUAL,
+              actual="체크박스(31512) 또는 OK 버튼(%d)을 찾지 못함" % OK_BUTTON_ID)
+        close_icon = next((c for c in children(dlg2.hwnd, 1)
+                           if c.ctrl_id == AI_CLOSE_ICON_ID), None)
+        if close_icon is not None:
+            ui.click(close_icon, settle=1.0)
+        return step + 1
+
+    # 실측(2026-08-24): 다른 체크박스의 기본 상태가 가정과 달랐던 사례가
+    # 있어, 여기서도 실제 상태를 읽고서만 클릭한다 — 이미 미체크면 다시
+    # 클릭해 체크로 만들어버리는 사고를 막는다.
+    was_checked = S.checkbox_checked(ui, copy_ctrl)
+    if was_checked:
+        ui.click(copy_ctrl, settle=0.5)
+    state_note = ("" if was_checked else
+                 "실측: 재오픈 시 이미 미체크 상태였다(클릭하지 않고 그대로 진행). ")
+
+    patient_id = (cfg.get("test_data") or {}).get("mwl_patient_id")
+    before = W.instance_count(cfg, patient_id)
+    ui.click(ok_btn, settle=1.5)
+
+    # 저장되지 않아야 하는 쪽을 확인하는 것이므로 폴링으로 "늘어남"을 기다리지
+    # 않는다 — 충분히 기다린 뒤 그대로인지 한 번 확인한다.
+    time.sleep(6.0)
+    after = W.instance_count(cfg, patient_id)
+    ok = after == before
+    # DB INSTANCE 조회는 측정 불확실성이 없다 — 미체크인데도 저장됐다면
+    # 사양서2 VP-616 예외 조항 위반이므로 결함으로 본다(FAIL).
+    r.add(step, "'Copy original image' 미체크 시 저장 안 됨(예외 경로) 확인",
+          PASS if ok else FAIL,
+          expected="사양서2 p.150-152 VP-616 — 미체크 상태로 OK를 눌러 닫으면 원본 영상이 "
+                   "새로 저장되지 않아야 한다(INSTANCE 불변)",
+          actual="INSTANCE %s -> %s" % (before, after),
+          note=state_note + "1차(체크 상태) 검증에서 이미 분석까지 끝낸 같은 영상을 AI Tool을 "
+               "다시 열어 재사용했다(재획득 없음).")
+
+    if ui.dialog(title=AI_TOOL_DIALOG_TITLE) is not None:
+        close_icon = next((c for c in children(dlg2.hwnd, 1)
+                           if c.ctrl_id == AI_CLOSE_ICON_ID), None)
+        if close_icon is not None:
+            ui.click(close_icon, settle=1.0)
+    return step + 1
