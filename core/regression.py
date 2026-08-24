@@ -79,6 +79,7 @@ IMPLEMENTED = {
     "TC_WindowsUpdate_03": ("tests.tc03_image_display", {}),
     "TC_WindowsUpdate_04": ("tests.tc04_image_processing", {}),
     "TC_WindowsUpdate_05": ("tests.tc05_dicom_send", {}),
+    "TC_WindowsUpdate_06": ("tests.tc06_extra_tool", {}),
     "TC_WindowsUpdate_07": ("tests.tc07_dicom_print", {}),
     "TC_WindowsUpdate_08": ("tests.tc08_study_export", {}),
     "TC_WindowsUpdate_11": ("tests.tc11_ai_analysis", {}),

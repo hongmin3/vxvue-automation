@@ -396,6 +396,59 @@ TC02와 다른 점: TC02는 "정보 일치"를, 이 TC는 **"전송된 객체의
 
 ---
 
+## TC_WindowsUpdate_06 — Extra Tool 전송 (SBSC)
+
+코드: `tests/tc06_extra_tool.py` · 신규: `core/extra_tool.py` · 실행: `python run.py tc06`
+
+체크리스트: *1. 촬영화면에서 SBSC 를 ON 후 촬영한다. 2. 툴의 Extra Tool 버튼을
+눌러 전송한다. 3. XIPL Server Log를 확인하여 SBSC 미적용하여 processing 을
+다시 한후에 전송이 되는지 확인한다. 4. 뷰어모드로 영상을 오픈 후 SBSC 적용된
+영상을 선택하여 Extra Tool 버튼을 누른다.* Expected Result: *Extra Tool 에
+설정한 SCP 로 전송 성공한다 — Remove SBSC 옵션 켜고 전송 시 SBSC 적용하지 않은
+영상이 전송되는것을 확인.* Test Data: *XIPL Server Log 에
+`PureGrid.Apply="0"` 이 전송됨.*
+
+`Setting > Integration > Extra Tool` 화면은 DICOM MWL/Storage/Print
+(`core/dicom_settings.py`)와 컨트롤 ID를 공유하지 않는 완전히 별도 화면이다
+(2026-08-24/25 실측, `core/extra_tool.py` docstring에 컨트롤 ID 표 전체 정리).
+전송 대상 서버(AE Title/IP/Port)는 `config.json`의 `extra_tool.server`에서만
+읽는다 — `dicom.servers_to_register`와 독립적인 항목이다(사용자 지시: 나중에
+Dose SR 검증 등으로 Bunny 대신 다른 서버를 쓰게 되어도 Extra Tool 대상은
+따로 바꿀 수 있어야 한다). 지금 값은 Storage SCP(Bunny)와 동일.
+
+| Step | 코드가 하는 일 | Expected Result(판정 기준) | 판정 |
+|---|---|---|---|
+| 1 | Extra Tool 화면에서 AE Title/IP/Port를 `config.json`의 값으로 등록(Update), DB(`AE_LIST`, `Type=AI_STATION`)에서 `Title`/`Port`로 그 행을 다시 조회 | Update 성공 + DB에 등록된 값이 그대로 보여야 한다 | PASS/FAIL |
+| 2 | S.B.S.C.(행 라벨 "Remove Image Processing", 컨트롤 ID `31523`) 체크(이미 체크면 그대로 둠) → Update | DB `AE_LIST.RemoveSBSC = 1` | PASS/FAIL |
+| 3 | MWL 오픈 + Demo(F2) 촬영 | 영상 1장 이상 획득 | PASS/FAIL |
+| 4 | Viewer 모드 전환 후 영상 선택, 툴 팔레트(`core.workflow.click_tool`)에서 "Extra Tool" 클릭 | 팔레트에서 라벨을 찾아 클릭 성공 | PASS/FAIL |
+| 5 | Bunny 수신 확인(`core.bunny.wait_for_store`, TC05와 같은 방식) | C-STORE 응답 Status 0000h + 수신 파일 1건 이상 | PASS/FAIL |
+| 6 | XIPL Server Log(`C:\XIPL\SERVER_X64\log`, `core.xipl.find_marker`)에서 `PureGrid.Apply="0"` 검색(전송 5초 전부터) | 발견되면 PASS, 로그 경로 미설정이면 MANUAL | PASS/MANUAL |
+| 7 | 뷰어모드에서 같은 영상 재선택 후 Extra Tool 재클릭(체크리스트 Step4) | 클릭 성공 | PASS/FAIL |
+| 8 | 재전송 수신 확인 | C-STORE 응답 Status 0000h + 수신 파일 1건 이상 | PASS/FAIL |
+
+**한계(2026-08-25 실측으로 확인, FULL 판정에 포함된 caveat)**: 이 회귀가 쓰는
+데모/가상 촬영 경로(F2, 파라미터 파일 `Chest PA_normal_H.hs8`)의 Image Process
+창에는 SBSC 체크박스 자체가 없다(`Contrast`/`Sharpness`/`Brightness`/`Process`/
+`Post LUT`만 실측 확인, TC04가 이미 이 창의 파라미터 컨트롤을 미실측으로 남긴
+것과 같은 한계). 그래서 "촬영화면에서 SBSC ON"을 Image Process 단에서 직접
+켜서 검증하지는 못했고, 이 캡처 경로는 애초에 `PureGrid.Apply="0"`으로
+처리되므로 Step 6의 로그 확인이 **on→off 전환**까지 증명하지는 않는다 — Extra
+Tool의 Remove SBSC 옵션 자체의 등록·적용·전송·로그 판정만 실측 확인됐다. Image
+Process 화면에서 SBSC를 켤 수 있는 파라미터 파일/절차가 확인되면 이 caveat을
+보완할 것.
+
+**부수 발견·수정(2026-08-25, 다른 TC에도 영향)**: `core/ui.py`의
+`type_text()`(SendInput 유니코드 문자 주입)가 IP Address류 필드의 자체 입력
+검증기를 통과하지 못해 **필드가 계속 비어 있는데도 Update가 "성공" 팝업을
+띄우는 조용한 실패**를 실측으로 발견했다. `type_ascii()`(실제 VK 코드 기반
+입력)를 새로 추가해 `core/extra_tool.py`와 `core/dicom_settings.py`(MWL/
+Storage/Print 서버 등록) 둘 다 이걸로 교체했다 — `dicom_settings.py` 쪽은
+소스만 교체했고, 재등록으로 실제 재검증은 아직 하지 않았다(재등록하면 SCP
+목록에 중복 행이 생기므로 다음 전체 회귀에서 신중하게 확인할 것).
+
+---
+
 ## TC_WindowsUpdate_07 — DICOM Print
 
 코드: `tests/tc07_dicom_print.py` · 실행: `python run.py tc07`

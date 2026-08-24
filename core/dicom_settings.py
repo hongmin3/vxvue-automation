@@ -152,10 +152,16 @@ def add_server(ui, kind, name, ae_title, ip, port, ack_timeout=10):
     if not all((name_edit, ae_edit, ip_edit, port_edit)):
         return False, "입력 필드(Name/AE Title/IP/Port)를 찾지 못함"
 
-    ui.type_text(name_edit, name, clear=True)
-    ui.type_text(ae_edit, ae_title, clear=True)
-    ui.type_text(ip_edit, ip, clear=True)
-    ui.type_text(port_edit, str(port), clear=True)
+    # 실측(2026-08-24, TC06 Extra Tool 개발 중): `type_text()`가 쓰는
+    # `_unicode_char()`(SendInput 유니코드 주입)는 IP Address류 필드의 자체
+    # 입력 검증기를 통과하지 못해 필드가 계속 비어 있는 채로 "Update
+    # successfully" 팝업만 뜨는 조용한 실패가 있었다(core/ui.py
+    # `type_ascii()` 참고) — 실제 VK 코드 기반 입력으로 바꾼다. Name/AE
+    # Title/IP/Port 전부 ASCII 값만 쓰므로(config.json 확인) 안전하다.
+    ui.type_ascii(name_edit, name, clear=True)
+    ui.type_ascii(ae_edit, ae_title, clear=True)
+    ui.type_ascii(ip_edit, ip, clear=True)
+    ui.type_ascii(port_edit, str(port), clear=True)
 
     ack = S.update(ui, ack_timeout=ack_timeout)
     return True, "Update 완료(팝업: %s)" % (ack or "없음")

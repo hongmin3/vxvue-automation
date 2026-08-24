@@ -122,6 +122,14 @@
       "temp_dir": "C:\\Program Files (x86)\\Bunny\\Temp"
     }
   },
+  "extra_tool": {
+    "_comment": "Setting > Integration > Extra Tool(TC06)에 등록할 대상 서버. dicom.servers_to_register와 별도 항목이다 — 이 자동화가 추후 Dose SR 등 다른 검증에 Bunny 대신 다른 서버를 쓰게 되더라도 Extra Tool 대상은 독립적으로 바꿀 수 있어야 한다 — tests/tc06_extra_tool.py는 이 블록만 읽고, ae_title/ip/port를 코드에 하드코딩하지 않는다.",
+    "server": {
+      "ae_title": "Bunny",
+      "ip": "<STORAGE_HOST>",
+      "port": 3000
+    }
+  },
   "test_data": {
     "_comment": "VXvue 전용 MWL 시험 처방(비식별). Bellalun의 DATA_FLOW_MWL_01(MG)과 구분해 Modality DX로 별도 등록한다.",
     "_comment_unique": "실행마다 Patient ID/Acc. No./성별/생년월일을 새로 뽑을지. true(기본)면 MWL 처방을 만드는 시점에 실행 시각을 각인해 생성하고 Cache/current_testdata.json에 기록한다 — 같은 ID가 쌓여 import 검증이 불가능해지는 것을 막는다(사용자 지시, 2026-08-21). false면 아래 고정값을 그대로 쓴다.",

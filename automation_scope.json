@@ -26,8 +26,8 @@
   },
   {
     "tc_id": "TC_WindowsUpdate_06",
-    "level": "PARTIAL",
-    "reason": "2026-08-18 확정: Setting>Integration>Extra Tool 맨 아래 'Remove Image Processing' 행의 체크박스 라벨이 실제로 'S.B.S.C.'이며 체크리스트의 Remove SBSC와 동일함을 실물로 확인(컨트롤 ID 31523). DB AE_LIST.RemoveSBSC 컬럼과 대응하므로 UI 체크→Update→DB 값 1 확인으로 자동 판정 가능. 전송 대상 AE/IP/Port는 미설정 상태라 사용자 확인 필요. XIPL Server Log(C:\\XIPL\\SERVER_X64\\log)의 'PureGrid.Apply=\"0\"' 판정 구현 필요"
+    "level": "FULL",
+    "reason": "2026-08-25 완료(라이브 실행 PASS 9/9, python run.py tc06): core/extra_tool.py 신규 - Setting>Integration>Extra Tool 화면의 AE Title/IP/Port 등록(configure), Echo, S.B.S.C.(=Remove SBSC, 컨트롤 ID 31523) 체크 전부 실제 DB(AE_LIST, Type=AI_STATION, RemoveSBSC=1)까지 확인. 전송 대상 서버 정보는 config.json의 extra_tool.server에서만 읽고 코드에 하드코딩하지 않는다(사용자 지시, dicom.servers_to_register와 별개 - 나중에 Dose SR 검증 등으로 Bunny 대신 다른 서버를 쓰게 되어도 Extra Tool 대상은 독립적으로 바꿀 수 있어야 함). tests/tc06_extra_tool.py: 촬영(F2 데모) -> Viewer 모드 -> 툴 팔레트의 'Extra Tool' 클릭(core.workflow.click_tool) -> Bunny 수신 확인(core.bunny.wait_for_store) -> XIPL Server Log(C:\\XIPL\\SERVER_X64\\log)에서 PureGrid.Apply=\"0\" 확인 -> 뷰어모드에서 같은 영상 재선택 후 Extra Tool 재전송까지 검증(체크리스트 Step1-4 전부 커버). 부수 발견/수정(중요): core/ui.py의 type_text()(SendInput 유니코드 문자 주입)가 IP Address 필드류의 자체 입력 검증기를 통과 못 해 필드가 계속 비어 있는데도 Update가 '성공' 팝업을 띄우는 조용한 실패를 실측으로 발견 - type_ascii()(실제 VK 코드 입력)를 추가해 core/extra_tool.py와 core/dicom_settings.py(MWL/Storage/Print 서버 등록) 둘 다 이걸로 교체(dicom_settings 쪽은 소스만 교체, 재등록으로 라이브 재검증은 아직 안 함 - 중복 SCP 행 생성 위험 때문에 신중하게 다음 회귀에서 확인할 것). 한계(FULL이지만 남은 caveat): 이 회귀가 쓰는 데모/가상 촬영 경로(F2, 파라미터 파일 'Chest PA_normal_H.hs8')의 Image Process 창에는 SBSC 체크박스 자체가 없어 (Contrast/Sharpness/Brightness/Process/Post LUT만 실측됨), '촬영화면에서 SBSC를 ON'을 Image Process 단에서 직접 켜고 검증하지는 못했다 - 이 캡처 경로는 애초에 PureGrid.Apply=\"0\"이라 이 TC의 로그 확인이 on->off 전환까지 증명하지는 않는다. Extra Tool의 Remove SBSC 옵션 자체의 등록/적용/전송/로그 판정은 전부 실측 확인됨."
   },
   {
     "tc_id": "TC_WindowsUpdate_07",

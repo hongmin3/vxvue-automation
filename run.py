@@ -367,6 +367,14 @@ def cmd_tc05(cfg, args):
                           projection=args.projection, exam_step=args.step)
 
 
+def cmd_tc06(cfg, args):
+    """TC06 Extra Tool 전송 — Remove SBSC 옵션 켜기 → 촬영 → Extra Tool 전송 → XIPL 로그 확인."""
+    return _run_tc_module(cfg, args, "tests.tc06_extra_tool",
+                          do_acquire=not args.no_acquire,
+                          map_procedure=args.map_procedure,
+                          projection=args.projection, exam_step=args.step)
+
+
 def cmd_tc07(cfg, args):
     """TC07 DICOM Print — Print SCP 가동 확인 → 촬영 → Print → 수신 필름 확인."""
     return _run_tc_module(cfg, args, "tests.tc07_dicom_print",
@@ -571,6 +579,7 @@ COMMANDS = {
     "tc03": cmd_tc03,
     "tc04": cmd_tc04,
     "tc05": cmd_tc05,
+    "tc06": cmd_tc06,
     "tc07": cmd_tc07,
     "tc08": cmd_tc08,
     "xipl-license": cmd_xipl_license,

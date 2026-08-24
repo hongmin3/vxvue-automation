@@ -586,6 +586,26 @@ class VXvueUi:
             time.sleep(0.02)
         time.sleep(settle)
 
+    def type_ascii(self, control, text, clear=True, settle=0.3):
+        """`type_text()`의 ASCII 전용 버전 — 실제 VK 코드 기반(`send_ascii`,
+        `keybd_event`)으로 입력한다.
+
+        실측(2026-08-24, TC06 Extra Tool IP Address 필드): `type_text()`가
+        쓰는 `_unicode_char()`(SendInput + KEYEVENTF_UNICODE, 가상 유니코드
+        주입)는 이 필드의 자체 입력 검증기를 통과하지 못해 "Only IP address
+        is allowed" 툴팁만 뜨고 필드가 계속 비어 있었다 — 검증기가 실제
+        키보드 이벤트(VK 코드)만 인식하는 것으로 보인다. 숫자/영문 ASCII만
+        들어가는 필드(IP/Port 등)는 이 함수를 쓴다.
+        """
+        if clear:
+            self.clear_edit(control)
+        else:
+            self.click(control, settle=0.2)
+        for ch in text:
+            send_ascii(ch)
+            time.sleep(0.03)
+        time.sleep(settle)
+
     @staticmethod
     def _unicode_char(ch):
         if send_unicode(ch) == 0:
