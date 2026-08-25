@@ -30,6 +30,16 @@ STATUSES = (PASS, FAIL, MANUAL, SKIP, BLOCKED)
 REPORT_TITLE = "VXvue Windows Update 호환성 자동화 결과"
 DOC_NUMBER = "R-25-774"
 
+# 모든 리포트(TXT/HTML/JSON/CSV) 상단에 붙는 일반 유의사항(사용자 지시,
+# 2026-08-25). 특정 TC의 note가 아니라 이번 회귀 전체에 적용되는 시험
+# 범위/한계를 여기 모은다 — 개별 TC를 읽지 않고 리포트 요약만 봐도 알 수
+# 있어야 한다.
+REPORT_CAVEATS = (
+    "이 회귀의 모든 촬영은 DX(일반촬영) 환자/절차로만 수행한다. MG(유방촬영) "
+    "절차는 검증하지 않았다 — Dose SR 등 MG 전용 기능의 PASS/FAIL은 이 결과에 "
+    "포함되지 않는다(TC_WindowsUpdate_05 참고).",
+)
+
 
 class Check:
     def __init__(self, step, title, status, expected="", actual="", note="",
@@ -233,6 +243,9 @@ _STYLE = """
 body{font-family:'Malgun Gothic',sans-serif;margin:24px;color:#1a1a1a;background:#fff}
 h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:22px 0 6px}
 .meta{color:#666;font-size:12px;margin-bottom:18px}
+.caveats{background:#fff8e1;border:1px solid #f0d878;border-radius:4px;
+        padding:8px 14px;margin-bottom:16px;font-size:12.5px}
+.caveats ul{margin:4px 0 0;padding-left:18px}
 table{border-collapse:collapse;width:100%;font-size:12.5px;margin-bottom:8px}
 th,td{border:1px solid #d8d8d8;padding:6px 8px;text-align:left;vertical-align:top;
      word-break:break-word;overflow-wrap:anywhere}
@@ -282,6 +295,14 @@ def write_txt(results, path, env=None):
              % (total[PASS], total[FAIL], total[MANUAL], total[SKIP], total[BLOCKED]))
     L.append("=" * 80)
     L.append("")
+
+    if REPORT_CAVEATS:
+        L.append("-" * 80)
+        L.append(" 유의사항")
+        L.append("-" * 80)
+        for cav in REPORT_CAVEATS:
+            L.append(" - %s" % cav)
+        L.append("")
 
     L.append("-" * 80)
     L.append(" TC 별 판정")
@@ -371,6 +392,8 @@ def write_reports(results, out_dir, run_name=None, env=None):
         w = csv.writer(f)
         w.writerow(["# %s (문서번호: %s)" % (REPORT_TITLE, DOC_NUMBER)])
         w.writerow(["# 수행 일시", datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+        for cav in REPORT_CAVEATS:
+            w.writerow(["# 유의사항", cav])
         for label, key in (("Windows", "windows"), ("Package", "packages")):
             for k, v in (env or {}).get(key, {}).items():
                 w.writerow(["# %s" % label, k, v])
@@ -387,6 +410,7 @@ def write_reports(results, out_dir, run_name=None, env=None):
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump({"title": REPORT_TITLE, "document": DOC_NUMBER,
                    "generated": datetime.now().isoformat(timespec="seconds"),
+                   "caveats": list(REPORT_CAVEATS),
                    "environment": env or {},
                    "totals": total,
                    "results": [r.as_dict() for r in results]},
@@ -401,9 +425,13 @@ def write_reports(results, out_dir, run_name=None, env=None):
              "<span class='SKIP'>SKIP %d</span> / <span class='BLOCKED'>BLOCKED %d</span></div>"
              % (DOC_NUMBER, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), len(results),
                 total[PASS], total[FAIL], total[MANUAL], total[SKIP], total[BLOCKED]),
-             _html_env(env),
+             _html_env(env)]
+    if REPORT_CAVEATS:
+        parts.append("<div class='caveats'><b>유의사항</b><ul>%s</ul></div>"
+                     % "".join("<li>%s</li>" % e(cav) for cav in REPORT_CAVEATS))
+    parts.append(
              "<h2>요약</h2><table class='sum'><tr><th>TC ID</th><th>Title</th><th>판정</th>"
-             "<th>P</th><th>F</th><th>M</th><th>S</th><th>B</th><th>소요시간</th></tr>"]
+             "<th>P</th><th>F</th><th>M</th><th>S</th><th>B</th><th>소요시간</th></tr>")
     for r in results:
         c = r.counts
         parts.append("<tr><td>%s</td><td>%s</td><td class='s %s'>%s</td>"

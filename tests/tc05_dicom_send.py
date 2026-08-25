@@ -185,12 +185,15 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
 
         has_image = SOP_IMAGE in classes
         has_dose = SOP_DOSE_SR in classes
-        # 실측(2026-08-24): DICOM Conformance Statement Rev.4.2 p.10 2.2.9절
-        # "Dose structured report service as SCU is implemented ... for
-        # correctly transferred MG images." — Dose SR은 문서상 MG(유방촬영)
-        # 영상에만 적용된다. 이 자동화는 DX/Chest 절차로 촬영하므로(Procedure
-        # Mapping에 MG 경로가 없음), Dose SR 미수신을 이 Modality에서는
-        # 결함으로 단정하지 않는다 — MG 촬영으로 재검증해야 결론을 낼 수 있다.
+        # 실측(2026-08-24)+사용자 결정(2026-08-25): DICOM Conformance Statement
+        # Rev.4.2 p.10 2.2.9절 "Dose structured report service as SCU is
+        # implemented ... for correctly transferred MG images." — Dose SR은
+        # 문서상 MG(유방촬영) 영상에만 적용된다. 이 자동화는 DX(일반촬영)
+        # 절차로만 검증하기로 범위를 확정했다(MG 절차는 검증하지 않음, 사용자
+        # 지시) — 그래서 DX 촬영에서 Dose SR이 없는 것은 결함이 아니라
+        # **애초에 이 자동화 범위 밖**이다. SKIP으로 남기고(더 이상 MANUAL
+        # 재검증 대상이 아니다), `core.result.REPORT_CAVEATS`에도 이 범위
+        # 제한을 명시했다.
         is_mg = "MG" in modalities
         r.add(step, "전송된 객체에 Image가 포함",
               PASS if has_image else FAIL,
@@ -203,14 +206,14 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
         if has_dose:
             dose_verdict, dose_note = PASS, "확인됨."
         elif not is_mg:
-            dose_verdict, dose_note = MANUAL, (
+            dose_verdict, dose_note = SKIP, (
                 "촬영 Modality=%s(MG 아님) — DICOM Conformance Statement Rev.4.2 "
                 "p.10 2.2.9절: \"Dose structured report service as SCU is "
                 "implemented ... for correctly transferred MG images.\" Dose SR은 "
-                "문서상 MG(유방촬영) 영상에만 적용되므로, DX/Chest 촬영에서 Dose "
-                "SR이 없는 것을 이 결과만으로 결함이라 단정하지 않는다. Send Dose "
-                "SR=Yes와 무관하게 MG 촬영 경로로 재검증해야 결론을 낼 수 있다"
-                "(이 PC/Procedure Mapping에 MG 절차가 있는지 확인 필요)."
+                "문서상 MG(유방촬영) 영상에만 적용된다. 이 자동화는 DX(일반촬영) "
+                "환자/절차로만 검증하기로 확정했으므로(사용자 지시, 2026-08-25) "
+                "Dose SR 자체는 이 자동화의 검증 범위 밖이다 — 결함도, 재검증이 "
+                "필요한 미결 사항도 아니다."
                 % (", ".join(sorted(modalities)) or "판독 실패"))
         elif was_yes is not True:
             dose_verdict, dose_note = MANUAL, (

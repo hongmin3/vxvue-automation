@@ -283,15 +283,109 @@ def _verify_in_reserved_list(ui, r, work_dir):
                        "없어 캡처+OCR로 확인한다(pytesseract).")
 
 
-def _tab_delimiter_regression(ui, r, work_dir):
-    """TAB 구분자 회귀(#22985) — Data Delimiter를 TAB으로 바꿔 파싱을 재확인한다.
+def _set_delimiter(ui, target_text, jiggle=False):
+    """Data Delimiter 콤보를 target_text로 맞추고 Update한다.
 
-    기존 결함: Tab 구분자는 파싱이 실패했고 Comma는 성공했다(#22985,
-    HANDOFF.md 근거). 이 콤보를 조작하다 VXvue가 응답 없음 상태가 된 전례가
-    있어(재현 조건 미상, 2026-08-19), `core.setting.select_combo()` +
-    `ui.is_responsive()`로만 다루고, 멈춤이 감지되면 더 재시도하지 않고
-    있는 그대로 보고한다. 성공하든 실패하든 **항상 COMMA로 원복**한다 —
-    이 값을 TAB으로 남기면 이후 모든 정상 Import가 깨진다.
+    `jiggle=True`면 결함 #22985 티켓에 적힌 우회 순서를 재현한다: "현
+    상태에서 변경없이 Update활성화를 위해 다른 값 선택후 다시 기존값으로
+    돌아온뒤 Update시 Expected Result결과대로 동작함" — 목표값으로 바로
+    가지 않고 **반대값을 한 번 거쳤다가** 목표값으로 온 뒤에 Update한다.
+    `jiggle=False`는 목표값으로 한 번에 바꾸는 "직접" 경로다(티켓의 결함
+    재현 시나리오와 같은 조작).
+
+    반환: (성공 여부, note, 최종 콤보 값)
+    """
+    combo = field(ui, DATA_DELIMITER_COMBO_ID)
+    if combo is None:
+        return False, "Data Delimiter 콤보(%d)를 찾지 못함" % DATA_DELIMITER_COMBO_ID, None
+    if not ui.is_responsive(timeout_ms=3000):
+        return False, "화면 응답 없음 — 콤보를 건드리지 않음", None
+
+    if jiggle:
+        other = DELIMITER_COMMA_TEXT if target_text == DELIMITER_TAB_TEXT else DELIMITER_TAB_TEXT
+        ok, note = S.select_combo(ui, combo, other)
+        if not ok:
+            return False, "우회 1단계(%s로 임시 전환) 실패: %s" % (other, note), None
+        combo = field(ui, DATA_DELIMITER_COMBO_ID)
+        if combo is None or not ui.is_responsive(timeout_ms=3000):
+            return False, "우회 1단계 후 화면/응답 이상", None
+
+    ok, note = S.select_combo(ui, combo, target_text)
+    if not ok:
+        return False, "%s로 전환 실패: %s" % (target_text, note), None
+    if not ui.is_responsive(timeout_ms=3000):
+        return False, "전환 후 응답 없음(hang) 감지", None
+    ack = S.update(ui, ack_timeout=8)
+    if not ui.is_responsive(timeout_ms=3000):
+        return False, "Update 후 응답 없음(hang) 감지", None
+    combo2 = field(ui, DATA_DELIMITER_COMBO_ID)
+    now = S.combo_value(ui, combo2) if combo2 is not None else None
+    ok = (now == target_text)
+    return ok, "Update 완료(팝업: %s), 콤보 값=%r" % (ack or "없음", now), now
+
+
+def _try_import_preview(ui, path, label):
+    """Import Patient 화면에서 파일을 선택 후 Refresh해 미리보기 행 개수를 본다.
+
+    반환: (행이 1개 이상 있는지, 행 개수, note).
+    """
+    ids = IMPORT_PATIENT_IDS
+    browse_btn = field(ui, ids["browse_button"])
+    refresh_btn = field(ui, ids["refresh_button"])
+    if browse_btn is None or refresh_btn is None:
+        return False, 0, "Browse/Refresh 컨트롤을 찾지 못함"
+    ui.click(browse_btn, settle=1.0)
+    ok, note = S._file_dialog_submit(ui, path)
+    if not ok:
+        return False, 0, "파일 선택 실패(%s): %s" % (label, note)
+    ui.click(refresh_btn, settle=1.0)
+    time.sleep(0.5)
+    grid = next((c for c in S.list_ctrls(ui) if c.ctrl_id == ids["preview_grid"]), None)
+    rows = S.list_rows(ui, grid) if grid is not None else []
+    return bool(rows), len(rows), ""
+
+
+def _tab_delimiter_regression(ui, r, work_dir):
+    """TAB 구분자 회귀 — 기존 결함 #22985 확인 대상.
+
+    ## 결함 #22985 (내부 QA 결함 추적, 사용자 제공 캡처로 확인, 2026-08-25)
+
+    제목: "Setting Import 후 import patient시 Tab구분자임에도 Comma시 성공하고
+    Tab시 실패함." 상태=보류 / Grade D / 발생 버전 1.0.11.014 / 연구소도 이
+    이슈를 인지하고 있다(등록·추적 중, 연구소 자체 재현 테스트는 아직 안 됨).
+
+    Expected(사양대로): Data Delimiter=TAB이면 TAB 파일 Import는 성공하고
+    COMMA 파일 Import는 실패해야 한다.
+    Actual(결함 티켓 원문): 정반대다 — TAB 파일 Import가 실패하고 COMMA
+    파일 Import가 성공한다.
+
+    티켓에 적힌 우회: "현 상태에서 변경없이 Update활성화를 위해 다른 값
+    선택후 다시 기존값으로 돌아온뒤 Update시 Expected Result결과대로 동작함
+    - 내부적으로 설정값이 꼬인것 같기도함." 즉 Comma→Tab으로 **한 번에**
+    바꾸면 결함이 재현되고, 반대값을 한 번 거쳤다가 목표값으로 오면(아래
+    `_set_delimiter(jiggle=True)`) 정상 동작한다고 보고돼 있다 — 이 함수는
+    두 경로를 전부 실행해 실제로 그렇게 갈리는지 확인한다.
+
+    ## Save Sample과는 별개다 (사양서4 260824 VP-688, p.60)
+
+    "예시의 내용은 Input Format의 값을 바탕으로 생성되며, Data Delimiter는
+    클릭 후 나오는 다른 이름으로 저장하기 창에서 선택된 파일 형식에 따라
+    바뀐다." — Save Sample이 만드는 **파일의 구분자**는 화면의 Data
+    Delimiter 콤보가 아니라 Save-As 대화상자의 파일 형식 선택으로 정해진다.
+    반면 **Import 시 그 파일을 인식하는 것**은 Data Delimiter(Input Format)
+    콤보가 결정한다("Setting에서 저장된 Data 형태와 Import 하기 위해 선택한
+    파일의 Data 형태가 일치하면 로드 가능" — 사양서 원문). 이 둘은 서로 다른
+    컨트롤이 서로 다른 것을 결정한다. 이전 세션은 Save-As 대화상자의 파일
+    형식 선택 자동화(세 가지 방법)에 실패해서 그 뒤에 있는 **진짜 확인
+    대상**(Data Delimiter 설정에 따른 Import 성공/실패)까지 통째로 건너뛰고
+    있었다 — 이 버전은 Save-As 자동화에 더 이상 의존하지 않는다. 이미 확보한
+    COMMA 샘플의 헤더를 그대로 써서 TAB 파일을 파이썬 `csv` 모듈로 직접
+    만든다(Save Sample 없이도 파일의 델리미터만 바꾸면 되므로 충분하다).
+
+    콤보 조작 중 VXvue가 응답 없음 상태가 된 전례가 있어(재현 조건 미상,
+    2026-08-19) 매 전환마다 `ui.is_responsive()`로 확인하고, 멈춤이 감지되면
+    더 재시도하지 않는다. 성공하든 실패하든 **항상 COMMA로 원복**한다 — 이
+    값을 TAB으로 남기면 이후 모든 정상 Import가 깨진다.
     """
     if not S.open_setting(ui):
         r.add(6, "TAB 구분자 회귀(#22985) 준비", "FAIL",
@@ -313,90 +407,88 @@ def _tab_delimiter_regression(ui, r, work_dir):
         r.add(6, "TAB 구분자 회귀(#22985) 준비", "FAIL",
               "응답 정상", "화면 진입 직후 응답 없음 감지 — 콤보를 건드리지 않음")
         return
-
     original = S.combo_value(ui, combo) or DELIMITER_COMMA_TEXT
-    ok, note = S.select_combo(ui, combo, DELIMITER_TAB_TEXT)
-    if not ok:
-        r.add(6, "Data Delimiter -> TAB 변경", "MANUAL",
-              "정상 변경(또는 명확한 실패로 즉시 중단)",
-              "변경 시도 중단: %s (원본값 %r 그대로일 가능성이 높음, 사람 확인 필요)"
-              % (note, original))
-        return
 
-    ack = S.update(ui, ack_timeout=8)
-    if not ui.is_responsive(timeout_ms=3000):
-        r.add(6, "Data Delimiter -> TAB 변경 후 Update", "FAIL",
-              "Update 후 응답 정상",
-              "응답 없음(hang) 감지 — 결함 재현 가능성, 원복을 시도하지 않고 확인 필요로 남김")
+    # COMMA 샘플로 헤더를 확보한다(Save-As 자동화 없이 기본 저장 그대로 —
+    # 이미 이 TC의 메인 흐름에서 안정적으로 동작하는 경로다).
+    sample, err = _read_sample(ui, work_dir, sample_name="PatientListSample_ForTab.csv")
+    if sample is None:
+        r.add(6, "TAB 구분자 회귀(#22985) 준비", "MANUAL",
+              "Save Sample로 컬럼 헤더 확보", err)
         return
-    r.add(6, "Data Delimiter -> TAB 변경", "PASS",
-          "TAB으로 변경, Update 완료", "완료 팝업: %s" % (ack or "(없음)"))
+    header, example = sample["header"], sample["example"]
+    comma_file = sample["path"]
 
-    # 사양서4(260820) p.60 VP-688 근거(2026-08-21 문서 조사): Save Sample이
-    # 만드는 파일의 구분자는 화면의 Data Delimiter 콤보가 아니라 **Save-As
-    # 대화상자에서 고르는 파일 형식**(9종 중 tab 계열)으로 결정된다고 문서에
-    # 적혀 있다. 이를 실제로 자동화해 검증을 시도했으나(같은 날 라이브 실측)
-    # **세 가지 방법 모두 실패**했다 — ① `CB_SETCURSEL` + `CB_GETCURSEL`로
-    # 확인(콤보 표시값은 바뀜), ② 그 뒤 `WM_COMMAND`/`CBN_SELCHANGE` 통지를
-    # 수동으로 보냄, ③ 콤보를 실제로 열고 화면 좌표를 계산해 항목을 마우스로
-    # 클릭. 세 방법 모두 대화상자에 표시되는 값은 원하는 형식으로 보였지만
-    # **실제 저장된 파일은 항상 COMMA였다**(바이트 단위로 확인:
-    # `Patient ID,Patient Name,...`). 이 화면의 Data Delimiter 콤보를 TAB으로
-    # 바꾸고 Update 후 화면을 재진입해도(최신값 재로딩 확인됨) 결과는 같았다.
-    # 즉 **자동화 조작의 한계인지, 문서(VP-688)와 실제 동작이 어긋난 결함인지
-    # 이번 세션에서 확정하지 못했다** — 추측으로 결함이라 단정하지 않고
-    # MANUAL로 남긴다(`core.setting.select_file_type`/`file_type_options`는
-    # 콤보 항목을 정확히 열거·선택하는 재사용 가능한 유틸로 남겨 둔다).
-    sample, err = _read_sample(ui, work_dir, sample_name="PatientListSample_TAB.txt",
-                               file_type_contains="tab delimited")
-    r.add(6, "TAB 구분자 반영 확인(Save-As 형식 선택)", "MANUAL",
-          expected="Save-As 대화상자에서 'Text(tab delimited)' 형식을 선택하면 "
-                   "Save Sample 결과 구분자=TAB (사양서4 p.60 VP-688)",
-          actual=(err if sample is None else "구분자=%r(형식 선택은 반영됐으나 실제 파일은 "
-                                             "여전히 이 값)" % sample["delimiter"]),
-          note="위 docstring 참고 — SendMessage(CB_SETCURSEL)/WM_COMMAND 통지/실제 마우스"
-               "클릭 세 방법 모두 화면 표시는 바뀌었지만 저장 파일의 구분자는 바뀌지 않았다. "
-               "사양과 실제 동작의 불일치 가능성이 있어 사람 확인이 필요하다.")
-    if sample is not None and sample["delimiter"] == "\t":
-        header, example = sample["header"], sample["example"]
-        row = [TEST_VALUES_TAB.get(col.strip(), example[i] if i < len(example) else "")
+    def _make_tab_file(name, values):
+        path = os.path.join(work_dir, name)
+        row = [values.get(col.strip(), example[i] if i < len(example) else "")
                for i, col in enumerate(header)]
-        test_path_tab = os.path.join(work_dir, "PatientListTest_TAB.csv")
-        with io.open(test_path_tab, "w", encoding="utf-8-sig", newline="") as f:
+        with io.open(path, "w", encoding="utf-8-sig", newline="") as f:
             w = csv.writer(f, delimiter="\t")
             w.writerow(header)
             w.writerow(row)
+        return path
 
-        ids = IMPORT_PATIENT_IDS
-        browse_btn = field(ui, ids["browse_button"])
-        refresh_btn = field(ui, ids["refresh_button"])
-        if browse_btn and refresh_btn:
-            ui.click(browse_btn, settle=1.0)
-            ok2, note2 = S._file_dialog_submit(ui, test_path_tab)
-            if ok2:
-                ui.click(refresh_btn, settle=1.0)
-                time.sleep(0.5)
-                grid = next((c for c in S.list_ctrls(ui)
-                            if c.ctrl_id == ids["preview_grid"]), None)
-                rows = S.list_rows(ui, grid) if grid is not None else []
-                r.assert_true(6, "TAB 파일 파싱 미리보기(#22985 회귀)", bool(rows),
-                              expected="TAB 구분 파일도 Comma와 동일하게 파싱 미리보기에 "
-                                       "표시(결함 #22985 재발 없음)",
-                              actual="미리보기 행 %d개" % len(rows))
-            else:
-                r.add(6, "TAB 파일 파싱 미리보기(#22985 회귀)", "FAIL", "파일 선택", note2)
-        else:
-            r.add(6, "TAB 파일 파싱 미리보기(#22985 회귀)", "FAIL",
-                  "Browse/Refresh 컨트롤", "찾지 못함")
+    tab_file = _make_tab_file("PatientListTest_TAB.txt", TEST_VALUES_TAB)
+
+    KNOWN_DEFECT_NOTE = (
+        "결함(QA) #22985 \"Setting Import 후 import patient시 Tab구분자임에도 "
+        "Comma시 성공하고 Tab시 실패함.\" (상태=보류, Grade D, 발생 버전 "
+        "1.0.11.014, 연구소 인지·추적 중) — 이 결과와 일치한다. 새로 발견한 "
+        "결함이 아니라 이미 등록된 이슈이므로 중복 등록하지 말 것.")
+
+    def _run_scenario(label, jiggle, expect_note):
+        set_ok, set_note, now = _set_delimiter(ui, DELIMITER_TAB_TEXT, jiggle=jiggle)
+        r.add(6, "Data Delimiter -> TAB 전환(%s)" % label,
+              "PASS" if set_ok else "FAIL",
+              expected="TAB으로 전환 + Update, 콤보 값이 TAB으로 확정",
+              actual=set_note)
+        if not set_ok:
+            return None
+        tab_ok, tab_n, tab_note = _try_import_preview(ui, tab_file, "TAB(%s)" % label)
+        comma_ok, comma_n, comma_note = _try_import_preview(ui, comma_file, "COMMA(%s)" % label)
+        spec_match = tab_ok and not comma_ok
+        defect_match = (not tab_ok) and comma_ok
+        verdict = "PASS" if spec_match else ("MANUAL" if not defect_match else "FAIL")
+        r.add(6, "TAB 설정 상태에서 Import 결과(%s)" % label, verdict,
+              expected="TAB 파일 Import 성공(행 1개 이상) + COMMA 파일(불일치) Import 실패",
+              actual="TAB 파일: %s(행 %d) / COMMA 파일: %s(행 %d)%s%s"
+                     % ("성공" if tab_ok else "실패", tab_n,
+                        "성공" if comma_ok else "실패", comma_n,
+                        (" / %s" % tab_note) if tab_note else "",
+                        (" / %s" % comma_note) if comma_note else ""),
+              note=(expect_note + (" " + KNOWN_DEFECT_NOTE if defect_match else
+                    (" 사양대로 정상 동작." if spec_match else
+                     " 알려진 결함 패턴과도, 사양과도 다르다 — 사람 확인 필요."))))
+        return spec_match, defect_match
+
+    # 시나리오 A: 직접 전환(결함 티켓의 재현 경로) — Comma에서 Tab으로 한
+    # 번에 바꾼다.
+    _run_scenario("직접 전환, 결함 재현 시도",
+                  jiggle=False,
+                  expect_note="결함 #22985의 재현 시나리오(직접 전환)와 같은 조작이다.")
+
+    # 되돌렸다가(원복 확인 없이 바로 다음 시나리오로 넘어가면 상태가 섞인다)
+    revert_ok, revert_note, _ = _set_delimiter(ui, DELIMITER_COMMA_TEXT, jiggle=False)
+    if not revert_ok:
+        r.add(6, "시나리오 전환 전 COMMA 원복", "FAIL",
+              "다음 시나리오 전 COMMA로 복원", revert_note)
+        r.add(6, "Data Delimiter 최종 원복(COMMA)", "FAIL",
+              expected="테스트 종료 후 원래 값(%s)으로 복원" % original,
+              actual="중간 복원 실패로 원복 시도를 건너뜀 — 사람이 Setting > "
+                     "Study - Import Patient에서 직접 확인할 것")
+        return
+
+    # 시나리오 B: 티켓에 적힌 우회(다른 값을 한 번 거쳤다가 목표값으로 옴).
+    _run_scenario("우회 경로(티켓 워크어라운드)",
+                  jiggle=True,
+                  expect_note="결함 #22985 티켓에 적힌 우회(반대값을 한 번 거쳤다가 목표값으로 "
+                              "옴)와 같은 조작이다 — 티켓은 이 경로에서는 정상 동작한다고 "
+                              "적어 두었다.")
 
     # --- 원복: 반드시 COMMA로 되돌린다 -----------------------------------
-    combo = field(ui, DATA_DELIMITER_COMBO_ID)
-    revert_ok, revert_note = False, "콤보를 다시 찾지 못함"
-    if combo is not None and ui.is_responsive(timeout_ms=3000):
-        revert_ok, revert_note = S.select_combo(ui, combo, DELIMITER_COMMA_TEXT)
-        if revert_ok:
-            S.update(ui, ack_timeout=8)
-    r.assert_true(6, "Data Delimiter 원복(COMMA)", revert_ok,
+    revert_ok, revert_note, _ = _set_delimiter(ui, DELIMITER_COMMA_TEXT, jiggle=False)
+    r.assert_true(6, "Data Delimiter 최종 원복(COMMA)", revert_ok,
                   expected="테스트 종료 후 원래 값(%s)으로 복원" % original,
                   actual="복원 완료" if revert_ok else
                   ("복원 실패: %s — 사람이 Setting > Study - Import Patient에서 "
