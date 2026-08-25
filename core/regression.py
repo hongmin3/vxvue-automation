@@ -152,7 +152,7 @@ def _log(msg):
 
 
 def _fail_from_exception(r, step, title, exc, cfg):
-    r.add(step, title, result_mod.FAIL,
+    r.add(step, "예외 발생 — %s" % title, result_mod.FAIL,
           actual="%s: %s" % (type(exc).__name__, exc),
           note=(traceback.format_exc(limit=3).strip()[-600:] + " | "
                 + preflight_mod.memory_pressure(cfg)))

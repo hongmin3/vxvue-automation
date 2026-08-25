@@ -639,7 +639,9 @@ def _folder_watch_step(ui, r, cfg, work_dir, with_folder_watch=True):
             return
 
         ack = S.update(ui, ack_timeout=8)
-        r.add(8, "폴더 자동 감지 Update 적용", "PASS", "완료 팝업: %s" % (ack or "없음"), "")
+        r.add(8, "폴더 자동 감지 Update 적용", "PASS",
+              expected="Update 성공 팝업 또는 오류 없이 설정 저장 완료",
+              actual="완료 팝업: %s" % (ack or "없음(오류 없이 창 닫힘)"))
 
         # Setting 화면에 아직 있는 동안 이번 실행 전용 예시 파일을 만든다.
         sample, err = _read_sample(ui, work_dir, sample_name="FolderWatchSample.csv")
@@ -864,7 +866,8 @@ def _column_mapping_regression(ui, r, work_dir):
     try:
         ack = S.update(ui, ack_timeout=8)
         r.add(12, "Column Mapping 변경 Update 적용", "PASS",
-              "완료 팝업: %s" % (ack or "없음"), "")
+              expected="Update 성공 팝업 또는 오류 없이 설정 저장 완료",
+              actual="완료 팝업: %s" % (ack or "없음(오류 없이 창 닫힘)"))
 
         sample, err = _read_sample(ui, work_dir, sample_name="ColumnMappingSample.csv")
         header_ok = (sample is not None

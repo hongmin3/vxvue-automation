@@ -214,17 +214,19 @@ def cmd_report_sample(cfg, args):
 
 
 def _print_result(result):
-    """TCResult를 콘솔에 표로 출력한다(각 cmd_*가 같은 루프를 복사하던 것)."""
+    """단독 TC 콘솔도 파일 리포트와 같은 사용자용 항목으로 출력한다."""
     print()
-    print("판정: %s" % result.verdict)
-    for c in result.checks:
-        print("  [%s] Step %s %s" % (c.status, c.step, c.title))
-        if str(c.expected):
-            print("        기대: %s" % str(c.expected)[:400])
-        if str(c.actual):
-            print("        실제: %s" % str(c.actual)[:400])
-        if c.note:
-            print("        비고: %s" % str(c.note)[:400])
+    print("TC: %s - %s" % (result.tc_id, result.title))
+    print("시험 목적: %s" % result_mod.tc_purpose(result.tc_id, result.title))
+    print("최종 판정: %s" % result.verdict)
+    for sequence, c in enumerate(result.checks, 1):
+        print("  실행 순서 %d / 원본 Step %s / [%s] %s"
+              % (sequence, c.step, c.status, c.title))
+        print("        수행 내용: %s" % c.reader_activity[:800])
+        print("        합격 기준: %s" % c.reader_expected[:800])
+        print("        확인 결과: %s" % c.reader_actual[:800])
+        print("        판정 이유: %s" % c.reader_reason[:800])
+        print("        후속 조치: %s" % c.reader_action[:800])
     print()
     print("합계: " + " / ".join("%s %d" % (k, v) for k, v in result.counts.items()))
 
