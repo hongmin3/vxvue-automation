@@ -4,6 +4,8 @@
 사용 예)
   python run.py env                 리포트 상단 헤더(Windows/패키지 정보) 출력
   python run.py preflight           실행 전 환경 점검 (NG가 있으면 종료코드 2)
+  python run.py selfcheck           자동화 자신 검사 — 정적 일관성 + 단위테스트
+                                     (제품을 켜지 않는다. 전체 회귀 전에 먼저 돌린다)
   python run.py scope               TC별 자동화 수준(automation_scope.json) 표시
   python run.py design-report       TC별 설계(Step·판정 근거) HTML 리포트 생성
                                      (tests/tc*.py docstring + automation_scope.json에서
@@ -61,6 +63,7 @@ for _stream in (sys.stdout, sys.stderr):
         except Exception:                              # noqa: BLE001
             pass
 
+from core import notify as notify_mod                # noqa: E402
 from core import preflight as preflight_mod          # noqa: E402
 from core import result as result_mod                # noqa: E402
 from core import ui as ui_mod                        # noqa: E402
@@ -101,6 +104,47 @@ def cmd_preflight(cfg, args):
         return 2
     print("\npreflight 통과")
     return 0
+
+
+def cmd_selfcheck(cfg, args):
+    """자동화 자신을 검사한다 — 정적 일관성 + 단위테스트. 제품을 켜지 않는다.
+
+    전체 회귀(25~40분) 전에 이걸 먼저 돌린다. 여기서 잡히는 종류의 오류
+    (TC ID 불일치, 판정 규칙 회귀, 리포트 필드 누락)는 **실행이 성공한 뒤에야
+    드러나기 때문에** 회귀를 다시 돌려야 한다 — 몇 초 쓰고 그걸 막는다.
+
+    VXvue·DB·시험 서버를 건드리지 않으므로 시험 PC가 아닌 곳에서도 돌아간다.
+    """
+    import unittest
+    from selfcheck import static_checks
+
+    print("=== 정적 일관성 검사 ===")
+    static_problems = []
+    for name, problems in static_checks.run_all():
+        print("%-40s %s" % (name, "OK" if not problems else "문제 %d건" % len(problems)))
+        for problem in problems:
+            print("      - %s" % problem)
+        static_problems.extend(problems)
+
+    print()
+    print("=== 단위테스트 ===")
+    loader = unittest.TestLoader()
+    suite = loader.discover(start_dir=os.path.join(HERE, "selfcheck"),
+                            top_level_dir=HERE)
+    runner = unittest.TextTestRunner(verbosity=1, stream=sys.stdout)
+    outcome = runner.run(suite)
+
+    unit_bad = len(outcome.failures) + len(outcome.errors)
+    ok = not static_problems and unit_bad == 0 and not loader.errors
+    lines = ["정적 검사: 문제 %d건" % len(static_problems),
+             "단위테스트: %d건 실행 / 실패 %d / 오류 %d"
+             % (outcome.testsRun, len(outcome.failures), len(outcome.errors))]
+    if loader.errors:
+        lines.append("테스트 수집 오류 %d건 — 테스트 파일 자체를 import하지 못했다"
+                     % len(loader.errors))
+    lines.append("제품(VXvue)·DB·시험 서버는 건드리지 않았다.")
+    notify_mod.announce("PASS" if ok else "FAIL", lines, want_popup=False)
+    return 0 if ok else 2
 
 
 def cmd_scope(cfg, args):
@@ -213,6 +257,49 @@ def cmd_report_sample(cfg, args):
     return 0
 
 
+_VERDICT_RANK = ("FAIL", "BLOCKED", "MANUAL", "SKIP", "PASS")
+
+
+def _overall_verdict(results):
+    """여러 TC 판정을 하나로 합친다 — 나쁜 쪽이 이긴다(리포트 판정과 같은 순서)."""
+    seen = set(r.verdict for r in results)
+    for v in _VERDICT_RANK:
+        if v in seen:
+            return v
+    return "MANUAL"
+
+
+def _announce(results, paths, args, label):
+    """실행 끝에 결과를 배너로 찍고 창 하나를 띄운다(사용자 지시, 2026-08-25).
+
+    긴 실행 로그의 마지막 줄은 묻힌다. 자리를 비웠다 돌아왔을 때 "끝났는지,
+    통과했는지"를 스크롤 없이 알 수 있어야 한다 — 실제로 백그라운드 회귀가
+    조용히 끊긴 것을 늦게 알아 시간을 버린 전례가 있다. `--no-popup`으로 창만
+    끌 수 있다(배너는 항상 찍는다).
+    """
+    verdict = _overall_verdict(results)
+    total = dict((st, 0) for st in result_mod.STATUSES)
+    for r in results:
+        for k, v in r.counts.items():
+            total[k] = total.get(k, 0) + v
+    lines = [label]
+    if len(results) == 1:
+        lines.append("판정: %s" % results[0].verdict)
+    else:
+        fails = [r.tc_id for r in results if r.verdict == result_mod.FAIL]
+        lines.append("TC %d건 — 종합 판정 %s" % (len(results), verdict))
+        if fails:
+            lines.append("FAIL: " + ", ".join(fails))
+    lines.append("Step 합계: " + " / ".join("%s %d" % (st, total[st])
+                                            for st in result_mod.STATUSES))
+    lines.append("소요: %d초" % int(sum(r.duration_seconds for r in results)))
+    if paths:
+        lines.append("리포트: %s" % paths.get("txt", next(iter(paths.values()))))
+    notify_mod.announce(verdict, lines,
+                        want_popup=not getattr(args, "no_popup", False))
+    return verdict
+
+
 def _print_result(result):
     """단독 TC 콘솔도 파일 리포트와 같은 사용자용 항목으로 출력한다."""
     print()
@@ -320,6 +407,7 @@ def cmd_vxvue_license(cfg, args):
     _print_result(result)
     for k, v in paths.items():
         print("%-5s %s" % (k, v))
+    _announce([result], paths, args, "%s — %s" % (result.tc_id, result.title))
     return 0 if result.verdict != "FAIL" else 2
 
 
@@ -335,6 +423,7 @@ def _run_tc_module(cfg, args, mod_name, **kwargs):
     _print_result(result)
     for k, v in paths.items():
         print("%-5s %s" % (k, v))
+    _announce([result], paths, args, "%s — %s" % (result.tc_id, result.title))
     return 0 if result.verdict != "FAIL" else 2
 
 
@@ -555,6 +644,7 @@ def cmd_run_regression(cfg, args):
 
     for k, v in paths.items():
         print("%-5s %s" % (k, v))
+    _announce(results, paths, args, "전체 회귀 (run-regression)")
     return 2 if total[result_mod.FAIL] else 0
 
 
@@ -573,11 +663,13 @@ def cmd_setting_export_import(cfg, args):
             print("        비고: %s" % str(c.note)[:400])
     for k, v in paths.items():
         print("%-5s %s" % (k, v))
+    _announce([result], paths, args, "설정 Export/Import 회귀")
     return 0 if result.verdict != "FAIL" else 2
 
 
 COMMANDS = {
     "env": cmd_env,
+    "selfcheck": cmd_selfcheck,
     "tc02": cmd_tc02,
     "tc03": cmd_tc03,
     "tc04": cmd_tc04,
@@ -616,6 +708,10 @@ def main(argv=None):
     p.add_argument("--all", action="store_true", help="ui-probe에 숨은 컨트롤도 포함")
     p.add_argument("--kind", help="db-ae 필터 (DICOM_MWL / DICOM_PRINT / DICOM_STORAGE)")
     p.add_argument("--date", help="mwl-ensure 기준 날짜 (YYYY-MM-DD, 기본 오늘)")
+    p.add_argument("--no-popup", action="store_true",
+                   help="실행이 끝났을 때 결과 창을 띄우지 않는다(터미널 배너는 "
+                        "그대로 찍는다). 예약 실행·연속 디버깅처럼 창이 방해되는 "
+                        "경우에만 쓴다.")
     p.add_argument("--no-env", action="store_true",
                    help="리포트 상단 환경 헤더 수집을 건너뛴다(ModelVersionChecker 실행 생략)")
     p.add_argument("--label", help="snapshot 라벨")
@@ -688,7 +784,24 @@ def main(argv=None):
     args = p.parse_args(argv)
 
     cfg = load_config(args.config)
-    return COMMANDS[args.command](cfg, args)
+    try:
+        return COMMANDS[args.command](cfg, args)
+    except KeyboardInterrupt:
+        # 사람이 Ctrl+C로 끊은 경우. 조용히 사라지지 않게 남긴다 — 지난 세션에
+        # 전체 회귀가 두 번 "조용히" 끊겼고, 그게 중단인지 완료인지 나중에
+        # 구분할 수 없었다(사용자 지시, 2026-08-25).
+        notify_mod.announce("ABORTED",
+                            ["%s 실행이 중간에 중단됐다(Ctrl+C)." % args.command,
+                             "리포트는 만들어지지 않았다 — 다시 실행해야 한다."],
+                            want_popup=not args.no_popup)
+        return 130
+    except Exception as exc:                              # noqa: BLE001
+        notify_mod.announce("ABORTED",
+                            ["%s 실행이 예외로 끝났다." % args.command,
+                             "%s: %s" % (type(exc).__name__, exc),
+                             "아래 traceback을 확인할 것."],
+                            want_popup=not args.no_popup)
+        raise
 
 
 if __name__ == "__main__":

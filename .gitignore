@@ -40,3 +40,6 @@ __pycache__/
 # 내부 설계 노트 원본 — 라이선스 키/하드웨어 키/QA 계정/시험망 주소 포함.
 # 공개용 마스킹 사본은 work/scrub_docs.py 가 docs/ 에 생성한다.
 지식/
+
+# ui-probe --save 기본 출력 (PORTABILITY_AUDIT.md의 점검 명령이 만든다)
+probe_out.txt
