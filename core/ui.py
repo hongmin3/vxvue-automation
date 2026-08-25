@@ -685,11 +685,19 @@ class VXvueUi:
         c = self.by_id(self.LOGIN_ID_COMBO)
         return c[0].text if c else None
 
-    def login(self, user_id, password, timeout=60):
+    def login(self, user_id, password, timeout=60, retries=2):
         """로그인하고 성공 여부를 반환한다.
 
         Account 콤보는 커스텀 컨트롤이라 텍스트 주입이 통하지 않는다. 현재
         선택된 계정이 다르면 예외를 던져 잘못된 계정으로 진행하는 것을 막는다.
+
+        입력 직후 `get_text()`로 필드를 재확인해 "비어 있으면 실패"로 보고
+        곧바로 다시 지우고 입력하던 이전 방식은 신뢰할 수 없는 중간 신호였다
+        (매번 두 번 입력하는 것처럼 보이는 원인이었다, 사용자 실측 지적).
+        "눌렀다"가 아니라 **결과**(로그인 화면을 벗어났는가)로 성공/실패를
+        판단해야 한다는 이 프로젝트의 원칙(CLAUDE.md 3절)에 맞춰, 이제는
+        한 번 입력→제출하고 실제로 로그인 화면에 그대로 남아 있을 때만
+        (그것도 처음부터 다시, 중간에 어설프게 끼어들지 않고) 재시도한다.
         """
         if not self.at_login_screen():
             return True
@@ -721,29 +729,30 @@ class VXvueUi:
         if not pw or not btn:
             raise RuntimeError("로그인 컨트롤을 찾지 못했습니다. 'python run.py ui-probe'로 확인하십시오.")
 
-        # 컨트롤을 찾는 사이에 다른 창이 다시 앞으로 나설 수 있어 클릭
-        # 직전에 한 번 더 확인한다.
-        self.ensure_foreground()
-        self.type_text(pw[0], password)
-        if not self.get_text(pw[0]):
-            # 입력이 반영되지 않았다 — 무언가(다른 창/팝업)가 여전히 클릭을
-            # 가로챘다는 뜻이다. 한 번 더 정리하고 재시도한다.
-            while self.dismiss_info(timeout=2):
-                pass
+        for attempt in range(1, retries + 1):
+            # 컨트롤을 찾는 사이에 다른 창이 다시 앞으로 나설 수 있어 클릭
+            # 직전에 한 번 더 확인한다.
             self.ensure_foreground()
             self.type_text(pw[0], password)
-        self.click(btn[0], settle=1.5)
+            self.click(btn[0], settle=1.5)
 
-        end = time.time() + timeout
-        gone = 0
-        while time.time() < end:
-            if self.at_login_screen():
-                gone = 0
-            else:
-                gone += 1
-                if gone >= 2:
-                    return True
-            time.sleep(0.7)
+            end = time.time() + timeout
+            gone = 0
+            while time.time() < end:
+                if self.at_login_screen():
+                    gone = 0
+                else:
+                    gone += 1
+                    if gone >= 2:
+                        return True
+                time.sleep(0.7)
+
+            # timeout까지 로그인 화면을 벗어나지 못했다 — 실제 실패로 보고,
+            # 다음 시도 전에 남은 오류 팝업을 정리한다.
+            if attempt < retries:
+                while self.dismiss_info(timeout=2):
+                    pass
+                self.ensure_foreground()
         return False
 
     def ensure_ready(self, exe_path=None, user_id=None, password=None, dismiss_popup=True):
