@@ -23,7 +23,7 @@
 | Phase | 리포트 항목 ID | 내용 | 기본 수행 |
 |---|---|---|---|
 | 0 | `Precondition` | preflight 9항목 → mwl-ensure → xipl-license | 항상 |
-| 1 | `Baseline_Reset` | DB/폴더 baseline 복원 (라이선스·로그는 왕복 보존) | **아니오** (`--reset-baseline`) |
+| 1 | `Baseline_Reset` | DB/폴더 baseline 복원 (라이선스·로그는 왕복 보존) | **기본 수행** (`--no-reset-baseline`으로만 생략) |
 | 2 | `VXvue_License` | Setting > System > License 확인 | 항상 |
 | 3 | `DICOM_Servers` | MWL/Storage/Print 등록 확인 + C-ECHO | 항상 |
 | 4 | `TC_WindowsUpdate_*` | 구현된 TC 실행, 미구현은 scope 수준 표시 | 항상 |
@@ -109,7 +109,8 @@ Step 정답지는 XIPL 파라미터 파일명에서 얻는다(`{Projection} {Ste
 ## Baseline_Reset — DB/폴더/라이선스 클린 초기화
 
 코드: `core/regression._run_baseline_reset()` + `core/dbreset.py`
-실행: `python run.py run-regression --reset-baseline` (**파괴적**)
+실행: `python run.py run-regression` (**baseline 복원이 기본인 파괴적 실행**;
+임시 디버깅에서만 `--no-reset-baseline`으로 생략)
 
 | Step | 코드가 하는 일 | Expected Result(판정 기준) | 판정 |
 |---|---|---|---|

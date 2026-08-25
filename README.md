@@ -66,13 +66,12 @@ S0 스냅샷 ──> Export(A) ──> 설정 변경 ──> S1 스냅샷 ──
 ## 3. 지금 동작하는 것
 
 ```bash
-python run.py run-regression --reset-baseline   # 표준 전체 회귀(사용자 지시,
-                                    # 2026-08-24) — 설치 직후와 같은 클린
+python run.py run-regression        # 표준 전체 회귀(사용자 지시, 2026-08-25)
+                                    # — baseline 초기화가 기본. 설치 직후와 같은 클린
                                     # DB/폴더 상태에서 시작. 선행조건 → 라이선스
                                     # → DICOM 연동 → 구현된 TC를 **번호순**으로
                                     # → 리포트 (실측 39분, baseline 복원 시간 별도)
-python run.py run-regression        # --reset-baseline 없이(임시 확인용 — 정식
-                                    # 판정에는 위 표준 명령을 쓸 것)
+python run.py run-regression --no-reset-baseline  # 임시 디버깅용(정식 판정 아님)
 python run.py run-regression --quick   # 짧은 회귀(범위 축소 — 정식 판정용이 아니다)
 python run.py tc02                  # MWL 조회 → Step 등록 → 촬영 → Send → Close → DB
 python run.py tc03                  # 영상 조작(Interpolation 설정 + 툴 적용 SSIM)
@@ -311,17 +310,18 @@ python work/launch_login.py
 
 ### 5.3 전체 회귀
 
-**표준 실행(사용자 지시, 2026-08-24)은 `--reset-baseline`을 포함한다** — 정식
-전체 회귀는 항상 설치 직후와 같은 클린 DB/폴더 상태에서 시작한다:
+**표준 실행(사용자 지시, 2026-08-25)은 baseline 초기화를 기본 수행한다** — 정식
+전체 회귀는 항상 설치 직후와 같은 클린 DB/폴더 상태에서 시작하며, 매 실행 전
+별도 승인을 다시 묻지 않는다:
 
 ```bash
-python run.py run-regression --reset-baseline
+python run.py run-regression
 ```
 
-`--reset-baseline` 없는 `python run.py run-regression`은 코드 기본값으로는
-여전히 남겨 둔다(되돌릴 수 없는 조작을 명령 한 줄로 항상 켜 두지 않는다는
-원칙) — 그래서 매번 이 플래그를 직접 붙여야 하며, 빠뜨리면 Phase 1이 SKIP으로
-리포트에 남는다. 임시 확인(짧은 반복 테스트, 디버깅)에만 플래그 없이 쓰고,
+기존 `--reset-baseline` 옵션은 이전 명령과의 호환을 위해 남아 있지만 이제
+붙이지 않아도 같은 동작이다. 임시 확인(짧은 반복 테스트, 디버깅)에서만
+`--no-reset-baseline`을 명시해 Phase 1을 생략하며, 생략 사실은 SKIP으로
+리포트에 남는다.
 **정식 판정에는 항상 위 명령을 쓸 것.**
 
 Phase 순서대로 실행하고 **모든 결과를 리포트 1건으로 합친다.**
@@ -329,14 +329,13 @@ Phase 순서대로 실행하고 **모든 결과를 리포트 1건으로 합친�
 | Phase | 내용 | 기본 동작 |
 |---|---|---|
 | 0 | `preflight` → `mwl-ensure`(당일 DX 처방 보장) → `xipl-license` | 항상 수행 |
-| 1 | DB/폴더를 클린 baseline으로 복원 (라이선스·로그는 왕복 백업으로 보존) | **건너뜀** — `--reset-baseline` 필요(정식 판정에는 항상 붙일 것) |
+| 1 | DB/폴더를 클린 baseline으로 복원 (라이선스·로그는 왕복 백업으로 보존) | **기본 수행** — `--no-reset-baseline`으로만 생략 |
 | 2 | VXvue 자체 라이선스 확인 (Setting > System > License) | 항상 수행 |
 | 3 | DICOM SCP 등록 확인·구성 + C-ECHO (MWL / Storage / Print) | 항상 수행 |
 | 4 | 구현된 TC 실행 → (미구현 TC는 `automation_scope.json` 수준 표시) | 항상 수행 |
 
-**파괴적 옵션은 코드 기본값으로는 실행하지 않고, 실행하지 않았다는 사실을
-리포트에 `SKIP`으로 남긴다** — 그래서 정식 판정 실행에는 사람이든 자동화
-호출부든 매번 `--reset-baseline`을 명시적으로 붙여야 한다.
+baseline 복원은 전체 회귀의 코드 기본값이다. `--no-reset-baseline`으로 생략하면
+그 사실을 리포트에 `SKIP`으로 남기며, 그 실행은 정식 판정으로 사용하지 않는다.
 
 **Setting Export/Import는 이 회귀에 들어 있지 않다**(사용자 지시, 2026-08-20).
 성격이 다르다 — 이 회귀는 Windows Update 후 제품이 정상 동작하는지 보는 것이고,
@@ -345,7 +344,7 @@ Phase 순서대로 실행하고 **모든 결과를 리포트 1건으로 합친�
 전체를 지배한다. 5.5절의 `setting-export-import`로 따로 돌린다.
 
 ```bash
-python run.py run-regression --reset-baseline
+python run.py run-regression
 ```
 
 DB와 `data_dir` 폴더를 클린 설치 시점으로 되돌린 뒤 회귀를 시작한다. 현재 DB의
@@ -400,7 +399,7 @@ python run.py run-regression --no-checklist
 | `python run.py tc02` | **TC02 MWL 조회 워크플로우** — MWL 조회 → 목록 표시값 대조 → Study 등록 → **Chest/PA Step 등록 후 촬영** → DICOM Send → **수신 파일 태그가 MWL 등록값과 일치하는지** → Close → DB 대조 | **173초** |
 | `python run.py tc03` | **TC03 영상 조작** — Interpolation Mode 변경·원복 + Select/Zoom/Pan/CW/CCW 툴 적용을 **영상 영역 캡처 SSIM으로 판정** | **219초** |
 | `python run.py tc04` | **TC04 Image Processing** — 정확한 MWL 대상 → Exposure 레이아웃 → Chest/PA Step → 촬영(DB INSTANCE) → XIPL 로그 → 확장 팔레트 → `Proc.` → `XIPL.STUDIO` → **Studio 정리** | **299초** |
-| `python run.py tc05` | **TC05 DICOM 전송** — 촬영 → Send → **수신 객체의 SOP Class UID로 Image/Dose SR 포함 여부 판정** | 약 4분 |
+| `python run.py tc05` | **TC05 DICOM 전송** — 촬영 → Send → 수신 객체의 SOP Class UID로 Image/Dose SR 포함 여부 판정. 이 자동화는 DX만 검증하므로 MG 전용 Dose SR은 범위 밖(SKIP) | 약 4분 |
 | `python run.py tc07` | **TC07 DICOM Print** — Print SCP 가동 확인 → 촬영 → Print → **받은 쪽 서버의 필름 목록으로 판정**(Calling AE로 다른 제품 필름과 구분) | 약 4분 |
 | `python run.py tc08` | **TC08 Study Export** — E 드라이브로 Export → 산출물 DICOM 태그 대조 → QXLink 포함 확인. 알려진 결함 **#21049**(Win11 Export 에러) 회귀 | 약 3분 |
 | `python run.py tc13` | **TC13 Import Patient** — Study > Import Patient 설정 → 환자정보 txt/csv Import → Registration-Reserved 목록 표시까지. TAB 구분자 회귀(#22985) 포함 | 316초 |
@@ -488,10 +487,12 @@ PASS·FAIL·MANUAL·SKIP·BLOCKED 건수 / 실패 항목 / 수동 확인 항목 
 `DICOM_Servers`)이 각각 MANUAL/PASS로 해소됐다. 대신 **새 FAIL 2건**이
 나왔고 둘 다 원인을 규명·수정했다: `TC_WindowsUpdate_05`는 Dose SR
 미수신이 결함이 아니라 DX 촬영에는 애초에 해당하지 않는 검증이었음을
-DICOM Conformance Statement로 확인해 MANUAL로 바꿨고, `TC_WindowsUpdate_11`
+DICOM Conformance Statement로 확인했다. 2026-08-25에 검증 범위를 DX로
+확정하면서 이 항목은 MANUAL에서 범위 밖 SKIP으로 재조정했다. `TC_WindowsUpdate_11`
 은 툴 팝업이 스스로 닫히는 것과 재오픈 클릭이 경쟁하던 타이밍 버그를
-고쳤다. 두 수정 모두 개별 재실행으로 PASS를 확인했으나(TC05
-`PASS 6/FAIL 0/MANUAL 1`, TC11 `PASS 9/FAIL 0/MANUAL 1`), **셋을 함께
+고쳤다. 두 수정 모두 개별 재실행으로 확인했으나(TC05 당시
+`PASS 6/FAIL 0/MANUAL 1`, 이후 DX 범위 결정으로 마지막 항목은 SKIP;
+TC11 `PASS 9/FAIL 0/MANUAL 1`), **셋을 함께
 반영한 전체 회귀 재실행은 두 차례 환경 문제로 끝까지 완료하지 못했다**
 (중간에 프로세스가 외부 요인으로 중단됨 — 제품/코드 결함 아님). 다음
 회귀 실행에서 최종 확인할 것.
@@ -635,7 +636,7 @@ SSIM에 쓰고, 없으면 numpy 구현으로 대체한다.
 | GPU 필요한 3D 산출물 | SKIP (규칙화) | 검증 PC에 CUDA GPU가 없다. 라이선스·UI 흐름은 검증 |
 | Procedure ↔ Code 매핑 | 하지 않음 | 제품 설정을 바꾸는 조작이고, 자동화가 잘못 눌러 Procedure를 하나 만든 사고가 있었다(4.8절). 사람이 한 번 매핑한 뒤 회귀를 돌린다 |
 | Export Manager 창 내부 조작 | **자동화됨**(2026-08-21) | 별도 프로세스(`VX.EXPORT.MANAGER`)의 드라이브·경로·형식(DICOM+IMG) 지정과 Start까지 캡처+OCR·픽셀 색으로 실측해 자동화했다(4.3절) |
-| Setting > DICOM - General 의 Send Dose SR | MANUAL | 위치는 확인됨(Service Manual p.136 4.9.1, 사양서4 p.88 VP-707 — Custom Setting Yes/No) — **컨트롤 ID는 아직 실측 전**이라 잘못 누르면 다른 전송 정책을 바꿀 수 있다 |
+| Setting > DICOM - General 의 Send Dose SR | **DX 범위에서 자동화됨** | Yes/No 라디오 컨트롤 ID를 2026-08-21 실측해 상태 확인·전환·원복까지 자동화했다. 다만 DICOM Conformance Statement상 Dose SR은 MG 영상 전용이며 이 프로젝트는 DX만 검증하므로 Dose SR 미수신 자체는 범위 밖(SKIP)이다 |
 | Export된 스터디의 역방향 Import | **자동화됨**(2026-08-21) | 폴더 선택 트리를 `TVM_*` 메시지로 정확히 읽고(4.4절), 목록 각 열 값을 Export한 DICOM 태그와 대조하고(4.5절), 결과 팝업·창 닫힘·DB 건수 증가를 함께 근거로 쓴다. `--no-import`로 끌 수 있다. VXvue 자체 Import는 IMG만 받으므로(Operation Manual 8.14) Export에서 DICOM+IMG를 함께 만든다 |
 | 시험 후 Export 매체 정리 | **자동화됨**(2026-08-21) | 설정된 Export 대상 폴더 안만 비운다. 드라이브 루트이거나 설정과 다른 경로면 아무것도 지우지 않는다. `--keep-export`로 끔 |
 | XIPL Studio 재처리(TC04) | MANUAL | `C:\XIPL\PARAMETER` 구성과 서버 재시작으로 촬영 처리 및 Studio 기동은 확인됐다. WPF 내부 컨트롤 실측 후 로드·Process 조작을 추가해야 한다 |

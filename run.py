@@ -29,9 +29,10 @@
   python run.py run-regression      체크리스트 전체 회귀. 구현된 TC는 실제로 실행하고,
                                      나머지는 automation_scope.json 수준을 리포트에
                                      그대로 표시한다(수행/미수행이 구분된다).
+                                     DB/폴더 baseline 초기화는 기본으로 수행한다.
                                      선택 옵션:
-                                       --reset-baseline       DB/폴더를 클린 baseline으로
-                                                              되돌린 뒤 시작(파괴적)
+                                       --no-reset-baseline    임시 디버깅에서만 baseline
+                                                              초기화를 명시적으로 생략
                                        --approve-destructive  맨 마지막 Setting Import까지
                                                               실행(파괴적)
                                        --only TC_WindowsUpdate_14   특정 TC만
@@ -663,13 +664,14 @@ def main(argv=None):
                         "보고, Setting Export/Import는 생략한다. 축소한 범위는 "
                         "리포트의 Quick_Mode 항목에 남는다 — 빠른 이상 감지용이고 "
                         "체크리스트 정식 판정은 전체 회귀로 받아야 한다.")
-    p.add_argument("--reset-baseline", action="store_true",
+    p.set_defaults(reset_baseline=True)
+    p.add_argument("--reset-baseline", dest="reset_baseline", action="store_true",
                    help="run-regression 시작 시 DB와 data_dir 폴더를 baseline "
-                        "(config.json의 baseline.db_backup / folder_backup) 상태로 "
-                        "되돌린다. **파괴적 조작** — 현재 DB의 환자·검사·설정이 전부 "
-                        "사라진다. 라이선스와 운영 로그는 왕복 백업으로 보존한다. "
-                        "지정하지 않으면 현재 DB 상태 위에서 회귀를 수행하고 그 사실을 "
-                        "리포트에 SKIP으로 남긴다.")
+                        "상태로 되돌린다(기본 동작, 이전 명령과의 호환용). 현재 DB의 "
+                        "환자·검사·설정은 사라지며 라이선스와 운영 로그는 보존한다.")
+    p.add_argument("--no-reset-baseline", dest="reset_baseline", action="store_false",
+                   help="임시 디버깅에서만 baseline 초기화를 명시적으로 생략한다. "
+                        "정식 전체 회귀 판정에는 사용하지 않는다.")
     p.add_argument("--no-checklist", action="store_true",
                    help="run-regression 결과를 체크리스트 xlsx 사본에 기록하는 단계를 "
                         "생략한다(원본은 어떤 경우에도 수정하지 않는다).")

@@ -5,7 +5,7 @@ r"""체크리스트 전체 회귀 러너.
 
 ```
 Phase 0  선행조건       preflight -> mwl-ensure -> xipl-license
-Phase 1  baseline 초기화 (--reset-baseline 필요, 파괴적)
+Phase 1  baseline 초기화 (기본 수행, 파괴적; --no-reset-baseline으로만 생략)
            라이선스 파일 백업 -> 로그 백업 -> 뷰어 종료 확인
            -> dbreset.restore()      (DB를 baseline .bak으로)
            -> dbreset.restore_folder() (data_dir를 baseline 폴더로)
@@ -24,13 +24,15 @@ Phase 4  TC 실행         구현된 TC -> (그 외는 automation_scope 수준 �
 PASS를 내지 않고 `automation_scope.json`에 기록된 수준(MANUAL/PARTIAL/BLOCKED/
 EXCLUDED)과 그 판단 근거를 리포트 항목으로 그대로 옮긴다.
 
-## 파괴적 조작은 옵션으로 분리한다
+## 파괴적 조작 정책
 
-되돌리기 어려운 두 가지는 기본으로 실행하지 않고, 실행하지 않았다는 사실을
-리포트에 SKIP으로 남긴다.
+전체 회귀의 baseline 초기화는 사용자 확정 지시(2026-08-25)에 따라 기본으로
+수행한다. 임시 디버깅에서만 `--no-reset-baseline`으로 명시적으로 생략하며,
+생략 사실은 리포트에 SKIP으로 남긴다. Setting Import는 별도 명령으로 분리한다.
 
-- `--reset-baseline` : Phase 1. DB와 `data_dir` 폴더를 2026-08-18 클린 설치
+- 기본 동작(`--reset-baseline`은 호환용 별칭): Phase 1. DB와 `data_dir` 폴더를 2026-08-18 클린 설치
   시점으로 되돌린다. 지금 DB에 있는 환자·검사·설정이 전부 사라진다.
+- `--no-reset-baseline` : 임시 디버깅에서만 Phase 1을 생략한다.
 - `--approve-destructive` : Phase 5의 실제 Import. DB 전체가 마지막 Export
   시점으로 복원된다.
 
@@ -263,7 +265,7 @@ def _run_baseline_reset(cfg, approved):
     if not approved:
         r.add(1, "baseline 복원", result_mod.SKIP,
               expected="DB=%s / 폴더=%s" % (bak, folder),
-              note="--reset-baseline 없이 실행되어 초기화를 건너뛰었다. 이 회귀는 "
+              note="--no-reset-baseline로 지정해 초기화를 명시적으로 건너뛰었다. 이 회귀는 "
                    "**현재 DB 상태 위에서** 수행됐다 — 클린 상태 전제가 필요한 판정"
                    "(예: 목록 건수 비교)은 이 사실을 감안해 읽을 것.")
         r.finalize()
@@ -484,8 +486,8 @@ def _quick_notice(applied):
     r.add(3, "정식 판정 경로", result_mod.MANUAL,
           expected="체크리스트 기록은 전체 회귀 결과로 한다",
           actual="이번 실행은 `--quick`(빠른 이상 감지용)",
-          note="정식 판정: `python run.py regression --reset-baseline "
-               "--approve-destructive`. 짧은 회귀에서 FAIL이 나오면 그것은 "
+          note="정식 판정: `python run.py run-regression`(baseline 기본 복원). "
+               "짧은 회귀에서 FAIL이 나오면 그것은 "
                "실제 결함일 가능성이 높지만, **PASS는 전체 회귀의 PASS를 "
                "대신하지 못한다.**")
     return r.finalize()
@@ -612,7 +614,7 @@ def _run_tc(tc_id, cfg, ui, evidence_root, extra_kwargs=None):
 
 
 # --- 진입점 -------------------------------------------------------------
-def run(cfg, ui_factory, approve_destructive=False, reset_baseline=False,
+def run(cfg, ui_factory, approve_destructive=False, reset_baseline=True,
         evidence_root=None, only=None, quick=False):
     """전체 회귀를 실행하고 TCResult 리스트를 반환한다.
 
@@ -622,7 +624,8 @@ def run(cfg, ui_factory, approve_destructive=False, reset_baseline=False,
     approve_destructive: 남겨 둔 인자. Setting Export/Import를 이 회귀에서
                          분리했으므로(사용자 지시 2026-08-20) 지금은 쓰이지
                          않는다 — `run.py setting-export-import`가 담당한다.
-    reset_baseline: Phase 1 수행 여부.
+    reset_baseline: Phase 1 수행 여부. 전체 회귀 기본값은 True이며 임시
+                    디버깅에서만 명시적으로 False로 둔다.
     only: 특정 TC만 돌릴 때의 tc_id 집합(디버깅용). None이면 전체.
     quick: 짧은 회귀. 촬영을 TC02에서 한 번만 하고 TC14는 표본만 본다.
            축소한 범위를 `Quick_Mode` 결과로 남긴다(QUICK_KWARGS 주석 참고).
@@ -650,7 +653,8 @@ def run(cfg, ui_factory, approve_destructive=False, reset_baseline=False,
 
     # Phase 1
     _log("Phase 1 — baseline 초기화 (%s)"
-         % ("수행" if reset_baseline else "건너뜀: --reset-baseline 없음"))
+         % ("수행(전체 회귀 기본값)" if reset_baseline
+            else "건너뜀: --no-reset-baseline 지정"))
     reset_result, did_reset = _run_baseline_reset(cfg, approved=reset_baseline)
     results.append(reset_result)
 
