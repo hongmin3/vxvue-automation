@@ -2454,7 +2454,7 @@ def _ocr_lines_with_rows(rows, scale=3):
     return out, img
 
 
-def _print_overlay_add_items(ui, ordered_targets, max_scrolls=14):
+def _print_overlay_add_items(ui, ordered_targets, max_scrolls=60):
     """(항목명, 구역) 목록을 마스터 Item 목록(`31163`)에서 찾아 옮긴다.
 
     목록이 위→아래 고정 순서라 매 항목마다 맨 위로 되돌아가지 않고, 스크롤을
@@ -2462,45 +2462,50 @@ def _print_overlay_add_items(ui, ordered_targets, max_scrolls=14):
     약 15초, 6개면 1.5분 — 실측으로 느려서 바꿨다). 목록 전체를 한 번에
     OCR하되 줄과 행은 `_ocr_lines_with_rows()`로 **좌표로** 짝짓는다.
 
+    `max_scrolls`는 넉넉해도 안전하다 — 아래 루프가 **화면 서명이 반복되면**
+    (= 목록 바닥) 스스로 멈추므로 상한은 안전장치일 뿐이다. 반대로 상한이 모자라면
+    조용히 실패한다: 실측(2026-08-25) 이 목록은 45행이고 한 화면에 12행이 보이며
+    아래 스크롤은 1회 1행이다. `Accession Number`는 **26번째 행**인데 예전 상한
+    `14`로는 25행까지만 확인해 **한 칸 차이로 "목록에 없다"고 판정**했다. 그래서
+    상한을 목록 전체를 덮는 값으로 올렸다.
+
     반환: {항목명: 옮김 성공 여부}
     """
     from . import setting as S
-    remaining = list(ordered_targets)
     done = {}
-    item_list = [c for c in S.content_controls(ui) if c.ctrl_id == PRINT_OVERLAY_ITEM_LIST_ID][0]
-    S.scroll_list_to_top(ui, item_list)
-    seen_sigs = set()
-    for _ in range(max_scrolls):
-        if not remaining:
-            break
-        item_list = [c for c in S.content_controls(ui) if c.ctrl_id == PRINT_OVERLAY_ITEM_LIST_ID][0]
-        rows = S.list_rows(ui, item_list)
-        if not rows:
-            break
-        pairs, img = _ocr_lines_with_rows(rows)
-        if img is None:
-            break
-        sig = hash(img.tobytes())
-        if sig in seen_sigs:
-            break
-        seen_sigs.add(sig)
-        still = []
-        for target, slot in remaining:
+    # Moving an item removes it from the master list and shifts every row below it.
+    # Therefore OCR coordinates from the previous frame must never be reused for a
+    # second item. Search and move one target at a time, taking a fresh screenshot
+    # after every mutation of the list.
+    for target, slot in ordered_targets:
+        item_list = [c for c in S.content_controls(ui)
+                     if c.ctrl_id == PRINT_OVERLAY_ITEM_LIST_ID][0]
+        S.scroll_list_to_top(ui, item_list)
+        seen_sigs = set()
+        found = False
+        for _ in range(max_scrolls):
+            item_list = [c for c in S.content_controls(ui)
+                         if c.ctrl_id == PRINT_OVERLAY_ITEM_LIST_ID][0]
+            rows = S.list_rows(ui, item_list)
+            if not rows:
+                break
+            pairs, img = _ocr_lines_with_rows(rows)
+            if img is None:
+                break
+            sig = hash(img.tobytes())
+            if sig in seen_sigs:
+                break
+            seen_sigs.add(sig)
             matched_row = next((row for text, row in pairs
                                 if _overlay_row_has(target, text)), None)
             if matched_row is not None:
                 ui.click(S.row_click_point(ui, matched_row), settle=0.4)
                 _print_overlay_move_selected(ui, slot)
                 time.sleep(0.4)
-                done[target] = True
-            else:
-                still.append((target, slot))
-        remaining = still
-        if remaining:
-            item_list = [c for c in S.content_controls(ui) if c.ctrl_id == PRINT_OVERLAY_ITEM_LIST_ID][0]
+                found = True
+                break
             S.scroll_list(ui, item_list, notches=-3, settle=0.25)
-    for target, _slot in remaining:
-        done[target] = False
+        done[target] = found
     return done
 
 

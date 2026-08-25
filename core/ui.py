@@ -757,18 +757,56 @@ class VXvueUi:
 
     def ensure_ready(self, exe_path=None, user_id=None, password=None, dismiss_popup=True):
         notes = []
+        launched = False
         if not self.pid and exe_path:
             self.launch(exe_path)
             notes.append("VXvue 실행")
+            launched = True
         if not self.pid:
             raise RuntimeError("VXvue가 실행되어 있지 않습니다.")
-        if dismiss_popup:
+        # 프로세스가 생긴 시점과 실제 로그인/메인 화면이 준비되는 시점은 다르다.
+        # baseline 복원 직후의 새 기동에서는 launch()의 고정 대기 뒤에도 잠시
+        # 로딩 화면일 수 있어, 이때 login()을 부르면 "로그인 화면이 아님"으로
+        # 조기 성공한다. 로그인 콤보 또는 메인 상단 Tab(31200)을 실제로 찾을
+        # 때까지 기다린다.
+        def ready_state():
+            if self.at_login_screen():
+                return "login"
+            if self.by_id(31200):
+                return "main"
+            # Setting 전용 화면에서는 메인 상단 Tab(31200)이 사라지고 우측
+            # 설정 네비게이션 Tab(31197)이 루트 역할을 한다. 개별 TC 직후
+            # Setting에 남아 있어도 이미 로그인된 정상 상태다.
+            if self.by_id(31197):
+                return "setting"
+            return None
+
+        state = ready_state()
+        if launched or (user_id and password and not state):
+            end = time.time() + 60
+            while not state and time.time() < end:
+                time.sleep(0.7)
+                state = ready_state()
+        if not state:
+            raise RuntimeError("VXvue 로그인 화면 또는 메인 화면이 준비되지 않았습니다.")
+        # 로그인 창도 VXvue의 일반 팝업과 같은 #32770 최상위 창이다. 로그인
+        # 전에 dismiss_info()를 호출하면 로그인 버튼을 빈 비밀번호로 눌러
+        # 버리고, 뒤의 login()은 오류 팝업/전환 타이밍에 따라 로그인을 하지
+        # 못한 채 성공처럼 반환할 수 있다. 자격 증명 처리를 항상 먼저 한다.
+        if user_id and password:
+            ok = self.login(user_id, password)
+            if not ok:
+                raise RuntimeError("VXvue 로그인 화면을 벗어나지 못했습니다.")
+            end = time.time() + 60
+            while not (self.by_id(31200) or self.by_id(31197)) and time.time() < end:
+                time.sleep(0.7)
+            if not (self.by_id(31200) or self.by_id(31197)):
+                raise RuntimeError("로그인 후 VXvue 메인/Setting 화면이 준비되지 않았습니다.")
+            notes.append("로그인 성공")
+        if dismiss_popup and not self.at_login_screen():
             msg = self.dismiss_info(timeout=8)
             if msg:
                 notes.append("팝업 닫음: " + msg)
-        if user_id and password:
-            ok = self.login(user_id, password)
-            notes.append("로그인 성공" if ok else "로그인 실패")
         return notes
 
 

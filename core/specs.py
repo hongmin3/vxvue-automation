@@ -49,9 +49,8 @@ SECTION_PATTERN = re.compile(r"^\s*(\d+\.\d+(?:\.\d+)?)\s+(\S[^\n]{1,50})", re.M
 # 파일명 일부 -> 짧은 이름. 파일명에 개정 날짜가 붙어 바뀔 수 있으므로 부분
 # 일치로 찾는다. `VXvue/CLAUDE.md` 4절의 문서 목록과 대응한다.
 DOC_FILES = {
-    "사양서1": "VXvue 사양서1",
-    "사양서2": "VXvue 사양서2",
-    "사양서3": "VXvue 사양서3",
+    # 번호 사양서(사양서1, 2, 3 ...)는 **여기 열거하지 않는다** — 개수가 늘어나므로
+    # `_SPEC_NUM_RE` 패턴으로 찾는다(`spec_shorts()` 참고).
     "License SRS": "Licence Manager SRS",
     "Operation Manual": "VXvue Operation Manual",
     "Service Manual": "VXvue Service Manual",
@@ -62,7 +61,9 @@ DOC_FILES = {
 
 # 사양이 아니라 조작 절차/연동 구성 문서 — 기본 검색 대상에서 뺀다.
 # `CLAUDE.md` 2절: 매뉴얼은 사양서보다 우선하지 않는다.
-SPEC_ONLY = ("사양서1", "사양서2", "사양서3", "License SRS")
+#: 하위 호환용 — 호출부가 명시적으로 넘기지 않으면 `search()`가 `spec_only(cfg)`로
+#: 실재하는 사양서를 찾는다. 이 상수를 근거 목록으로 신뢰하지 말 것.
+SPEC_ONLY = None
 
 
 class SpecError(RuntimeError):
@@ -91,8 +92,43 @@ def knowledge_dir(cfg=None, root=None):
     return ""
 
 
+#: `(사양서) VXvue 사양서<N>(날짜).pdf` — N을 그대로 짧은 이름으로 쓴다.
+_SPEC_NUM_RE = re.compile(r"^\(사양서\)\s*VXvue\s*사양서\s*(\d+)\s*\(")
+
+
+def spec_shorts(cfg=None):
+    """지식파일 폴더에 **실제로 있는** 번호 사양서의 짧은 이름 목록(번호순).
+
+    **개수를 코드에 박지 않는다**(사용자 지시, 2026-08-25). 사양서는 늘어난다 —
+    2026-08-20에 3종 → 5종(사양서4·5 신설)이 됐는데 `DOC_FILES`에 등록되지 않아
+    `search()`가 그 두 권을 **조용히 건너뛰고 있었다**(2026-08-25 발견). 근거를
+    못 찾은 것과 문서를 아예 열지 않은 것이 구분되지 않는 상태였다. 그래서
+    파일명의 `(사양서) VXvue 사양서<N>` 패턴으로 찾는다.
+    """
+    root = knowledge_dir(cfg)
+    if not root:
+        return []
+    nums = []
+    for name in os.listdir(root):
+        if not name.lower().endswith(".pdf"):
+            continue
+        m = _SPEC_NUM_RE.match(name)
+        if m:
+            nums.append(int(m.group(1)))
+    return ["사양서%d" % n for n in sorted(nums)]
+
+
+def spec_only(cfg=None):
+    """`search()`의 기본 검색 대상 — 실재하는 번호 사양서 + License SRS."""
+    return tuple(spec_shorts(cfg)) + ("License SRS",)
+
+
 def doc_paths(cfg=None, only=None):
-    """근거 문서 경로를 {짧은 이름: 경로}로 돌려준다."""
+    """근거 문서 경로를 {짧은 이름: 경로}로 돌려준다.
+
+    번호 사양서는 `DOC_FILES` 등록 여부와 무관하게 파일명 패턴으로 잡는다 —
+    새 사양서가 추가돼도 코드를 고치지 않아도 되게 하려는 것이다.
+    """
     root = knowledge_dir(cfg)
     if not root:
         return {}
@@ -100,6 +136,12 @@ def doc_paths(cfg=None, only=None):
     found = {}
     for name in os.listdir(root):
         if not name.lower().endswith(".pdf"):
+            continue
+        m = _SPEC_NUM_RE.match(name)
+        if m:
+            short = "사양서%d" % int(m.group(1))
+            if wanted is None or short in wanted:
+                found[short] = os.path.join(root, name)
             continue
         for short, marker in DOC_FILES.items():
             if wanted is not None and short not in wanted:
@@ -154,7 +196,7 @@ def extract(pdf_path, force=False):
     return pages
 
 
-def search(cfg, pattern, flags=re.I, context=200, limit=20, only=SPEC_ONLY):
+def search(cfg, pattern, flags=re.I, context=200, limit=20, only=None):
     """근거 문서에서 문구를 찾아 쪽 번호와 VP 번호를 함께 돌려준다.
 
     반환: [{"source": 짧은 이름, "page": 1-based 쪽, "vp": [ID...],
@@ -165,6 +207,8 @@ def search(cfg, pattern, flags=re.I, context=200, limit=20, only=SPEC_ONLY):
     `only=("Service Manual",)`처럼 지정한다.
     """
     regex = re.compile(pattern, flags)
+    if only is None:                       # 기본: 실재하는 사양서 + License SRS
+        only = spec_only(cfg)
     out = []
     for short, path in sorted(doc_paths(cfg, only=only).items()):
         pages = extract(path)
@@ -231,7 +275,7 @@ def _ids_near(page_text, pos, pattern, prev_page_text=""):
     return uniq
 
 
-def cite(cfg, pattern, only=SPEC_ONLY, **kw):
+def cite(cfg, pattern, only=None, **kw):
     """`search` 결과를 판정 `note`에 넣을 한 줄 인용문으로 만든다.
 
     찾지 못하면 빈 문자열을 돌려준다. **근거가 없으면 없다고 말하는 것**이

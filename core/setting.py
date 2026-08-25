@@ -1201,14 +1201,132 @@ def row_click_point(ui, row_ctrl):
 
 
 def scroll_list(ui, list_ctrl, notches=-3, settle=0.25):
-    """목록 내부를 스크롤한다(목록 위에 커서를 두고 굴린다)."""
-    l, t, r, b = list_ctrl.rect
+    """목록 내부를 스크롤한다(목록 위에 커서를 두고 굴린다).
+
+    **rect를 매번 다시 읽는다**(실측 2026-08-25). `Control.rect`는 컨트롤을
+    열거한 시점의 스냅샷인데, 이 화면에서는 **스크롤하는 동안 목록 컨트롤 자체가
+    화면에서 움직인다** — Print Overlay Item 목록을 위로 굴리면 목록 컨트롤이
+    `(745,214,915,602)`에서 `(745,634,915,1022)`로 **아래로 378px 밀려났다**
+    (바깥 설정 패널이 함께 스크롤되기 때문). 캐시된 rect의 중심에 계속 휠을
+    보내면 **커서가 목록 밖을 가리켜 아무 일도 일어나지 않는다.**
+
+    이것이 `scroll_list_to_top()`이 "위로 굴려도 안 올라간다"고 보였던 진짜
+    원인이다. 그래서 스크롤 횟수를 늘리는 것으로는 절대 고쳐지지 않았다 —
+    2026-08-25에 `steps` 10→50으로 올려도 `Accession Number`를 못 찾았고,
+    사용자도 이 항목을 손으로 누를 수 없다고 했다(같은 증상).
+    """
+    from .ui import _rect_of
+    live = _rect_of(list_ctrl.hwnd) or list_ctrl.rect
+    l, t, r, b = live
     ui.wheel(((l + r) // 2, (t + b) // 2), notches, settle=settle)
 
 
-def scroll_list_to_top(ui, list_ctrl, steps=10):
-    for _ in range(steps):
-        scroll_list(ui, list_ctrl, notches=4, settle=0.08)
+def list_scroll_arrow(ui, list_ctrl, which="up"):
+    """목록 스크롤바의 위/아래 화살표 버튼 좌표(없으면 None).
+
+    실측(2026-08-25): 이 목록의 스크롤바(`Scroll` 자식)는 위·아래에 각각
+    `IconButton` 자식을 갖는다 — 위 화살표가 `id=1`, 아래가 `id=2`다. 좌표는
+    **매번 다시 읽는다**(컨트롤이 화면에서 움직인다, `scroll_list()` 참고).
+    """
+    from .ui import children, _rect_of
+    sb = list_scrollbar(ui, list_ctrl)
+    if sb is None:
+        return None
+    want = 1 if which == "up" else 2
+    for kid in children(sb.hwnd, 1):
+        if kid.text.strip() != "IconButton" or kid.ctrl_id != want:
+            continue
+        l, t, r, b = _rect_of(kid.hwnd) or kid.rect
+        if r - l <= 0 or b - t <= 0:
+            return None
+        return ((l + r) // 2, (t + b) // 2)
+    return None
+
+
+def scroll_list_to_top(ui, list_ctrl, max_clicks=80, batch=3, settle=0.18):
+    """목록을 맨 위로 되돌린다. **스크롤바 위 화살표를 누르고, 도달을 확인한다.**
+
+    ## 왜 휠을 쓰지 않는가 (실측 2026-08-25 — 세 번 헛짚은 끝에 찾은 원인)
+
+    예전 구현은 `scroll_list(notches=4)`(휠 위로)를 `steps=10`회 맹목으로 굴렸다.
+    그런데 이 화면에서 **휠 위로는 목록 내부가 아니라 바깥 설정 패널을 스크롤한다.**
+    그 결과 목록 컨트롤 자체가 화면에서 아래로 밀려나고(`(745,214,915,602)` →
+    `(745,634,915,1022)`, 378px), 목록 내용은 거의 그대로다. 즉:
+
+    - 원인은 "횟수가 부족해서"가 **아니다** — `steps`를 10→50으로 올려도
+      `Accession Number`를 못 찾았다.
+    - `scroll_list()`가 캐시된 rect에 휠을 보내던 버그도 함께 있었다(고쳤다).
+      그것까지 고쳐도 휠은 여전히 바깥 패널을 움직인다.
+    - 사용자도 이 항목을 손으로 누를 수 없다고 했다 — 제품 UI 자체가 휠로는
+      이 목록을 위로 올리기 어렵다는 뜻이고, 증상이 일치한다.
+
+    스크롤바의 **위 화살표 버튼**을 누르면 목록 내부가 확실히 올라간다(실측: 20회
+    클릭으로 목록 중간에서 맨 위 근처까지). 그래서 화살표를 쓰고, 목록 화면이
+    더 이상 바뀌지 않을 때 멈춘다. 아래 방향(`iter_list_rows`)은 휠이 정상
+    동작하므로 그대로 둔다.
+
+    화살표를 못 찾으면(스크롤바 없음 = 스크롤 불필요이거나 다른 목록 구조) 예전
+    방식인 휠 위로 굴리기로 되돌아간다.
+
+    반환: 실제로 누른 횟수(디버깅·로그용).
+    """
+    import time
+    try:
+        from PIL import ImageGrab
+    except Exception:                                     # noqa: BLE001
+        ImageGrab = None
+    from .ui import _rect_of
+
+    def _grab():
+        if ImageGrab is None:
+            return None
+        try:
+            box = _rect_of(list_ctrl.hwnd) or list_ctrl.rect
+            return hash(ImageGrab.grab(bbox=box, all_screens=True).tobytes())
+        except Exception:                                 # noqa: BLE001
+            return None
+
+    def _sig(tries=6, gap=0.12):
+        """**리페인트가 끝난 뒤의** 서명. 연속 두 장이 같아질 때까지 기다린다.
+
+        배치 직후 곧바로 캡처하면 스크롤이 됐는데도 직전 프레임이 잡혀
+        "안 움직였다"로 오인한다(실측 2026-08-25).
+        """
+        prev = _grab()
+        if prev is None:
+            return None
+        for _ in range(tries):
+            time.sleep(gap)
+            cur = _grab()
+            if cur == prev:
+                return cur
+            prev = cur
+        return prev
+
+    if list_scroll_arrow(ui, list_ctrl, "up") is None:     # 화살표 없음 → 예전 방식
+        for _ in range(max_clicks):
+            scroll_list(ui, list_ctrl, notches=4, settle=0.08)
+        return max_clicks
+
+    used, last, unchanged = 0, _sig(), 0
+    while used < max_clicks:
+        for _ in range(batch):
+            pt = list_scroll_arrow(ui, list_ctrl, "up")    # 매번 다시 읽는다
+            if pt is None:
+                return used
+            ui.click(pt, settle=settle)
+            used += 1
+        sig = _sig()
+        if sig is None:                       # 캡처 불가 — 확인 없이 계속 누른다
+            continue
+        if sig == last:
+            unchanged += 1
+            if unchanged >= 2:                # 두 배치 연속 정지 = 맨 위 클램프
+                break
+        else:
+            unchanged = 0
+        last = sig
+    return used
 
 
 def iter_list_rows(ui, list_ctrl, on_row, max_pages=12):

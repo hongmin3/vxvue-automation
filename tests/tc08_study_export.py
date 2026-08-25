@@ -256,14 +256,41 @@ def _browse_to_folder(mgr, dest):
     if tree is None:
         return False, "폴더 트리(SysTreeView32)를 찾지 못했다."
     folder_name = os.path.basename(os.path.normpath(dest))
-    point = _ocr_word_center(tree.rect, folder_name)
-    if point is None:
+    selected_by_tree = False
+    tree_note = ""
+    try:
+        from core.shelltree import ShellTree
+        with ShellTree(tree.hwnd) as shell_tree:
+            parents = []
+            for node in (shell_tree.selected(), shell_tree.root()):
+                if node and node not in parents:
+                    parents.append(node)
+            target = None
+            for parent in parents:
+                if shell_tree.text(parent).strip().casefold() == folder_name.casefold():
+                    target = parent
+                    break
+                shell_tree.expand_and_wait(parent, timeout=3.0)
+                target, _label = shell_tree.find_child(
+                    parent, lambda label: label.strip().casefold() == folder_name.casefold())
+                if target:
+                    break
+            if target:
+                selected_by_tree = shell_tree.select(target)
+            else:
+                tree_note = "native tree에서 %r 폴더를 찾지 못함" % folder_name
+    except Exception as exc:  # OCR fallback still gives the test a chance to proceed.
+        tree_note = "native tree 탐색 오류: %s" % exc
+
+    point = None if selected_by_tree else _ocr_word_center(tree.rect, folder_name)
+    if not selected_by_tree and point is None:
         ok_btn = next((c for c in children(dlg.hwnd, 3) if c.ctrl_id == BROWSE_CANCEL_ID), None)
         if ok_btn:
             mgr.click(ok_btn, settle=0.5)
-        return False, ("트리에서 '%s' 폴더를 OCR로 찾지 못했다(새로 만들지 않음)"
-                       % folder_name)
-    mgr.click(point, settle=0.5)
+        return False, ("트리에서 '%s' 폴더를 찾지 못했다(%s; OCR fallback도 실패)."
+                       % (folder_name, tree_note or "native tree 불일치"))
+    if point is not None:
+        mgr.click(point, settle=0.5)
     ok_btn = next((c for c in children(dlg.hwnd, 3) if c.ctrl_id == BROWSE_OK_ID), None)
     if ok_btn is None:
         return False, "확인 버튼을 찾지 못했다."

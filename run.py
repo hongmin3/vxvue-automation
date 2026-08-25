@@ -367,11 +367,16 @@ def _ready_ui(cfg, login=True):
     print("[시험 처방] %s" % loaded.get("note"))
     v = cfg.get("viewer") or {}
     ui = VXvueUi(v.get("process_name", "VXvue"))
-    if not ui.pid:
-        raise SystemExit("VXvue가 실행되어 있지 않습니다. 'python work/launch_login.py'로 먼저 기동하십시오.")
     if login:
         lg = v.get("login") or {}
-        ui.ensure_ready(user_id=lg.get("id"), password=lg.get("password"))
+        # 전체 회귀의 baseline 복원은 의도적으로 VXvue를 종료한다. 따라서
+        # ui_factory가 기존 프로세스만 찾으면 매번 Phase 1 직후 중단된다.
+        # `ensure_ready()`에 실행 파일을 넘겨 종료 상태에서는 재기동하고,
+        # 이미 실행 중이면 그대로 로그인 상태만 확인한다.
+        ui.ensure_ready(exe_path=v.get("exe"), user_id=lg.get("id"),
+                        password=lg.get("password"))
+    elif not ui.pid:
+        raise SystemExit("VXvue가 실행되어 있지 않습니다.")
     return ui
 
 

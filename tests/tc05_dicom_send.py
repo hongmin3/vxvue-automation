@@ -241,14 +241,22 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
                 pass
     finally:
         if was_yes is False:
-            no_radio = _field(SEND_DOSE_SR_NO_ID)
             revert_ok = False
-            if no_radio is not None:
-                ui.click(no_radio, settle=0.6)
-                no2 = _field(SEND_DOSE_SR_NO_ID)
-                revert_ok = no2 is not None and S.checkbox_checked(ui, no2)
-                if revert_ok:
-                    S.update(ui, ack_timeout=8)
+            try:
+                # 본 시험이 끝난 시점의 화면은 Exposure/Viewer다. 현재 화면에서
+                # Setting 라디오를 찾으면 항상 None이 되어 원복이 실패한다.
+                # 원복도 설정 변경과 같은 경로로 DICOM-General에 다시 진입해
+                # 실제 No 상태와 Update 완료를 확인한다.
+                S.goto_screen(ui, SCREEN)
+                no_radio = _field(SEND_DOSE_SR_NO_ID)
+                if no_radio is not None:
+                    ui.click(no_radio, settle=0.6)
+                    no2 = _field(SEND_DOSE_SR_NO_ID)
+                    revert_ok = no2 is not None and S.checkbox_checked(ui, no2)
+                    if revert_ok:
+                        S.update(ui, ack_timeout=8)
+            except Exception:                              # noqa: BLE001
+                revert_ok = False
             r.assert_true(step, "Send Dose SR 원복(No)", revert_ok,
                           expected="테스트 종료 후 원래 값(No)으로 복원",
                           actual="복원 완료" if revert_ok else
