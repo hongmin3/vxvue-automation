@@ -140,7 +140,7 @@ def check_scope_has_reason():
 
 
 def check_scope_levels_known():
-    known = {"FULL", "PARTIAL", "MANUAL", "BLOCKED", "EXCLUDED"}
+    known = {"FULL", "PARTIAL", "MANUAL", "BLOCKED", "SKIP", "EXCLUDED"}
     return ["%s: 알 수 없는 level '%s'" % (e.get("tc_id"), e.get("level"))
             for e in scope_entries() if (e.get("level") or "") not in known]
 

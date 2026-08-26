@@ -204,7 +204,7 @@ h4{font-size:13px;margin:10px 0 3px;color:#444}
 .badge{display:inline-block;padding:2px 8px;border-radius:3px;font-size:12px;font-weight:700;
        color:#fff;margin-left:8px;vertical-align:middle}
 .b-FULL{background:#0a7f3f}.b-PARTIAL{background:#a06000}.b-MANUAL{background:#777}
-.b-BLOCKED{background:#6a1b9a}.b-EXCLUDED{background:#999}.b-none{background:#c62828}
+.b-BLOCKED{background:#6a1b9a}.b-SKIP{background:#607d8b}.b-EXCLUDED{background:#999}.b-none{background:#c62828}
 .scope-reason{background:#f7f7f7;border-left:3px solid #999;padding:8px 12px;font-size:12.5px;margin:6px 0 14px}
 .no-code{background:#fff3e0;border-left:3px solid #e65100;padding:8px 12px;font-size:12.5px;margin:6px 0 14px}
 .import-error{background:#ffebee;border-left:3px solid #c62828;padding:8px 12px;font-size:12.5px}
@@ -223,7 +223,7 @@ pre code{background:none;padding:0}
 """
 
 _LEVEL_CLASS = {"FULL": "b-FULL", "PARTIAL": "b-PARTIAL", "MANUAL": "b-MANUAL",
-                "BLOCKED": "b-BLOCKED", "EXCLUDED": "b-EXCLUDED"}
+                "BLOCKED": "b-BLOCKED", "SKIP": "b-SKIP", "EXCLUDED": "b-EXCLUDED"}
 
 
 def _e(s):

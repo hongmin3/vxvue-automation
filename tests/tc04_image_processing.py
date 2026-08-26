@@ -72,7 +72,11 @@ import os
 import time
 
 from core import dialogs
+from core import screen as screen_mod
+from core import setting as S
 from core import workflow as W
+from core import xipl_studio
+from core.ui import VXvueUi, children
 from core.result import BLOCKED, FAIL, MANUAL, PASS, SKIP, TCResult
 
 TC_ID = "TC_WindowsUpdate_04"
@@ -82,6 +86,7 @@ TC_TITLE = "Image Processing (촬영 시 처리 + Image Process 화면 + XIPL St
 PARAM_MISSING = "Parameter file not found"
 PROCESSING_REQUEST = "MSG_REQUEST_PROCESSING"
 LOADING_PARAM = "Loading base parameter"
+PROCESS_CHANGE_SSIM = 0.9999
 
 
 def _xipl_log_path(cfg):
@@ -103,6 +108,164 @@ def _read_xipl_log(path, offset=0):
     except OSError:
         return ""
     return raw.decode("utf-16le", errors="replace")
+
+
+def _capture_stable(path, bbox, timeout=30, poll=1.5):
+    """화면이 연속 두 번 안정될 때까지 기다린 뒤 마지막 캡처를 남긴다."""
+    previous = path + ".previous.png"
+    screen_mod.capture(previous, bbox=bbox)
+    stable = 0
+    end = time.time() + timeout
+    score = None
+    while time.time() < end:
+        time.sleep(poll)
+        screen_mod.capture(path, bbox=bbox)
+        score = screen_mod.ssim(previous, path)
+        if score >= 0.99999:
+            stable += 1
+            if stable >= 2:
+                break
+        else:
+            stable = 0
+        os.replace(path, previous)
+    if os.path.exists(previous):
+        os.replace(previous, path)
+    return {"stable": stable >= 2, "last_ssim": score}
+
+
+def _image_process_checks(ui, r, step, evidence_dir):
+    """VXvue Image Process의 Contrast 재처리와 SBSC 조건을 실측 판정한다."""
+    dlg = next((w for w in ui.windows()
+                if (w.text or "").lower().startswith("image process")), None)
+    controls = ui.controls(max_depth=12)
+    slider = next((c for c in controls if c.ctrl_id == 26701), None)
+    process = next((c for c in controls
+                    if c.ctrl_id == 30314 and c.text == "TextButton"), None)
+    sbsc = next((c for c in controls if c.ctrl_id == 31553), None)
+    if dlg is None or slider is None or process is None or sbsc is None:
+        r.add(step, "Image Process 파라미터 재처리 컨트롤 확인", FAIL,
+              expected="Contrast slider(26701), Process(30314), SBSC(31553)",
+              actual="dialog=%s slider=%s process=%s sbsc=%s"
+                     % (bool(dlg), bool(slider), bool(process), bool(sbsc)),
+              note="2026-08-26 실측 컨트롤이 사라졌으므로 호환성 이슈로 판정한다.")
+        return step + 1
+
+    main = ui.main_window()
+    image_bbox = (main.rect[0] + 340, main.rect[1] + 170,
+                  dlg.rect[0] - 30, main.rect[3] - 90)
+    if image_bbox[2] - image_bbox[0] < 150:
+        image_bbox = (main.rect[0] + 50, dlg.rect[3] + 10,
+                      main.rect[2] - 50, main.rect[3] - 80)
+
+    before_image = os.path.join(evidence_dir, "proc_contrast_before.png")
+    after_image = os.path.join(evidence_dir, "proc_contrast_after.png")
+    restored_image = os.path.join(evidence_dir, "proc_contrast_restored.png")
+    before_slider = os.path.join(evidence_dir, "proc_contrast_control_before.png")
+    changed_slider = os.path.join(evidence_dir, "proc_contrast_control_changed.png")
+    screen_mod.capture(before_image, bbox=image_bbox)
+    screen_mod.capture(before_slider, bbox=slider.rect)
+
+    buttons = children(slider.hwnd, 2)
+    plus = next((c for c in buttons if c.ctrl_id == 2), None)
+    minus = next((c for c in buttons if c.ctrl_id == 1), None)
+    contrast_ok = False
+    actual = "증가/감소 버튼을 찾지 못함"
+    try:
+        if plus is None or minus is None:
+            raise RuntimeError(actual)
+        ui.click(plus, settle=0.8)
+        screen_mod.capture(changed_slider, bbox=slider.rect)
+        control_sim = screen_mod.ssim(before_slider, changed_slider)
+        ui.click(process, settle=0.5)
+        stable = _capture_stable(after_image, image_bbox)
+        image_sim = screen_mod.ssim(before_image, after_image)
+
+        # 한 칸 감소 후 다시 Process하여 원래 표시로 정확히 돌아오는지까지 본다.
+        controls2 = ui.controls(max_depth=12)
+        slider2 = next(c for c in controls2 if c.ctrl_id == 26701)
+        minus2 = next(c for c in children(slider2.hwnd, 2) if c.ctrl_id == 1)
+        process2 = next(c for c in controls2
+                        if c.ctrl_id == 30314 and c.text == "TextButton")
+        ui.click(minus2, settle=0.8)
+        ui.click(process2, settle=0.5)
+        restored = _capture_stable(restored_image, image_bbox)
+        restore_sim = screen_mod.ssim(before_image, restored_image)
+        contrast_ok = (control_sim < PROCESS_CHANGE_SSIM
+                       and image_sim < PROCESS_CHANGE_SSIM
+                       and stable["stable"] and restored["stable"]
+                       and restore_sim >= 0.9999)
+        actual = ("컨트롤 SSIM=%.5f / 처리 영상 SSIM=%.5f / 원복 SSIM=%.5f / "
+                  "처리 안정=%s / 원복 안정=%s"
+                  % (control_sim, image_sim, restore_sim,
+                     stable["stable"], restored["stable"]))
+        r.attach(after_image)
+        r.attach(restored_image)
+    except Exception as exc:                              # noqa: BLE001
+        actual = "%s: %s" % (type(exc).__name__, exc)
+    r.add(step, "Image Process에서 Contrast 한 단계 변경 → Process → 원복",
+          PASS if contrast_ok else FAIL,
+          expected="컨트롤과 영상이 변하고 원복 재처리 후 기준 영상으로 복귀",
+          actual=actual,
+          note="2026-08-26 실측: Contrast slider 26701의 자식 2=증가, 1=감소, "
+               "Process=30314. 버튼 클릭만 아니라 영상 영역 SSIM으로 판정한다.")
+    step += 1
+
+    # SBSC 미적용 영상은 체크 후 Process하면 체크 상태가 유지되고 썸네일 표시가
+    # 달라진다. 한번 적용한 SBSC는 다시 미체크 Process해 제거하는 동작이 아니므로
+    # 이 시험이 새로 만든 영상에서만 수행하고 억지 원복하지 않는다.
+    sbsc_now = next((c for c in ui.controls(max_depth=12) if c.ctrl_id == 31553), None)
+    initially_checked = sbsc_now is not None and S.checkbox_checked(ui, sbsc_now)
+    if initially_checked:
+        r.add(step, "SBSC 적용 상태와 Process 조건", PASS,
+              expected="이미 SBSC가 적용된 영상은 체크 상태로 표시",
+              actual="Use S.B.S.C. 체크=True")
+        return step + 1
+
+    panel = next(iter(W.by_id(ui, W.THUMBNAIL_PANEL)), None)
+    sbsc_before = os.path.join(evidence_dir, "proc_sbsc_image_before.png")
+    sbsc_after = os.path.join(evidence_dir, "proc_sbsc_image_after.png")
+    thumb_before = os.path.join(evidence_dir, "proc_sbsc_thumbnail_before.png")
+    thumb_after = os.path.join(evidence_dir, "proc_sbsc_thumbnail_after.png")
+    sbsc_ok = False
+    sbsc_actual = ""
+    try:
+        screen_mod.capture(sbsc_before, bbox=image_bbox)
+        if panel is not None:
+            screen_mod.capture(thumb_before, bbox=panel.rect)
+        ui.click(sbsc_now, settle=0.8)
+        checked_before_process = S.checkbox_checked(
+            ui, next(c for c in ui.controls(max_depth=12) if c.ctrl_id == 31553))
+        process3 = next(c for c in ui.controls(max_depth=12)
+                        if c.ctrl_id == 30314 and c.text == "TextButton")
+        ui.click(process3, settle=0.5)
+        stable = _capture_stable(sbsc_after, image_bbox)
+        checked_after_process = S.checkbox_checked(
+            ui, next(c for c in ui.controls(max_depth=12) if c.ctrl_id == 31553))
+        image_sim = screen_mod.ssim(sbsc_before, sbsc_after)
+        thumb_sim = None
+        if panel is not None:
+            panel2 = next(iter(W.by_id(ui, W.THUMBNAIL_PANEL)), None)
+            screen_mod.capture(thumb_after, bbox=panel2.rect)
+            thumb_sim = screen_mod.ssim(thumb_before, thumb_after)
+        sbsc_ok = (checked_before_process and checked_after_process
+                   and stable["stable"] and image_sim < PROCESS_CHANGE_SSIM
+                   and thumb_sim is not None and thumb_sim < PROCESS_CHANGE_SSIM)
+        sbsc_actual = ("체크 전환=%s / Process 후 체크=%s / 영상 SSIM=%.5f / "
+                       "썸네일 SSIM=%s"
+                       % (checked_before_process, checked_after_process, image_sim,
+                          "%.5f" % thumb_sim if thumb_sim is not None else "확인 불가"))
+        r.attach(sbsc_after)
+        if os.path.exists(thumb_after):
+            r.attach(thumb_after)
+    except Exception as exc:                              # noqa: BLE001
+        sbsc_actual = "%s: %s" % (type(exc).__name__, exc)
+    r.add(step, "SBSC 미적용 영상 → 체크 → Process → 썸네일 반영",
+          PASS if sbsc_ok else FAIL,
+          expected="체크 상태 유지 + 처리 영상 변화 + 썸네일 SBSC 표시 변화",
+          actual=sbsc_actual,
+          note="새로 촬영한 시험 영상에서 수행한다. Process 후 체크가 유지되는 것이 "
+               "'SBSC 적용 영상은 체크 상태' 조건의 자동 근거다.")
+    return step + 1
 
 
 def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
@@ -217,6 +380,13 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
     W.select_first_image(ui)
     in_viewer = W.viewer_mode(ui, cfg)
     palette = W.read_tool_palette(ui, cfg, evidence_dir=evidence_dir, refresh=True)
+    # 8px짜리 `Proc.` 라벨은 OCR에서 간헐적으로 누락된다. 같은 화면을 새로
+    # 캡처하면 읽히는 실측 사례가 있으므로, 없다고 결론내리기 전에 재시도한다.
+    for _ in range(2):
+        if "Proc." in palette:
+            break
+        time.sleep(0.8)
+        palette = W.read_tool_palette(ui, cfg, evidence_dir=evidence_dir, refresh=True)
     r.add(step, "확장 툴 팔레트 판독 (Viewer 모드 > Tools ≡)",
           PASS if palette else FAIL,
           expected="팝업에서 툴 라벨과 위치를 읽는다",
@@ -250,16 +420,7 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
               note="체크리스트 Step 2의 'Image Process 버튼'에 해당한다.")
         step += 1
 
-        r.add(step, "Image Process 화면에서 파라미터 변경 후 Process", MANUAL,
-              expected="파라미터를 바꿔 Processing이 성공하고 변경값이 반영된다",
-              actual="화면 진입까지만 수행",
-              note="**이 화면 안의 파라미터 컨트롤은 아직 실측하지 않았다.** 추측한 "
-                   "ID를 누르면 영상처리 파라미터를 엉뚱하게 바꾸므로 조작하지 "
-                   "않는다(CLAUDE.md 3절). 확정 방법: 이 화면이 열린 상태에서 "
-                   "`python run.py ui-probe`로 덤프해 캡처와 대조할 것. "
-                   "체크리스트 Expected Result 2의 SBSC 체크 상태 확인도 이 화면 "
-                   "소관이다(Setting>Integration>Extra Tool의 31523과는 별개).")
-        step += 1
+        step = _image_process_checks(ui, r, step, evidence_dir)
         # 열었으면 닫아 다음 Step에 영향을 주지 않게 한다.
         dialogs.clear_blocking(ui, cfg)
 
@@ -303,20 +464,81 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
                    % (studio_exe or "(config 미설정)"))
         step += 1
 
-        r.add(step, "Studio에 선택한 영상·파라미터 파일 로드 확인", MANUAL,
-              expected="선택한 영상과 그 영상에 적용된 파라미터 파일이 로드된다",
-              actual="Studio 기동까지만 확인",
-              note="**Studio는 WPF 앱이라 Win32 컨트롤 열거로 내부를 볼 수 없다** — "
-                   "UI Automation이 필요하다. 자매 프로젝트의 `core/xipl.py`가 그 "
-                   "패턴을 이미 다루므로 설계는 옮길 수 있고 **컨트롤만 이 환경에서 "
-                   "새로 실측하면 된다.**")
+        studio = None
+        try:
+            studio = xipl_studio.inspect("Contrast")
+            loaded = (str(studio.get("parameter_title", "")).startswith("[PI]")
+                      and str(studio.get("image_tab", "")).lower().endswith(".img")
+                      and studio.get("value") is not None)
+            r.add(step, "Studio에 선택한 영상·파라미터 파일 로드 확인",
+                  PASS if loaded else FAIL,
+                  expected="*.img 영상 탭 + [PI] 파라미터 창 + Contrast 값",
+                  actual="영상=%r / 파라미터=%r / Contrast=%r / 상태=%r"
+                         % (studio.get("image_tab"), studio.get("parameter_title"),
+                            studio.get("value"), studio.get("process_status")),
+                  note="WPF 내부는 .NET UI Automation으로 읽는다. 프로세스 기동만으로 "
+                       "영상 로드를 인정하지 않는다.")
+        except Exception as exc:                          # noqa: BLE001
+            r.add(step, "Studio에 선택한 영상·파라미터 파일 로드 확인", FAIL,
+                  actual="%s: %s" % (type(exc).__name__, exc))
         step += 1
 
-        r.add(step, "XIPL Studio에서 파라미터 변경 후 Processing", MANUAL,
-              expected="파라미터 파일/값을 바꿔 Processing이 성공한다",
-              actual="수행하지 않음",
-              note="위 Step이 선행 조건이다(Studio 내부 컨트롤 미실측).")
-        step += 1
+        if studio is not None:
+            before_path = os.path.join(evidence_dir, "studio_contrast_before.png")
+            after_path = os.path.join(evidence_dir, "studio_contrast_after.png")
+            restored_path = os.path.join(evidence_dir, "studio_contrast_restored.png")
+            original = studio.get("value")
+            studio_ok = False
+            studio_actual = ""
+            try:
+                number = float(original)
+                changed = int(number + 1) if number.is_integer() else number + 1
+                # UIA는 백그라운드 창도 읽고 조작할 수 있지만 화면 캡처는 전면 창을
+                # 찍는다. Studio를 명시적으로 활성화하지 않으면 뒤의 VXvue 영상이
+                # 캡처돼 SSIM=1.0으로 오판한 첫 라이브 실행(16:45)을 재현한다.
+                studio_ui = VXvueUi("XIPL.STUDIO")
+                studio_ui.activate()
+                time.sleep(1.0)
+                ir = studio["image_rect"]
+                pr = studio["parameter_rect"]
+                bbox = (max(ir[0] + 20, pr[2] + 20), ir[1] + 20,
+                        ir[2] - 20, ir[3] - 20)
+                screen_mod.capture(before_path, bbox=bbox)
+                changed_state = xipl_studio.set_and_process(changed, "Contrast")
+                screen_mod.capture(after_path, bbox=bbox)
+                changed_sim = screen_mod.ssim(before_path, after_path)
+                restored_state = xipl_studio.set_and_process(original, "Contrast")
+                screen_mod.capture(restored_path, bbox=bbox)
+                restored_sim = screen_mod.ssim(before_path, restored_path)
+                studio_ok = (str(changed_state.get("changed_value")) == str(changed)
+                             and changed_state.get("processed")
+                             and changed_sim < PROCESS_CHANGE_SSIM
+                             and str(restored_state.get("changed_value")) == str(original)
+                             and restored_state.get("processed")
+                             and restored_sim >= 0.9999)
+                studio_actual = ("Contrast %s→%s / 변경 영상 SSIM=%.5f / "
+                                 "원복값=%s / 원복 SSIM=%.5f / 처리 상태=%r"
+                                 % (original, changed, changed_sim,
+                                    restored_state.get("changed_value"), restored_sim,
+                                    changed_state.get("process_status")))
+                r.attach(after_path)
+                r.attach(restored_path)
+            except Exception as exc:                      # noqa: BLE001
+                studio_actual = "%s: %s" % (type(exc).__name__, exc)
+                # 실패 중에도 값을 바꾼 뒤였다면 원래 값 재처리를 한 번 더 시도한다.
+                try:
+                    if original is not None:
+                        xipl_studio.set_and_process(original, "Contrast")
+                except Exception:                         # noqa: BLE001
+                    studio_actual += " / 자동 원복도 실패 — Studio에서 Contrast 확인 필요"
+            r.add(step, "XIPL Studio에서 Contrast 변경 → Process → 원복",
+                  PASS if studio_ok else FAIL,
+                  expected="파라미터 값과 영상이 변하고 원복 재처리 후 기준 영상으로 복귀",
+                  actual=studio_actual,
+                  note="2026-08-26 실측한 WPF UI Automation 경로다. 값 변경 뒤 "
+                       "비동기 미리보기가 끝나 Process가 활성화되면 버튼을 명시적으로 "
+                       "누르고, 파라미터 파일 자체는 저장하지 않는다.")
+            step += 1
 
         # --- 정리: XIPL Studio를 닫는다 --------------------------------
         # **이것을 빼먹으면 뒤 TC가 전부 깨진다.** 실측(2026-08-20): Studio가

@@ -37,14 +37,7 @@ DOC_NUMBER = "R-25-774"
 # 범위/한계를 여기 모은다 — 개별 TC를 읽지 않고 리포트 요약만 봐도 알 수
 # 있어야 한다.
 REPORT_CAVEATS = (
-    "이 회귀의 모든 촬영은 DX(일반촬영) 환자/절차로만 수행한다. MG(유방촬영) "
-    "절차는 검증하지 않았다 — MG 전용 기능의 PASS/FAIL은 이 결과에 포함되지 "
-    "않는다(TC_WindowsUpdate_05 참고).",
-    "Dose SR은 이 회귀의 촬영 경로에서 전송되지 않으며 **원인은 아직 확정되지 "
-    "않았다**(2026-08-26). 같은 Storage SCP에 다른 시험대가 보낸 DX 스터디에는 "
-    "Dose SR이 들어 있어, 이전에 쓰던 'MG 전용이라 DX에는 없다'는 설명은 근거가 "
-    "유지되지 않는다. 해당 Step은 결함으로 단정하지 않고 SKIP으로 두며 사용자·QA "
-    "결정을 기다린다(TC_WindowsUpdate_05 참고).",
+    "이 회귀의 촬영 및 판정 범위는 DX(일반촬영)다.",
 )
 
 # 리포트는 자동화 구현자가 아니라 시험 결과를 판단하는 사용자가 먼저 읽는다.
@@ -72,11 +65,11 @@ TC_PURPOSES = {
     "TC_WindowsUpdate_02": "예약 환자를 조회해 촬영하고 전송한 뒤, 화면·수신 영상·DB의 환자 및 검사 정보가 모두 같은지 확인한다.",
     "TC_WindowsUpdate_03": "영상 보간 설정과 선택·확대·이동·회전 도구가 실제 화면에 반영되는지 확인한다.",
     "TC_WindowsUpdate_04": "촬영 영상이 XIPL 영상처리를 거쳐 표시되고 XIPL Studio까지 정상 연결되는지 확인한다.",
-    "TC_WindowsUpdate_05": "Send Dose SR 설정을 적용한 뒤 DICOM 영상이 저장 서버에 정상 전송되는지 확인한다. Dose SR 객체가 함께 오는지도 함께 보되, 이 촬영 경로에서 오지 않는 원인은 아직 확정되지 않았다.",
+    "TC_WindowsUpdate_05": "DX DICOM 영상이 다른 PC의 Storage SCP에 정상 전송되고 수신 객체의 Modality와 SOP Class가 기대값과 일치하는지 확인한다.",
     "TC_WindowsUpdate_06": "Extra Tool 서버 설정과 SBSC 제거 옵션을 적용한 뒤 영상 전송과 서버 처리 로그를 확인한다.",
     "TC_WindowsUpdate_07": "영상을 DICOM Print로 보내 수신 필름과 필름 위 환자·검사 표시 문구까지 올바른지 확인한다.",
     "TC_WindowsUpdate_08": "검사를 외부 폴더로 Export하고 파일·태그·포터블 뷰어를 확인한 뒤 다시 Import할 수 있는지 확인한다.",
-    "TC_WindowsUpdate_09": "재부팅이 필요한 수동 TC로, 자동 회귀에서는 사람이 수행할 항목임을 기록한다.",
+    "TC_WindowsUpdate_09": "재부팅이 필요해 자동화할 수 없는 TC로, 자동 회귀에서는 SKIP한다.",
     "TC_WindowsUpdate_10": "사용자 결정으로 자동화 범위에서 제외한 TC다.",
     "TC_WindowsUpdate_11": "검증 영상을 CAD로 분석해 소견, 표시 옵션, 결과 영상 저장 동작이 올바른지 확인한다.",
     "TC_WindowsUpdate_12": "Live View 데모 영상 재생, 오버레이 창, 분석 표시와 스냅샷 전송 동작을 확인한다.",
@@ -114,14 +107,11 @@ TC_AUTOMATION_SCOPE = {
         "unblock": "-",
     },
     "TC_WindowsUpdate_03": {
-        "scope": "Setting > Display의 Interpolation Mode 변경·재확인·원복과 Select/"
-                 "Zoom/Pan/회전 도구 적용을 영상 표시 영역 캡처 비교(SSIM)로 판정한다 "
-                 "— 버튼을 눌렀다는 사실만으로 적용을 인정하지 않는다.",
-        "gap": "기대 결과의 '지연 없이'는 정량 기준이 사양서·매뉴얼에 없어 소요 시간을 "
-               "기록만 하고 판정하지 않는다. 체크리스트 Step 3의 '영상 2장 이상'은 "
-               "Step이 2개 이상인 Procedure가 선행돼야 해 수행하지 않는다.",
-        "unblock": "'지연 없음'의 정량 기준이 문서로 확정되고 Step 2개 이상 Procedure "
-                   "Mapping이 준비되면 자동 판정한다.",
+        "scope": "Interpolation Mode 변경·원복, PA/AP 영상 2장 자동 촬영, 첫째/둘째 "
+                 "영상 선택, Select/Zoom/Pan/회전 반영을 화면 비교로 판정하고 각 조작이 "
+                 "사용자 확정 임의 기준 30초 이내인지 확인한다.",
+        "gap": "없다.",
+        "unblock": "-",
     },
     "TC_WindowsUpdate_04": {
         "scope": "Accession 교차검증으로 MWL 대상을 지목 → Chest PA Step 등록 → 촬영"
@@ -134,15 +124,10 @@ TC_AUTOMATION_SCOPE = {
                    "확보하면 자동 판정할 수 있다.",
     },
     "TC_WindowsUpdate_05": {
-        "scope": "Send Dose SR 설정 적용 → 촬영 → Send → 수신 객체의 SOP Class UID로 "
-                 "Image/Dose SR 포함 여부를 판정한다. 수신은 서버 로그의 C-STORE "
-                 "Status와 실제 저장 파일 양쪽으로 확인한다. 사용자 지시에 따라 시험 "
-                 "Storage는 체크리스트 Precondition('다른 PC의 Server')과 달리 이 PC의 "
-                 "서버를 쓰며, 그 차이를 판정 비고에 항상 남긴다.",
-        "gap": "Dose SR은 DICOM Conformance Statement Rev.4.2 p.10 2.2.9절상 MG(유방"
-               "촬영) 전용이고 이 회귀는 DX로만 촬영하므로, MG 절차의 Dose SR 생성은 "
-               "검증하지 않는다(결함이 아니라 시험 범위 밖이다).",
-        "unblock": "MG 절차를 시험 범위에 포함하기로 결정하면 같은 코드로 검증한다.",
+        "scope": "DX 촬영 → Send → 다른 PC의 Storage SCP 수신 확인 → 수신 객체의 "
+                 "Modality=DX와 영상 SOP Class 일치를 자동 판정한다.",
+        "gap": "없다.",
+        "unblock": "-",
     },
     "TC_WindowsUpdate_06": {
         "scope": "Extra Tool 서버 등록(AE Title/IP/Port)·Echo·Remove SBSC 설정을 실제 "
@@ -171,9 +156,8 @@ TC_AUTOMATION_SCOPE = {
     },
     "TC_WindowsUpdate_09": {
         "scope": "이번 자동화에서 수행하지 않는다.",
-        "gap": "TC 전체. 재부팅이 필요해 사용자 확인(2026-08-18)으로 수동 처리하기로 "
-               "결정했다.",
-        "unblock": "재부팅을 포함한 파괴적 절차를 자동화 범위에 넣기로 결정하면 착수한다.",
+        "gap": "TC 전체. 재부팅이 필요해 자동화할 수 없으므로 SKIP한다.",
+        "unblock": "-",
     },
     "TC_WindowsUpdate_10": {
         "scope": "이번 자동화에서 수행하지 않는다.",
@@ -894,20 +878,22 @@ def _step_context(meta, tc_id, step):
 
 #: 자동화 커버리지 총괄 섹션의 표시 순서와 설명.
 #  분류는 `automation_scope.json` 의 `level` 값 그대로이고, 뒤에 붙는 설명은
-#  `core/regression.py` 의 `LEVEL_TO_STATUS`(EXCLUDED->SKIP, PARTIAL/MANUAL->
-#  MANUAL, BLOCKED->BLOCKED)가 실제로 쓰는 의미를 옮긴 것이다. 사유 문장 자체는
+#  `core/regression.py` 의 수준별 판정(SKIP/EXCLUDED->SKIP,
+#  PARTIAL/MANUAL->MANUAL, BLOCKED->BLOCKED)이 실제로 쓰는 의미를 옮긴 것이다.
+#  사유 문장 자체는
 #  각 TC 의 `reason` 에서 그대로 읽는다 — 리포트가 만들어 내지 않는다.
 COVERAGE_LEVELS = (
     ("FULL", "FULL — 전 단계를 자동으로 판정한다"),
     ("PARTIAL", "PARTIAL — 일부 단계는 사람이 확인해야 한다"),
     ("MANUAL", "MANUAL — 수동 전용 TC 다"),
     ("BLOCKED", "BLOCKED — 선행 환경이 없어 수행 자체가 불가능하다"),
+    ("SKIP", "SKIP — 자동화할 수 없는 절차라 이번 실행에서 건너뛴다"),
     ("EXCLUDED", "EXCLUDED — 사용자 결정으로 이번 자동화 범위에서 제외했다"),
 )
 
 #: 커버리지 타일 색. 등급을 판정 상태 색에 맞춰 읽기 쉽게만 한다.
 COVERAGE_TONES = {"FULL": PASS, "PARTIAL": MANUAL, "MANUAL": MANUAL,
-                  "BLOCKED": BLOCKED, "EXCLUDED": SKIP}
+                  "BLOCKED": BLOCKED, "SKIP": SKIP, "EXCLUDED": SKIP}
 
 
 def _coverage_groups(coverage):

@@ -75,6 +75,7 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # "PARTIAL"과 "FULL 가능성 높음"은 코드가 없으면 MANUAL로 남긴다(추정 PASS 금지).
 _LEVEL_TO_VERDICT_WHEN_NOT_IMPLEMENTED = {
     "EXCLUDED": result_mod.SKIP,
+    "SKIP": result_mod.SKIP,
     "MANUAL": result_mod.MANUAL,
     "BLOCKED": result_mod.BLOCKED,
     "PARTIAL": result_mod.MANUAL,
@@ -130,7 +131,7 @@ TC_LABELS = {
     "TC_WindowsUpdate_06": "TC06 Extra Tool 전송(SBSC)",
     "TC_WindowsUpdate_07": "TC07 DICOM Print",
     "TC_WindowsUpdate_08": "TC08 Study Export(CD/USB)",
-    "TC_WindowsUpdate_09": "TC09 (재부팅 필요)",
+    "TC_WindowsUpdate_09": "TC09 (재부팅 필요 — 자동화 SKIP)",
     "TC_WindowsUpdate_10": "TC10 (범위 제외)",
     "TC_WindowsUpdate_11": "TC11 AI 분석(CAD)",
     "TC_WindowsUpdate_12": "TC12 카메라/Live View",

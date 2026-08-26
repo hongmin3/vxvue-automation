@@ -417,6 +417,18 @@ Storage 서버를 바꿀 때 함께 볼 것:
   이 절차를 수행하는 일회성 스크립트는 `work/change_storage_scp.py`에 있다
   (`work/`는 `.gitignore` 대상이라 저장소에는 없다 — 새 PC에서는 위 설명대로
   화면에서 직접 하거나 스크립트를 다시 만들면 된다).
+* **서버 구성을 바꾸면 `baseline`도 같이 새로 만든다.** baseline은 DB 전체를
+  담으므로 `AE_LIST`(DICOM 등록)까지 들어 있다. 등록만 바꾸고 baseline을 그대로
+  두면 회귀 Phase 1이 복원하는 순간 **옛 등록으로 되돌아간다** — 그러면 Phase 3가
+  없는 AE를 새 행으로 추가하는데, 새 행은 `Selected=0`이라 **제품은 계속 옛 서버로
+  보낸다.** 등록도 Echo도 성공해서 아무도 못 알아챈다(2026-08-26 18:17 회귀에서
+  실제 발생: TC02·TC05가 "원격 서버에 안 왔다"로 FAIL했고 영상은 `Bunny/Temp/`에
+  쌓여 있었다). Phase 3에 `ensure_row_selected()`를 넣어 이제는 조용히 지나가지
+  않고 실패로 보고한다.
+* **제품이 실제로 보내는 대상은 `AE_LIST.Selected=1`인 행이다.** 화면에서는 SCP
+  목록 **각 행 왼쪽의 체크박스**가 그 값이다(2026-08-26 실측 — 행을 클릭하는
+  것만으로는 안 바뀌고, 체크하면 Update 없이 즉시 DB에 반영된다). 행을 새로
+  Add하면 `Selected=0`으로 생기므로 반드시 체크까지 해야 한다.
 * 이 서버는 여러 사람이 공유한다(`station_names`에 다른 시험대가 섞여 있다).
   자동화는 삭제 API를 쓰지 않고 **이번 실행의 Patient ID로만** 우리 스터디를
   골라낸다. 서버가 `retention_days`(현재 5일)로 스스로 정리한다.
@@ -678,13 +690,21 @@ PASS·FAIL·MANUAL·SKIP·BLOCKED 건수 / 실패 항목 / 수동 확인 항목 
 
 | 실행 | 판정 합계 | 소요 |
 |---|---|---|
-| 2026-08-26 12:37 | **PASS 149 / FAIL 0** / MANUAL 14 / SKIP 5 / BLOCKED 0 | 27분 |
+| 2026-08-26 18:29 | PASS 143 / **FAIL 2** / MANUAL 5 / SKIP 5 / BLOCKED 0 | 29분 17초 |
 
-11:41:52에 다시 만든 현재 PC baseline 세트를 쓴 첫 실행이다. 직전 회차
-(같은 날 10:47, PASS 150 / FAIL 0 / MANUAL 13)와의 **유일한 차이는
-`Precondition / 물리 메모리 여유`가 PASS→MANUAL로 바뀐 것**뿐이다(여유
-1.31GB→0.93GB, 기준 3.0GB 미달) — 자동화·제품 회귀가 아니라 이 PC의 메모리
-여유 변동이다.
+Storage SCP를 원격 `STORAGE_SCP`로 옮긴 뒤 첫 완주다. TC02·TC05가 원격 서버
+수신까지 PASS했고, Phase 3의 세 SCP 모두 `전송 대상 행: 제품이 쓰는 행
+확인(Selected=1)`을 남겼다.
+
+**FAIL 2건은 자동화 결함이 아니라 제품 이슈다** — TC13에서 Data Delimiter를
+TAB으로 설정했는데 COMMA 파일도 Import에 성공한다(사양은 TAB만 성공).
+직접 전환 경로와 티켓 워크어라운드 경로 양쪽에서 재현됐다. 사용자 결정
+(2026-08-26)으로 이 항목은 MANUAL이 아니라 FAIL로 보고한다.
+
+MANUAL 5건 중 4건은 기존에 문서화된 한계(XIPL 라이선스 트레이 확인 2건,
+License Information 열 말줄임, TC12 Step Analysis)이고, **TC11 1건은 직전
+회차에서 PASS였다** — annotation 팔레트 OCR이 기준 라벨(`Delete`)을 한 번
+못 읽어 그 자리에서 멈춘 것으로 제품 동작이 아니라 캡처·판독 흔들림이다.
 
 > **주의**: 두 회차 모두 **Storage SCP 교체(2026-08-26 오후) 전** 실행이다.
 > 교체 후에는 사용자 지시로 영향 범위만 개별 검증했다 — `tc02`(PASS 13/FAIL 0),

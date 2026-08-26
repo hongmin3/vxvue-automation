@@ -450,7 +450,9 @@ def _tab_delimiter_regression(ui, r, work_dir):
         comma_ok, comma_n, comma_note = _try_import_preview(ui, comma_file, "COMMA(%s)" % label)
         spec_match = tab_ok and not comma_ok
         defect_match = (not tab_ok) and comma_ok
-        verdict = "PASS" if spec_match else ("MANUAL" if not defect_match else "FAIL")
+        # TAB/COMMA 결과가 자동으로 측정됐으므로 사양과 다르면 사람이 다시
+        # 판단할 문제가 아니라 제품 이슈다(사용자 지시, 2026-08-26).
+        verdict = "PASS" if spec_match else "FAIL"
         r.add(6, "TAB 설정 상태에서 Import 결과(%s)" % label, verdict,
               expected="TAB 파일 Import 성공(행 1개 이상) + COMMA 파일(불일치) Import 실패",
               actual="TAB 파일: %s(행 %d) / COMMA 파일: %s(행 %d)%s%s"
@@ -459,8 +461,9 @@ def _tab_delimiter_regression(ui, r, work_dir):
                         (" / %s" % tab_note) if tab_note else "",
                         (" / %s" % comma_note) if comma_note else ""),
               note=(expect_note + (" " + KNOWN_DEFECT_NOTE if defect_match else
-                    (" 사양대로 정상 동작." if spec_match else
-                     " 알려진 결함 패턴과도, 사양과도 다르다 — 사람 확인 필요."))))
+                     (" 사양대로 정상 동작." if spec_match else
+                      " 알려진 #22985 패턴과 형태가 다르더라도 사양 불일치가 "
+                      "자동 확인됐으므로 제품 이슈로 FAIL 처리한다."))))
         return spec_match, defect_match
 
     # 시나리오 A: 직접 전환(결함 티켓의 재현 경로) — Comma에서 Tab으로 한

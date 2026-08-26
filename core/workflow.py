@@ -356,8 +356,12 @@ def select_unshot_step(ui, settle=1.2):
             "total": len(items)}
 
 
-def select_first_image(ui, settle=1.2):
-    """썸네일의 첫 영상을 선택한다. 선택 전에는 Send가 동작하지 않는다."""
+def select_image(ui, index=0, settle=1.2):
+    """썸네일의 ``index`` 번째 영상을 선택한다.
+
+    좌표는 실행 중 발견한 ItemWnd의 자식 rect에서 얻으며 고정 좌표를 쓰지
+    않는다. TC03은 이 함수로 첫 번째와 두 번째 영상을 각각 선택한다.
+    """
     from .ui import children
     for panel in by_id(ui, THUMBNAIL_PANEL):
         wnd = next((k for k in children(panel.hwnd, 3)
@@ -367,10 +371,15 @@ def select_first_image(ui, settle=1.2):
         items = sorted([k for k in children(wnd.hwnd, 2)
                         if k.visible and k.size[0] > 60 and k.size[1] > 60],
                        key=lambda k: k.rect[1])
-        if items:
-            ui.click(items[0], settle=settle)
+        if 0 <= index < len(items):
+            ui.click(items[index], settle=settle)
             return True
     return False
+
+
+def select_first_image(ui, settle=1.2):
+    """호환용 래퍼: 썸네일의 첫 영상을 선택한다."""
+    return select_image(ui, 0, settle=settle)
 
 
 # --- MWL 처방 열기 -----------------------------------------------------

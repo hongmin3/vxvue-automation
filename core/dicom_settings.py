@@ -189,6 +189,78 @@ def select_first_row(ui, kind):
     return True, "행 선택 완료"
 
 
+def row_use_checkboxes(ui, kind):
+    """SCP 목록 안의 행별 사용 체크박스. 목록 rect 안에 들어가는 것만 고른다.
+
+    실측(2026-08-26): SCP 목록(`ListCtrl`) 각 행의 왼쪽에 체크박스가 있고
+    **이것이 DB `AE_LIST.Selected`** 다. 체크하면 Update 없이 즉시 DB에 반영된다.
+    행 자체를 클릭하는 것으로는 바뀌지 않는다(입력 필드만 그 행 값으로 채워진다).
+    체크박스의 컨트롤 ID는 1로 유일하지 않아 좌표 포함관계로 찾는다.
+    """
+    add_btn = _field(ui, ADD_BUTTON_ID)
+    if add_btn is None:
+        return []
+    lst = _scp_list_ctrl(ui, add_btn)
+    if lst is None:
+        return []
+    lx, ly, lr, lb = lst.rect
+    out = []
+    for c in S.content_controls(ui):
+        if (getattr(c, "text", "") or "") != "CheckBox":
+            continue
+        x, y, r, b = c.rect
+        if lx <= x and ly <= y and r <= lr and b <= lb:
+            out.append(c)
+    out.sort(key=lambda c: c.rect[1])
+    return out
+
+
+def ensure_row_selected(ui, kind, db, spec):
+    """config의 서버가 **제품이 실제로 보내는 행**이 되게 하고 DB로 확인한다.
+
+    왜 필요한가(2026-08-26 실측): baseline 복원이 옛 등록을 되살리면
+    `ensure_registered()`가 "AE Title+Port가 없다"고 보고 행을 **하나 더**
+    만든다. 새 행은 `Selected=0`이라 제품은 계속 옛 서버로 보내는데, 등록도
+    Echo도 성공하므로 **아무도 알아채지 못한다** — 그 회귀에서 TC02/TC05가
+    "원격 서버에 안 왔다"로 FAIL했고 영상은 옛 Bunny 폴더에 쌓여 있었다.
+
+    반환: (ok, note). 행이 2개 이상이면 어느 것을 쓸지 화면에서 확정할 수
+    없으므로 고치지 않고 실패로 보고한다(추측으로 지우지 않는다).
+    """
+    rows = db.ae_list(DB_TYPE.get(kind))
+    want = [r for r in rows if str(r.get("Title")) == str(spec["ae_title"])
+            and str(r.get("Port")) == str(spec["port"])]
+    if not want:
+        return False, "DB에 %s:%s 행이 없다" % (spec["ae_title"], spec["port"])
+    if len(rows) > 1:
+        others = ", ".join("%s(%s:%s, Selected=%s)"
+                           % (r.get("Name"), r.get("IP"), r.get("Port"),
+                              r.get("Selected"))
+                           for r in rows if r not in want)
+        return False, ("%s 등록이 %d행이다 — config에 없는 행이 남아 있어 제품이 "
+                       "어디로 보내는지 확정할 수 없다: %s. 사람이 정리해야 한다"
+                       % (kind, len(rows), others))
+    if str(want[0].get("Selected")) in ("1", "True"):
+        return True, "제품이 쓰는 행 확인(Selected=1)"
+
+    boxes = row_use_checkboxes(ui, kind)
+    if len(boxes) != 1:
+        return False, ("행 사용 체크박스를 %d개 찾았다(1개여야 한다) — "
+                       "Selected=%s인 채로 두지 않기 위해 여기서 멈춘다"
+                       % (len(boxes), want[0].get("Selected")))
+    if S.checkbox_checked(ui, boxes[0]):
+        return False, "체크박스는 켜져 있는데 DB Selected=%s — 불일치" % want[0].get("Selected")
+    ui.click(boxes[0], settle=0.8)
+    time.sleep(1.0)
+    again = [r for r in db.ae_list(DB_TYPE.get(kind))
+             if str(r.get("Title")) == str(spec["ae_title"])
+             and str(r.get("Port")) == str(spec["port"])]
+    if again and str(again[0].get("Selected")) in ("1", "True"):
+        return True, "사용 체크박스를 켜 제품이 쓰는 행으로 확정(Selected=0 → 1)"
+    return False, ("사용 체크박스를 켰는데 DB Selected가 %s 그대로다"
+                   % (again[0].get("Selected") if again else "행 없음"))
+
+
 def echo(ui, kind, timeout=15, poll=1.0, evidence_path=None):
     """선택된 SCP에 Echo를 보내고 성공 여부를 판정한다.
 
@@ -374,6 +446,16 @@ def ensure_registered(ui, cfg, db, echo_timeout=15):
         else:
             sel_ok, sel_note = select_first_row(ui, kind)
             note_parts.append("기존 등록 확인, 행 선택: %s" % sel_note)
+
+        # **등록됐다고 제품이 그리로 보내는 것은 아니다.** 실제 전송 대상은
+        # `AE_LIST.Selected=1`인 행이다(2026-08-26 실측) — 여기서 확정하지
+        # 않으면 등록도 Echo도 성공한 채로 옛 서버에 계속 보낸다.
+        use_ok, use_note = ensure_row_selected(ui, kind, db, spec)
+        note_parts.append("전송 대상 행: %s" % use_note)
+        if not use_ok:
+            results.append({"kind": kind, "name": spec["name"], "registered": False,
+                            "echo_ok": False, "note": "; ".join(note_parts)})
+            continue
 
         if kind == "Storage":
             burn_detail, burn_ack = ensure_burning_options(ui)

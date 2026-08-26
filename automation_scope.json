@@ -41,8 +41,8 @@
   },
   {
     "tc_id": "TC_WindowsUpdate_09",
-    "level": "MANUAL",
-    "reason": "사용자 확인(2026-08-18): 재부팅이 필요해 TC09 전체 수동 처리로 결정"
+    "level": "SKIP",
+    "reason": "사용자 확인(2026-08-26): 재부팅이 필요한 절차라 자동화를 수행할 수 없으므로 MANUAL이 아니라 SKIP으로 처리"
   },
   {
     "tc_id": "TC_WindowsUpdate_10",

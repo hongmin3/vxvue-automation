@@ -167,6 +167,7 @@ Port=30098).
 | n | 로컬 `Bunny.exe`가 떠 있는지 확인하고 없으면 실행한다. **2026-08-26부터 Bunny는 Storage SCP가 아니라 TC06 Extra Tool 전송 대상이므로 이 결과는 Storage 등록의 통과 조건이 아니다** — 원격 Storage가 정상인데 Bunny가 안 떠서 회귀가 멈추면 안 된다. 대신 원격 Storage의 웹 상태(`/api/scp-status`)를 읽어 note에 남긴다 | Bunny 실행 여부와 원격 Storage `running` 상태를 note에 기록 | (Storage 판정을 막지 않음) |
 | n | DB(`AE_LIST`)에 그 AE Title+Port가 이미 있는지 확인 → 없으면 화면에서 Add로 등록, 있으면 목록에서 그 행을 선택 | 등록 상태여야 한다 | PASS/FAIL |
 | n | Storage인 경우 Burning Option 3종(Annotation 31503 / Information 31504 / Orientation 31505)을 전부 체크하고 Update. 체크박스가 owner-draw라 상태를 못 읽어 **캡처 기반 색 판별**(체크 시 나타나는 황금색 `(223,182,56)`)로 이미 체크된 건 다시 누르지 않는다 | 3종 모두 체크 상태 | (판정 note에 상태 기록) |
+| n | **config의 서버가 제품이 실제로 보내는 행인지 확인한다**(`ensure_row_selected()`). 전송 대상은 `AE_LIST.Selected=1`인 행이고, 화면에서는 SCP 목록 각 행 왼쪽의 체크박스가 그 값이다(2026-08-26 실측 — 행 클릭으로는 안 바뀌고, 체크하면 Update 없이 즉시 DB 반영). 꺼져 있으면 켜고 DB로 재확인한다. 같은 kind의 행이 2개 이상이면 어느 것을 쓸지 확정할 수 없으므로 고치지 않고 실패로 보고한다 | `Selected=1`이 config의 AE Title+Port 행이어야 한다 | PASS/FAIL |
 | n | Echo(C-ECHO) 버튼을 눌러 로그 영역을 캡처+OCR로 판독. 폴링마다 캡처 직전 `ensure_foreground()`를 다시 불러 다른 창 겹침을 줄이고, OCR 결과에 오염 신호(`core/screen.looks_contaminated()`)가 보이면 그 프레임은 버리고 계속 폴링한다(2026-08-24 추가 — 실측: 이 자동화를 구동하는 터미널의 JSON 로그가 로그 영역에 겹쳐 찍혀 `succeeded`를 못 찾은 사례, 격리 재캡처로는 정상 확인) | `succeeded`가 나와야 한다. 시간 내 못 찾으면 오염 프레임을 제외했다는 사실을 note에 남긴다 | PASS/FAIL |
 
 세 서버는 전체 회귀의 선행조건이다. MWL/Storage/Print 중 하나라도 등록 또는

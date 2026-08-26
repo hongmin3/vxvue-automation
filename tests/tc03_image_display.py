@@ -18,16 +18,11 @@ Expected Result: *2,3. 선택한 영상이 화면에 display 되고, **delay 없
 
 Test Data: *\*default(Bicubic)*
 
-## "delay 없이"를 어떻게 판정하는가 — 판정하지 않는다
+## "delay 없이"를 어떻게 판정하는가 — 30초 기준
 
-Expected Result의 "delay 없이"에 **정량 기준이 없다.** 사양서·매뉴얼에서도 수치를
-찾지 못했다(`NEXT_TASK.md`의 "별도 확인 필요" 항목). 임의로 "1초 이내"를 정하면
-그것은 근거 없는 기준이므로, 이 자동화는
-
-- 툴 적용이 **실제로 반영됐는지**(영상 영역이 변했는지)는 PASS/FAIL로 판정하고,
-- **소요 시간은 측정해서 기록만** 한다(`MANUAL` — 기준값 확인 필요).
-
-기준이 정해지면 그 값과 대조하는 판정으로 바꾸면 된다. 측정값은 이미 남아 있다.
+체크리스트에는 정량값이 없지만 사용자 지시(2026-08-26)로 **각 툴 조작이
+30초 이내에 반영되는지**를 판정한다. 이 값은 제품 사양이 아니라 이번 회귀를 위한
+운영상 임의 기준이다.
 
 ## 툴이 "적용됐다"를 무엇으로 보는가
 
@@ -66,6 +61,7 @@ IMAGE_AREA = (820, 330, 1650, 960)
 # 화면이 "변했다"고 볼 SSIM 상한. 1.0이면 완전히 동일하다.
 # 0.999는 압축 잡음 수준의 차이만 허용한다는 뜻이다.
 SAME_SSIM = 0.999
+MAX_TOOL_DELAY_SECONDS = 30.0
 
 
 def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
@@ -160,6 +156,30 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
             return r
     step += 1
 
+    # 체크리스트 Step 3은 영상 2장 이상을 요구한다. 첫 촬영 뒤 Chest의 다른
+    # Step(PA<->AP)을 하나 더 등록해 두 번째 영상을 자동으로 촬영한다.
+    if do_acquire and W.thumbnail_count(ui) < 2:
+        second_step = "AP" if str(exam_step).upper() != "AP" else "PA"
+        try:
+            added = W.add_step(ui, cfg, projection=projection, step=second_step,
+                               evidence_dir=evidence_dir)
+            second_acq = (W.acquire(ui, cfg, evidence_dir=evidence_dir)
+                          if added.get("ok") else None)
+            two_ok = bool(second_acq and second_acq.get("acquired")
+                          and W.thumbnail_count(ui) >= 2)
+            r.add(step, "두 번째 영상 자동 촬영 (%s %s)" % (projection, second_step),
+                  PASS if two_ok else FAIL,
+                  expected="서로 다른 Step의 영상 2장 이상",
+                  actual=("Step 등록=%s / 촬영=%s / 현재 영상=%d장"
+                          % (added.get("ok"),
+                             second_acq.get("acquired") if second_acq else False,
+                             W.thumbnail_count(ui))),
+                  note="첫 영상과 같은 검사에 두 번째 Step을 등록하고 F2로 직접 "
+                       "촬영한다. 사람이 미리 영상을 준비할 필요가 없다.")
+        except Exception as exc:                          # noqa: BLE001
+            r.add(step, "두 번째 영상 자동 촬영", FAIL, actual=str(exc))
+        step += 1
+
     W.select_first_image(ui)
     time.sleep(0.8)
 
@@ -173,6 +193,7 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
         ("cw", "Rotation CW", "click", True),
         ("ccw", "Rotation CCW", "click", True),
     ]
+    tool_elapsed = []
     for key, label, how, expect_change in tools:
         hits = W.by_id(ui, W.TOOL[key])
         if not hits:
@@ -196,6 +217,7 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
         else:
             time.sleep(0.8)
         elapsed = round(time.time() - started, 2)
+        tool_elapsed.append((label, elapsed))
 
         screen_mod.capture(after_png, bbox=IMAGE_AREA)
         try:
@@ -225,27 +247,44 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
                        "않는다.")
         step += 1
 
-    # --- "delay 없이" — 측정만 하고 판정하지 않는다 ----------------------
-    r.add(step, "\"delay 없이\" 정량 판정", MANUAL,
-          expected="정량 기준 미확정",
-          actual="각 툴의 조작 소요 시간은 위 Step들의 actual에 기록됨",
-          note="Expected Result의 'delay 없이'에 대한 수치 기준을 사양서·매뉴얼에서 "
-               "찾지 못했다. 임의 기준(예: 1초 이내)을 만들면 근거 없는 판정이 되므로 "
-               "**측정값만 남기고 판정하지 않는다.** 기준이 정해지면 위 측정값과 "
-               "대조하는 판정으로 바꾸면 된다(NEXT_TASK.md '별도 확인 필요' 참고).")
+    # --- "delay 없이" — 사용자 확정 임의 기준 30초 -----------------------
+    within_delay = bool(tool_elapsed) and all(
+        seconds <= MAX_TOOL_DELAY_SECONDS for _label, seconds in tool_elapsed)
+    r.add(step, "\"delay 없이\" 정량 판정", PASS if within_delay else FAIL,
+          expected="각 툴 조작이 %.0f초 이내에 반영" % MAX_TOOL_DELAY_SECONDS,
+          actual=", ".join("%s %.2f초" % row for row in tool_elapsed) or "측정값 없음",
+          note="30초는 제품 사양값이 아니라 사용자 지시(2026-08-26)로 정한 "
+               "회귀용 임의 기준이다.")
     step += 1
 
     # --- Step 3(체크리스트): 영상 2장 이상에서 선택 전환 ------------------
     n = W.thumbnail_count(ui)
+    two_result = False
+    selection_note = "현재 열린 영상 %d장" % n
+    if n >= 2:
+        first_ok = W.select_image(ui, 0)
+        second_ok = W.select_image(ui, 1)
+        before_second = os.path.join(evidence_dir, "second_image_before_zoom.png")
+        after_second = os.path.join(evidence_dir, "second_image_after_zoom.png")
+        screen_mod.capture(before_second, bbox=IMAGE_AREA)
+        zoom = W.by_id(ui, W.TOOL["zoom"])
+        if second_ok and zoom:
+            ui.click(zoom[0], settle=0.4)
+            l, t, rr, b = IMAGE_AREA
+            cx, cy = (l + rr) // 2, (t + b) // 2
+            ui.drag((cx - 100, cy - 70), (cx + 100, cy + 70),
+                    duration=0.5, settle=0.8)
+            screen_mod.capture(after_second, bbox=IMAGE_AREA)
+            sim2 = screen_mod.ssim(before_second, after_second)
+            two_result = first_ok and second_ok and sim2 < SAME_SSIM
+            selection_note += " / 첫째 선택=%s / 둘째 선택=%s / 둘째 Zoom SSIM=%.5f" % (
+                first_ok, second_ok, sim2)
+            r.attach(after_second)
     r.add(step, "영상 2장 이상에서 첫 번째/두 번째 선택하며 툴 적용",
-          MANUAL if n < 2 else PASS,
-          expected="영상 2장 이상",
-          actual="현재 열린 영상 %d장" % n,
-          note=("영상이 %d장뿐이라 이 Step을 수행하지 못했다. 2장 이상 확보에는 "
-                "Step이 2개 이상 등록된 Procedure가 필요하고, 그것은 Procedure "
-                "Mapping이 선행돼야 한다(core/workflow.map_procedure docstring — "
-                "매핑 자동화는 현재 비활성화). 매핑 후 다시 실행할 것." % n)
-               if n < 2 else "영상 전환 후 툴 적용까지 확인함.")
+          PASS if two_result else FAIL,
+          expected="영상 2장 이상을 각각 선택하고 두 번째 영상에도 툴이 반영",
+          actual=selection_note,
+          note="정상 실행은 PA/AP 두 영상을 자동 촬영해 이 Step을 사람 준비 없이 수행한다.")
     step += 1
 
     _restore(ui, r, step, original, changed_to)

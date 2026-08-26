@@ -1,32 +1,10 @@
 # -*- coding: utf-8 -*-
 """자동화 실행 전 환경 점검.
 
-Bellalun `auto/core/preflight.py`와 같은 역할이지만, 2026-08-18에 실제로
-겪은 장애를 근거로 **메모리/페이지파일 여유 점검**을 추가했다. 당시 VXvue는
-로그인 화면의 "Initializing offset refreshing"(Virtual Detector 0~3 연결)에서
-무한 대기했고, 원인은 제품 결함이 아니라 물리 메모리 여유 1.74GB /
-페이지파일 여유 0.12GB까지 떨어진 PC 자원 고갈이었다. 같은 시간대 이벤트
-로그에 SQL Server "insufficient memory", DWM 재시작, TNetworkControl.exe
-크래시가 함께 남아 있었다.
-
-자원이 부족한 상태에서 클릭을 계속 보내면 '자동화 실패'가 아니라 '제품 결함'으로
-오판하게 되므로, 부족하다는 사실은 반드시 리포트에 남긴다.
-
-## 메모리 부족은 차단 사유가 아니다 (사용자 지시, 2026-08-19)
-
-처음에는 물리 메모리/페이지파일 여유가 기준 미달이면 `NG`로 실행 자체를 막았다.
-그런데 이 시험 PC는 XIPL.SERVER(약 2.2GB) 등 상주 프로세스 때문에 **물리 메모리
-여유가 항상 기준(3GB) 아래**다. 사용자 지시: "메모리가 부족해도 일단 실행하고
-문제가 있으면 그때 고민하는 방식으로 — 메모리는 항상 부족할 것."
-
-그래서 메모리 계열 점검은 `WARN`으로 내려 실행을 막지 않고, 대신
-
-  1. WARN이어도 리포트/콘솔에 실제 여유량을 남긴다(사후에 원인 추적이 되도록),
-  2. 뷰어 기동이 실제로 실패했을 때 `memory_pressure()`로 그 시점 메모리를 다시
-     읽어 "환경 자원 부족 가능성"을 판정 `note`에 명시한다.
-
-즉 판단을 실행 전 추측에서 **실패 시점의 실측**으로 옮겼다. `NG`는 관리자 권한·
-DPI·실행 파일·DB 접속처럼 **없으면 아무 것도 못 하는** 것만 남긴다.
+물리 메모리와 페이지파일 여유는 사용자 지시(2026-08-26)로 Precondition에서
+제외했다. 둘은 시험의 성립 조건이 아니며 환경 변동만으로 전체 판정이 MANUAL이
+되는 문제가 있었다. 실제 예외가 발생했을 때의 진단 문자열
+``memory_pressure()``은 원인 분석용으로만 유지한다.
 """
 
 import os
@@ -63,28 +41,7 @@ def run(config):
         elevated, True,
         "" if elevated else "관리자 권한이 없으면 VXvue 창에 클릭/키 입력이 전달되지 않는다."))
 
-    # 2) 메모리 / 페이지파일
-    mem = sysinfo.memory_info()
-    min_phys = float(pf.get("min_physical_free_gb", 3.0))
-    min_page = float(pf.get("min_pagefile_free_gb", 4.0))
-    phys_free = mem.get("physical_free_gb")
-    page_free = mem.get("pagefile_free_gb")
-    # 메모리 계열은 WARN까지만 올린다(위 docstring "메모리 부족은 차단 사유가
-    # 아니다" 참고 — 사용자 지시, 2026-08-19). 실행을 막지 않되 여유량은 남긴다.
-    phys_ok = (phys_free or 0) >= min_phys
-    items.append(CheckItem(
-        "물리 메모리 여유", OK if phys_ok else WARN,
-        "%sGB" % phys_free, ">= %sGB" % min_phys,
-        "" if phys_ok else "기준 미달이지만 실행은 계속한다(사용자 지시). "
-                           "2026-08-18 무한 대기 장애의 실제 원인이었으므로, 이후 "
-                           "기동/촬영이 실패하면 이 값을 먼저 의심할 것."))
-    page_ok = (page_free or 0) >= min_page
-    items.append(CheckItem(
-        "페이지파일 여유", OK if page_ok else WARN,
-        "%sGB" % page_free, ">= %sGB" % min_page,
-        "" if page_ok else "기준 미달이지만 실행은 계속한다(사용자 지시)."))
-
-    # 3) 디스플레이 해상도 / DPI
+    # 2) 디스플레이 해상도 / DPI
     disp = sysinfo.display_info()
     want = cfg.get("display") or {}
     if want.get("enforce"):
