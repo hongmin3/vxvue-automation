@@ -7,7 +7,7 @@
   {
     "tc_id": "TC_WindowsUpdate_02",
     "level": "FULL",
-    "reason": "2026-08-21 재검증(`python run.py tc02`, **PASS 13/FAIL 0/MANUAL 0/SKIP 0/BLOCKED 0**). MWL 조회 -> 목록 표시값 대조 -> Study 등록 -> 인체도에서 Projection(Chest)·Step(PA) 등록 -> F2 촬영(DB INSTANCE 증가로 판정) -> Send -> 수신 DICOM 태그가 MWL 등록값과 완전 일치 -> Close -> DB 대조 -> Database 화면 표시 확인까지 전부 PASS. 이전까지 남아 있던 'Database 목록 Result 0/0' 문제(TC07/08도 공통 원인)는 Step 미등록이 아니라 **Close 직후 제품 내부 인덱싱이 검색보다 늦게 끝나는 지연**이었다(실측: 첫 조회 0/0 → 몇 분 뒤 재조회 시 정상 표시). `core/workflow.database_search()`에 재시도(최대 4회, 3초 간격)를 추가해 해소했다(2026-08-21). 근거: 사양서1 p.37~38 VP-460, p.86 VP-526."
+    "reason": "2026-08-21 재검증(`python run.py tc02`, **PASS 13/FAIL 0/MANUAL 0/SKIP 0/BLOCKED 0**). MWL 조회 -> 목록 표시값 대조 -> Study 등록 -> 인체도에서 Projection(Chest)·Step(PA) 등록 -> F2 촬영(DB INSTANCE 증가로 판정) -> Send -> 수신 DICOM 태그가 MWL 등록값과 완전 일치 -> Close -> DB 대조 -> Database 화면 표시 확인까지 전부 PASS. 이전까지 남아 있던 'Database 목록 Result 0/0' 문제(TC07/08도 공통 원인)는 Step 미등록이 아니라 **Close 직후 제품 내부 인덱싱이 검색보다 늦게 끝나는 지연**이었다(실측: 첫 조회 0/0 → 몇 분 뒤 재조회 시 정상 표시). `core/workflow.database_search()`에 재시도(최대 4회, 3초 간격)를 추가해 해소했다(2026-08-21). 근거: 사양서1 p.37~38 VP-460, p.86 VP-526. 2026-08-26 사용자 지시로 Storage SCP를 로컬 Bunny에서 사내 공용 `STORAGE_SCP`(10.13.0.222:11116)로 교체했다 — 이제 체크리스트 Precondition의 '뷰어와 다른 PC 의 Server 이용'을 MWL·Storage 모두 실제로 충족하며, 수신 판정은 그 서버의 웹 API(`core/storagescp.py`, http://10.13.0.222:5003)로 **받은 쪽에서** 한다. 제품 등록은 Setting > DICOM - Storage 행 제자리 수정 + Echo 성공으로 실측 확인했다."
   },
   {
     "tc_id": "TC_WindowsUpdate_03",
@@ -22,7 +22,7 @@
   {
     "tc_id": "TC_WindowsUpdate_05",
     "level": "PARTIAL",
-    "reason": "2026-08-19 구현(`python run.py tc05`), 2026-08-21 Send Dose SR 컨트롤 ID 실측 확정(Setting > DICOM - General, Yes/No 라디오). 촬영 -> Send -> **수신 객체의 SOP Class UID로 Image/Dose SR 포함 여부를 판정**한다(Image=1.2.840.10008.5.1.4.1.1.1.1 / Dose SR=…88.67). 수신 확인은 Bunny 로그의 C-STORE Status 0000h와 실제 저장 파일 양쪽을 본다(`core/bunny.py`). 사용자 지시(2026-08-19)로 체크리스트 Precondition('다른 PC 의 Server')과 달리 **이 PC의 Bunny를 Storage로 사용**하며, 그 차이를 판정 note에 항상 남긴다. 원격 PC로 옮길 때는 config.json의 Storage 항목만 바꾸면 된다. 2026-08-24 재검증(`PASS 6/FAIL 0/MANUAL 1`): Send Dose SR=Yes를 확인·적용하고 촬영·전송까지 전부 PASS이나, **Dose SR 객체는 수신되지 않았다** — DICOM Conformance Statement Rev.4.2 p.10 2.2.9절 \"Dose structured report service as SCU is implemented ... for correctly transferred MG images\"에 따라 Dose SR은 문서상 MG(유방촬영) 전용이고 이 자동화는 DX/Chest 절차로 촬영하므로, 수신된 영상의 Modality=DX를 확인했다. 사용자 결정(2026-08-25)으로 이 자동화의 모든 촬영 범위를 DX로 확정하고 MG 절차는 검증하지 않는다. 따라서 이 결과를 결함이나 재검증 필요 MANUAL이 아니라 범위 밖 SKIP으로 남긴다(`tests/tc05_dicom_send.py`). PARTIAL 수준 표시는 DX 범위 내 자동화 미구현 때문이 아니라 체크리스트의 MG 전용 기대값이 이 프로젝트 범위 밖이라는 caveat를 나타낸다. 모든 리포트 상단에도 `core.result.REPORT_CAVEATS`로 DX 전용 범위를 표시한다."
+    "reason": "2026-08-19 구현(`python run.py tc05`), 2026-08-21 Send Dose SR 컨트롤 ID 실측 확정(Setting > DICOM - General, Yes/No 라디오). 촬영 -> Send -> **수신 객체의 SOP Class UID로 Image/Dose SR 포함 여부를 판정**한다(Image=1.2.840.10008.5.1.4.1.1.1.1 / Dose SR=…88.67). **2026-08-26 사용자 지시로 Storage SCP를 로컬 Bunny에서 사내 공용 `STORAGE_SCP`(10.13.0.222:11116)로 교체했다** — 수신 판정은 그 서버의 웹 API(`core/storagescp.py`, http://10.13.0.222:5003)로 스터디를 지목해 원본을 내려받아 태그를 읽는 방식으로 바뀌었고, 이제 체크리스트 Precondition의 '다른 PC 의 Server'를 실제로 충족한다(이전에는 로컬 Bunny라 그 차이를 note에 고지하고 있었다). 공용 서버라서 삭제 API를 쓰지 않고 이번 실행의 Patient ID로만 우리 스터디를 골라낸다. 라이브 재검증(2026-08-26 15:35, `python run.py tc05`): **PASS 7 / FAIL 0 / MANUAL 0 / SKIP 1**, 73초. Send Dose SR No→Yes 전환+Update 성공, 촬영, All Images 전송, Storage SCP 수신 확인(Modality=DX / Instances 1), Image SOP Class 확인, Send Dose SR 원복까지 전부 PASS. **남은 SKIP 1건(Dose SR 미수신)의 사유가 2026-08-26에 바뀌었다.** 2026-08-25까지는 사양서(Conformance Statement Rev.4.2 p.10 2.2.9절 \"…for correctly transferred MG images\")를 근거로 'Dose SR은 MG 전용이니 DX에서 없는 것이 정상 = 범위 밖'으로 정리했으나, 새 Storage SCP에 다른 시험대가 보낸 **DX 스터디 2건(P002 / test111, station=VXvue_JJH / vieworks)** 을 내려받아 확인하니 Modality=DX,SR,XC이고 그 SR의 SOP Class가 1.2.840.10008.5.1.4.1.1.88.67(X-Ray Radiation Dose SR)였다 — 서버 수신 능력의 문제도 아니고 DX라서 없는 것도 아니다. 반면 이 자동화 실행에서는 Send Dose SR=Yes를 확인한 두 차례(15:24 '이미 Yes', 15:35 '전환+Update 성공') 모두 DX 영상 1건만 도달했다. **원인 미확정**이므로 추측으로 판정을 바꾸지 않고 SKIP을 유지하며, 결함으로도 단정하지 않는다. 확인이 필요한 후보: 이 회귀가 쓰는 F2 데모/가상 촬영 경로가 Dose SR·스냅샷(XC) 객체를 애초에 생성하지 않는지, 아니면 다른 Setting 항목이 관여하는지. 사용자·QA 결정 대기 항목으로 NEXT_TASK.md에 올렸다. PARTIAL 수준 표시는 DX 범위 내 자동화 미구현 때문이 아니라 이 미확정 항목과 체크리스트의 '스냅샷 영상' 기대값 때문이다. 모든 리포트 상단에도 `core.result.REPORT_CAVEATS`로 이 사실을 표시한다."
   },
   {
     "tc_id": "TC_WindowsUpdate_06",
@@ -66,8 +66,8 @@
   },
   {
     "tc_id": "TC_WindowsUpdate_14",
-    "level": "PARTIAL",
-    "reason": "2026-08-18: Setting 전체 트리(10개 대분류, 53개 소분류) 확인 완료. 좌측 메뉴는 커스텀 owner-draw(StepItem)라 GetWindowText로 라벨을 읽을 수 없어 Bellalun bellalunSetting.py처럼 좌표+OCR/SSIM 방식이 필요함을 확인. 다음 단계: 확인된 목록 기준으로 좌표 캘리브레이션 스크립트 작성"
+    "level": "FULL",
+    "reason": "tests/tc14_setting_display.py 구현·회귀 편입 완료. 좌측 owner-draw 메뉴는 실행 시 찾은 ItemWnd의 실제 rect와 실측된 컨트롤 구조를 기준으로 core/setting.py가 순회하며, 화면 좌표 상수를 하드코딩하지 않는다. 기본 회귀는 체크리스트 원문 범위대로 Setting 대분류 10개와 현재 표시되는 소분류 전체를 하나씩 열어 제목 변경, 제목 중복 없음, 각 본문 컨트롤 표시, 실측 트리 목록 확보를 자동 판정하고 화면별 캡처를 남긴다. 2026-08-25 전체 회귀에서 55개 화면 모두 열림, 고유 제목 55개, 본문 컨트롤 1,935개 표시로 PASS 5/FAIL 0/MANUAL 0/SKIP 1을 확인했다. 2026-08-26 현재 PC 이관 후 정식 전체 회귀에서도 TC14 PASS 5/FAIL 0/MANUAL 0/SKIP 1(119초)로 재확인했다. SKIP 1은 체크리스트 범위를 넘는 선택형 정밀 검증(스크롤 전수 노출·SCP 상세 DB 대조·옵션 구성 기준 대조, python run.py tc14 --deep)이며 사용자 확정 예외로 최종 PASS를 막지 않는다. 따라서 예전 기록의 '좌표 캘리브레이션 스크립트 작성'은 이미 해소됐고 체크리스트 원문 자동화 수준은 FULL이다."
   },
   {
     "tc_id": "TC_WindowsUpdate_15",

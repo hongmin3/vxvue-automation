@@ -473,6 +473,8 @@ def run(ui, cfg, work_dir=None, evidence_dir=None, do_import=True,
     try:
         safety = dbreset.backup(cfg.get("sql_server", r".\CHAMELEON"),
                                 cfg.get("database", "DRF"),
+                                out_dir=os.path.join(cfg.get("data_dir") or "",
+                                                     "Database", "Bak"),
                                 prefix="PRE_SETTING_IMPORT",
                                 note="before Setting Import in %s" % TC_ID)
     except dbreset.DbResetError as exc:

@@ -48,9 +48,9 @@ Precondition은 "다른 PC 의 Server"지만 이 실행은 **이 PC의 Bunny**�
 import os
 import time
 
-from core import bunny as bunny_mod
 from core import dicomlite
 from core import setting as S
+from core import storagescp as store_mod
 from core import workflow as W
 from core.result import FAIL, MANUAL, PASS, SKIP, TCResult
 
@@ -149,8 +149,7 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
                   note="--no-acquire로 실행되어 이미 열려 있는 영상을 사용한다.")
         step += 1
 
-        log_off = bunny_mod.log_size(cfg)
-        t0 = time.time() - 5
+        store_mark = store_mod.mark(cfg)
         W.select_first_image(ui)
         sent = W.send(ui, scope="all")
         r.add(step, "DICOM Send 실행 (All Images)",
@@ -163,13 +162,17 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
         step += 1
 
         # --- 수신 확인 ---------------------------------------------------
-        res = bunny_mod.wait_for_store(cfg, count=1, timeout=150,
-                                       log_offset=log_off, files_newer_than=t0)
+        res = store_mod.wait_for_store(
+            cfg, store_mark, count=1, timeout=150,
+            patient_id=(cfg.get("test_data") or {}).get("mwl_patient_id"))
         r.add(step, "Storage SCP 수신 확인 (C-STORE Status + 파일)",
               PASS if res["ok"] else FAIL,
-              expected="C-STORE 응답 Status 0000h + 수신 파일 1건 이상",
+              expected=("C-STORE 응답 Status 0000h + 수신 파일 1건 이상"
+                        if res.get("backend") == "bunny" else
+                        "Storage SCP 수신 목록에 이번 실행의 Patient ID 스터디 1건 "
+                        "+ 그 스터디의 원본 객체 1건 이상"),
               actual=res["note"],
-              note=bunny_mod.precondition_note(cfg))
+              note=store_mod.precondition_note(cfg))
         step += 1
 
         # --- 전송된 객체 종류 판정 (이 TC의 핵심) -------------------------
@@ -185,15 +188,21 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
 
         has_image = SOP_IMAGE in classes
         has_dose = SOP_DOSE_SR in classes
-        # 실측(2026-08-24)+사용자 결정(2026-08-25): DICOM Conformance Statement
-        # Rev.4.2 p.10 2.2.9절 "Dose structured report service as SCU is
-        # implemented ... for correctly transferred MG images." — Dose SR은
-        # 문서상 MG(유방촬영) 영상에만 적용된다. 이 자동화는 DX(일반촬영)
-        # 절차로만 검증하기로 범위를 확정했다(MG 절차는 검증하지 않음, 사용자
-        # 지시) — 그래서 DX 촬영에서 Dose SR이 없는 것은 결함이 아니라
-        # **애초에 이 자동화 범위 밖**이다. SKIP으로 남기고(더 이상 MANUAL
-        # 재검증 대상이 아니다), `core.result.REPORT_CAVEATS`에도 이 범위
-        # 제한을 명시했다.
+        # 2026-08-24~25에는 이 자리를 "Dose SR은 사양서상 MG 전용이니 DX에서
+        # 없는 것이 정상"이라고 정리했다(Conformance Statement Rev.4.2 p.10
+        # 2.2.9절). **2026-08-26 실측으로 그 설명은 근거가 유지되지 않는다** —
+        # 새 Storage SCP(STORAGE_SCP 10.13.0.222:11116)에 다른 시험대가 보낸
+        # DX 스터디 2건(P002 / test111, station=VXvue_JJH / vieworks)을
+        # 내려받아 태그를 읽으니 Modality=DX,SR,XC이고 그 SR의 SOP Class가
+        # 정확히 1.2.840.10008.5.1.4.1.1.88.67(X-Ray Radiation Dose SR)이었다.
+        # 즉 서버가 못 받는 것도, DX라서 안 나오는 것도 아니다.
+        #
+        # 그런데 이 자동화의 실행에서는 Send Dose SR=Yes를 확인·적용한 두
+        # 차례(15:24 '이미 Yes', 15:35 'No→Yes 전환+Update 성공') 모두 DX 영상
+        # 1건만 도달했다. **원인은 아직 규명되지 않았다.** 그래서 판정을
+        # 추측으로 바꾸지 않고(SKIP 유지) note에 "범위 밖"이 아니라 "원인
+        # 미확정"이라고 적는다 — 사용자/QA 결정 대기 항목으로 NEXT_TASK.md에
+        # 올렸다.
         is_mg = "MG" in modalities
         r.add(step, "전송된 객체에 Image가 포함",
               PASS if has_image else FAIL,
@@ -207,14 +216,22 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
             dose_verdict, dose_note = PASS, "확인됨."
         elif not is_mg:
             dose_verdict, dose_note = SKIP, (
-                "촬영 Modality=%s(MG 아님) — DICOM Conformance Statement Rev.4.2 "
-                "p.10 2.2.9절: \"Dose structured report service as SCU is "
-                "implemented ... for correctly transferred MG images.\" Dose SR은 "
-                "문서상 MG(유방촬영) 영상에만 적용된다. 이 자동화는 DX(일반촬영) "
-                "환자/절차로만 검증하기로 확정했으므로(사용자 지시, 2026-08-25) "
-                "Dose SR 자체는 이 자동화의 검증 범위 밖이다 — 결함도, 재검증이 "
-                "필요한 미결 사항도 아니다."
-                % (", ".join(sorted(modalities)) or "판독 실패"))
+                "촬영 Modality=%s(MG 아님). Send Dose SR = Yes를 위 Step에서 "
+                "확인·적용했는데도 Dose SR이 오지 않았다. **원인 미확정이다.** "
+                "사양서(Conformance Statement Rev.4.2 p.10 2.2.9절 \"Dose "
+                "structured report service as SCU is implemented ... for "
+                "correctly transferred MG images.\")를 근거로 2026-08-25까지는 "
+                "'MG 전용이라 DX에는 없는 것이 정상'으로 정리했으나, 2026-08-26 "
+                "실측으로 그 설명은 유지되지 않는다 — 같은 Storage SCP에 다른 "
+                "시험대가 보낸 **DX 스터디**(P002 / test111)에는 Modality "
+                "DX,SR,XC와 SOP Class %s(X-Ray Radiation Dose SR)가 함께 들어 "
+                "있었다. 즉 서버 수신 능력의 문제도, DX라서 없는 것도 아니다. "
+                "이 회귀의 촬영 경로(F2 데모/가상 촬영)가 Dose SR·스냅샷(XC) "
+                "객체를 애초에 만들지 않는지, 아니면 다른 Setting이 관여하는지 "
+                "**확인이 필요하다**. 추측으로 판정을 바꾸지 않기 위해 SKIP을 "
+                "유지하되(결함으로 단정하지 않는다) 사용자·QA 결정 대기 항목으로 "
+                "남긴다 — NEXT_TASK.md 참고."
+                % (", ".join(sorted(modalities)) or "판독 실패", SOP_DOSE_SR))
         elif was_yes is not True:
             dose_verdict, dose_note = MANUAL, (
                 "Dose SR이 수신되지 않았다. Send Dose SR 라디오를 못 찾아 Yes 전환을 "
@@ -231,8 +248,11 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
               note=dose_note)
         step += 1
 
-        if res["log_excerpt"]:
-            path = os.path.join(evidence_dir, "bunny_log_excerpt.txt")
+        if res.get("log_excerpt"):
+            path = os.path.join(
+                evidence_dir,
+                "bunny_log_excerpt.txt" if res.get("backend") == "bunny"
+                else "storage_scp_receipt.txt")
             try:
                 import io as _io
                 _io.open(path, "w", encoding="utf-8", newline="\n").write(res["log_excerpt"])

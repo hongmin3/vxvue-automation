@@ -29,6 +29,7 @@ Update는 화면 공용 버튼(`core.setting.UPDATE_BUTTON_ID`, 30641)을 그대
 import time
 
 from . import setting as S
+from . import storagescp
 
 SCREEN_TITLES = {
     "MWL": "DICOM - MWL",
@@ -327,12 +328,36 @@ def ensure_registered(ui, cfg, db, echo_timeout=15):
 
         note_parts = []
         if kind == "Storage":
+            # 2026-08-26: Storage SCP가 원격(STORAGE_SCP)으로 옮겨간 뒤에도
+            # Extra Tool(TC06)은 여전히 로컬 Bunny로 보낸다(config의
+            # extra_tool 블록은 servers_to_register와 독립 — 사용자 지시
+            # 2026-08-24). 그래서 Bunny 기동은 계속 하되, **Storage 등록의
+            # 통과 조건에서는 뺀다** — 원격 Storage가 정상인데 Bunny가 안 떠서
+            # 전체 회귀가 멈추면 안 된다.
             bunny_ok, bunny_note = ensure_bunny_running(cfg)
-            note_parts.append("Bunny: %s" % bunny_note)
-            if not bunny_ok:
+            local_storage = storagescp.uses_local_bunny(cfg)
+            note_parts.append("Bunny(%s): %s"
+                              % ("Storage SCP" if local_storage
+                                 else "Extra Tool 전송 대상", bunny_note))
+            if local_storage and not bunny_ok:
                 results.append({"kind": kind, "name": spec["name"], "registered": False,
                                "echo_ok": False, "note": "; ".join(note_parts)})
                 continue
+            if not local_storage:
+                srv = storagescp.server(cfg)
+                status = {}
+                try:
+                    status = (srv.status() or {}) if srv else {}
+                except Exception as exc:              # noqa: BLE001
+                    note_parts.append("원격 Storage 웹 상태 확인 실패: %s: %s"
+                                      % (type(exc).__name__, exc))
+                if status:
+                    note_parts.append(
+                        "원격 Storage SCP 웹 상태: running=%s AE=%s port=%s "
+                        "(보관 %s일 / 상한 %sMiB)"
+                        % (status.get("running"), status.get("ae_title"),
+                           status.get("port"), status.get("retention_days"),
+                           status.get("max_storage_mib")))
 
         rows = db.ae_list(DB_TYPE.get(kind))
         exists = any(str(r.get("Title")) == str(spec["ae_title"])

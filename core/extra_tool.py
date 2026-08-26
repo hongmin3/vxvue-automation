@@ -21,8 +21,11 @@ Update는 화면 공용 버튼(`core.setting.UPDATE_BUTTON_ID`, 30641)을 그대
 쓴다. Echo 판정은 Verification 로그가 owner-draw라 dicom_settings.echo()와
 동일하게 캡처+OCR로 한다.
 
-사용자 지시(2026-08-24): Extra Tool 서버는 Storage SCP(Bunny: AE
-Title=Bunny, IP=10.201.0.139, Port=3000)와 동일하게 등록한다. 실측 결과
+사용자 지시(2026-08-24): Extra Tool 서버는 당시 Storage SCP였던 Bunny와
+동일하게 등록한다 — **주소는 코드에 두지 않고 `config.json`의
+`extra_tool.server`에서만 읽는다**(그 블록이 `dicom.servers_to_register`와
+독립인 이유). 2026-08-26에 Storage SCP는 원격 `STORAGE_SCP`로 옮겨갔고
+Extra Tool은 그 지시대로 로컬 Bunny에 그대로 남았다. 실측 결과
 AE Title 필드에는 이미 "Bunny"가 입력돼 있었고(이전 세션의 미완료 작업으로
 추정) IP/Port는 비어 있었다 — `configure()`가 세 필드 모두 지정값으로
 덮어써 확정한다.

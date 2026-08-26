@@ -20,6 +20,7 @@ TC 모듈을 **import하지 않는다.** import하면 `core.ui` 등 무거운 �
 반환은 **문제 문자열의 리스트**다. 빈 리스트면 통과.
 """
 
+import ast
 import glob
 import io
 import json
@@ -176,6 +177,100 @@ def check_purposes_cover_implemented():
             for tc_id in sorted(want - have)]
 
 
+def check_scope_summary_covers_scope():
+    """`core/result.TC_AUTOMATION_SCOPE` 가 scope 의 모든 TC 를 덮는다.
+
+    리포트 본문(커버리지 총괄 표 / TC 상세의 '자동화 범위')은 이 사전의 문장을
+    쓴다. 새 TC 를 `automation_scope.json` 에 넣고 여기 요약을 빠뜨리면 리포트에
+    '(요약 미등록)' 이 그대로 찍혀 제출본이 망가진다.
+    """
+    src = _read(os.path.join(HERE, "core", "result.py"))
+    m = re.search(r"^TC_AUTOMATION_SCOPE\s*=\s*\{(.*?)^\}", src, re.M | re.S)
+    if not m:
+        return ["core/result.py에서 TC_AUTOMATION_SCOPE 사전을 찾지 못했다"]
+    have = set(re.findall(r'^    "([^"]+)"\s*:', m.group(1), re.M))
+    problems = []
+    for tc_id in sorted(e.get("tc_id") for e in scope_entries() if e.get("tc_id")):
+        if tc_id not in have:
+            problems.append("core/result.TC_AUTOMATION_SCOPE에 %s가 없다 — "
+                            "리포트의 자동화 범위 칸이 '(요약 미등록)'으로 나온다"
+                            % tc_id)
+            continue
+        body = re.search(r'^    "%s"\s*:\s*\{(.*?)^    \}' % re.escape(tc_id),
+                         m.group(1), re.M | re.S)
+        for key in ("scope", "gap", "unblock"):
+            if body and not re.search(r'"%s"\s*:\s*"' % key, body.group(1)):
+                problems.append("%s: TC_AUTOMATION_SCOPE에 '%s' 항목이 없다"
+                                % (tc_id, key))
+    return problems
+
+
+#: `TCResult`에서 리포트 한 줄(Check)을 만드는 메서드 — 두 번째 인자가 Step 제목이다.
+_RESULT_RECORD_METHODS = frozenset(
+    ("add", "assert_equal", "assert_true", "manual", "skip", "blocked"))
+
+
+def step_titles_in_tests():
+    """[(파일, 줄번호, TC_ID, Step 제목), ...] — 소스에 리터럴로 적힌 것만.
+
+    TC 모듈을 **import하지 않는다**(이 파일 최상단 참고). 대신 `ast`로 구문만
+    읽어 `r.add(step, "제목", ...)` 류 호출의 두 번째 인자가 문자열 리터럴인
+    경우를 모은다. 제목이 변수나 f-string으로 만들어지는 자리는 정적으로 알 수
+    없으므로 대상에서 빠진다 — 그 자리는 실행 리포트의 `report_quality`가 잡는다.
+    """
+    out = []
+    for path in sorted(glob.glob(os.path.join(TESTS_DIR, "*.py"))):
+        source = _read(path)
+        m = _TC_ID_RE.search(source)
+        if not m:
+            continue
+        try:
+            tree = ast.parse(source)
+        except SyntaxError as exc:
+            out.append((os.path.basename(path), exc.lineno or 0, m.group(1), None))
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (isinstance(func, ast.Attribute)
+                    and func.attr in _RESULT_RECORD_METHODS):
+                continue
+            if len(node.args) < 2:
+                continue
+            title = node.args[1]
+            if isinstance(title, ast.Constant) and isinstance(title.value, str):
+                out.append((os.path.basename(path), node.lineno,
+                            m.group(1), title.value))
+    return out
+
+
+def check_report_language_covers_steps():
+    """`core/report_language`가 tests의 모든 Step 제목에 문장을 갖는다.
+
+    `CLAUDE.md` 9절 / `NEXT_TASK.md` 8절 체크리스트: 리포트의 '수행' 칸은 이
+    사전의 문장을 쓴다. 빠뜨리면 `describe_step()`이 제목을 그대로 끼워 넣은
+    일반 문장을 만들고 `report_quality()["readable"]`가 False가 되는데,
+    **실행은 끝까지 성공하므로** 회귀를 다 돌리고 리포트를 열어 본 뒤에야
+    드러난다(2026-08-26 실제 발생: TC08의 '이동식 드라이브 자동 탐지'가
+    두 차례 전체 회귀에서 미등록인 채로 나갔다).
+    """
+    from core.report_language import describe_step
+
+    problems = []
+    for name, lineno, tc_id, title in step_titles_in_tests():
+        if title is None:
+            problems.append("tests/%s:%d — 구문 오류로 Step 제목을 읽지 못했다"
+                            % (name, lineno))
+            continue
+        if not describe_step(tc_id, title)[1]:
+            problems.append(
+                "tests/%s:%d — core/report_language.STEP_ACTIVITY_RULES['%s']에 "
+                "'%s' 문장이 없다(리포트 '수행' 칸이 자동 생성 문장으로 나간다)"
+                % (name, lineno, tc_id, title))
+    return problems
+
+
 def check_commands_registered():
     """`run.py`의 `COMMANDS`에 등록된 이름과 함수가 모두 정의돼 있다."""
     src = _read(os.path.join(HERE, "run.py"))
@@ -200,6 +295,10 @@ CHECKS = (
     ("scope tc_id 중복 없음", check_scope_ids_unique),
     ("TC_LABELS가 scope를 덮는가", check_labels_cover_scope),
     ("TC_PURPOSES가 구현 TC를 덮는가", check_purposes_cover_implemented),
+    ("TC_AUTOMATION_SCOPE가 scope를 덮는가",
+     check_scope_summary_covers_scope),
+    ("report_language가 tests의 Step 제목을 덮는가",
+     check_report_language_covers_steps),
     ("run.py COMMANDS의 함수 존재", check_commands_registered),
 )
 

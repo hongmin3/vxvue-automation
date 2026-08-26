@@ -14,7 +14,7 @@ Phase 1  baseline 초기화 (기본 수행, 파괴적; --no-reset-baseline으로
 Phase 2  라이선스 확인   core/license.check()  (Setting > System > License)
 Phase 3  서버 연동       dicom_settings.ensure_registered()  (MWL/Storage/Print + Echo)
 Phase 4  TC 실행         구현된 TC -> (그 외는 automation_scope 수준 표시)
-리포트                   Reports/*.txt|html|json|csv + 체크리스트 xlsx 사본
+리포트                   Reports/*.html|json + 체크리스트 xlsx 사본
 ```
 
 ## 이 러너의 핵심 요구사항
@@ -48,14 +48,16 @@ TC가 연쇄 실패한 사례가 있다 — `Bellalun Viewer/auto/PORTABILITY_AU
 여유가 항상 기준 아래라(사용자 지시로 차단하지 않음) 실패 원인이 자원 부족인지
 제품 문제인지 사후에 구분할 근거가 필요하다.
 
-**단, MWL 서버 등록(Phase 3)이 실패하면 예외다** — 이 회귀에 구현된 TC 대부분이
-MWL로 검사를 열며 시작하므로, MWL 등록·Echo가 실패한 채로 Phase 4를 계속
-돌리면 전부 같은 원인으로 줄줄이 실패해 리포트만 길어지고 새로운 정보가
-없다(사용자 지시, 2026-08-25). 그래서 `_run_dicom_registration()`이
-`mwl_ok=False`를 돌려주면 Phase 4를 건너뛰고 구현 여부와 무관하게 **모든
-TC를 `_downstream_fail()`로 즉시 FAIL 처리한 뒤 회귀를 끝낸다.** Storage/
-Print만 실패한 경우는 이 게이트에 걸리지 않는다 — 그 SCP를 실제로 쓰는
-TC05/TC07에서만 개별 FAIL로 드러나고 나머지 TC는 정상 진행한다.
+**baseline 초기화, 필수 라이선스, DICOM 서버 연결은 중단 게이트다.** 이 셋 중
+하나라도 실패하면 뒤 Phase를 실행하지 않는다. 초기 상태·기능 활성화·서버 연결이
+보장되지 않은 상태의 연쇄 실패를 제품 결함과 섞어 보고하지 않기 위해서다.
+
+특히 필수 DICOM 서버 등록·Echo(Phase 3)는 MWL,
+Storage, Print 중 하나가 끊긴 상태는 전체 회귀의 선행조건 실패다. 그 상태로
+Phase 4를 계속 돌리면 뒤 TC가 같은 환경 원인으로 줄줄이 실패하고, 제품 결함과
+환경 결함을 섞어 보고하게 된다. 그래서 `_run_dicom_registration()`이
+`servers_ok=False`를 돌려주면 Phase 4를 건너뛰고 구현 여부와 무관하게 **모든
+TC를 `_downstream_fail()`로 즉시 FAIL 처리한 뒤 회귀를 끝낸다.**
 """
 
 import os
@@ -378,15 +380,11 @@ def _run_license_check(cfg, ui, evidence_dir):
 
 
 def _run_dicom_registration(cfg, ui):
-    """반환: (TCResult, mwl_ok).
+    """반환: (TCResult, servers_ok).
 
-    `mwl_ok`는 **MWL 서버 등록이 시도됐고 그중 하나라도 실패했으면** False다
-    (사용자 지시, 2026-08-25: MWL 서버 세팅부터 실패하면 그 뒤 TC를 계속
-    돌려봤자 전부 의미 없이 실패할 뿐이므로, `run()`이 이 값을 보고 Phase 4
-    전체를 건너뛰고 모든 TC를 FAIL로 종료한다). MWL 등록 대상이 config에
-    아예 없으면(등록 시도 자체가 없었으면) 게이트를 걸 근거가 없으므로
-    True로 둔다 — Storage/Print만 실패한 경우는 여기서 막지 않는다(그 SCP를
-    실제로 쓰는 TC05/07에서만 개별 FAIL로 드러난다).
+    config에 등록된 MWL/Storage/Print 중 하나라도 등록 또는 Echo가 실패하거나,
+    처리 결과에서 누락되면 ``servers_ok=False``다. 전체 회귀의 필수 연결
+    선행조건이므로 ``run()``이 Phase 4를 시작하지 않는다.
     """
     from . import dicom_settings
     from .db import VXvueDb
@@ -398,18 +396,14 @@ def _run_dicom_registration(cfg, ui):
         r.add(1, "등록 대상 서버", result_mod.SKIP,
               note="config.json의 dicom.servers_to_register가 비어 있다.")
         return r.finalize(), True
-    mwl_specs = [s for s in specs if s.get("kind") == "MWL"]
-    mwl_ok = True
+    servers_ok = True
     try:
         db = VXvueDb(cfg.get("sql_server", r".\CHAMELEON"), cfg.get("database", "DRF"))
         rows = dicom_settings.ensure_registered(ui, cfg, db)
-        mwl_rows = [row for row in rows if row.get("kind") == "MWL"]
-        if mwl_specs and (len(mwl_rows) < len(mwl_specs)
-                         or any(not (row.get("registered") and row.get("echo_ok"))
-                                for row in mwl_rows)):
-            mwl_ok = False
         for i, row in enumerate(rows, 1):
             ok = row.get("registered") and row.get("echo_ok")
+            if not ok:
+                servers_ok = False
             r.add(i, "%s SCP: %s" % (row.get("kind"), row.get("name")),
                   result_mod.PASS if ok else result_mod.FAIL,
                   expected="등록 확인 + Echo 성공",
@@ -417,15 +411,13 @@ def _run_dicom_registration(cfg, ui):
                   note=row.get("note", ""))
         missing = len(specs) - len(rows)
         if missing > 0:
+            servers_ok = False
             r.add(len(rows) + 1, "등록 대상 누락", result_mod.FAIL,
                   expected="%d건 처리" % len(specs), actual="%d건 처리" % len(rows))
-            if len(mwl_rows) < len(mwl_specs):
-                mwl_ok = False
     except Exception as exc:                              # noqa: BLE001
         _fail_from_exception(r, len(r.checks) + 1, "DICOM 서버 등록", exc, cfg)
-        if mwl_specs:
-            mwl_ok = False
-    return r.finalize(), mwl_ok
+        servers_ok = False
+    return r.finalize(), servers_ok
 
 
 # --- Phase 4: TC 실행 --------------------------------------------------
@@ -510,8 +502,8 @@ def _placeholder(tc_id, scope_by_id, override_note=None):
     return r
 
 
-def _downstream_fail(tc_id, reason):
-    """상류 단계(MWL 서버 등록 등)가 실패해 이 TC를 아예 실행하지 않고
+def _downstream_fail(tc_id, reason, prerequisite="필수 선행조건"):
+    """상류 단계(DICOM 서버 등록 등)가 실패해 이 TC를 아예 실행하지 않고
     강제로 FAIL 처리할 때 쓴다(사용자 지시, 2026-08-25).
 
     `_placeholder()`와 달리 `automation_scope.json`의 수준(MANUAL/PARTIAL 등)을
@@ -521,7 +513,7 @@ def _downstream_fail(tc_id, reason):
     """
     r = result_mod.TCResult(tc_id, TC_LABELS.get(tc_id, tc_id))
     r.add(1, "상류 단계 실패로 실행 안 함", result_mod.FAIL,
-          expected="MWL 서버 등록 성공 후 정상 실행",
+          expected="%s 성공 후 정상 실행" % prerequisite,
           actual="실행하지 않음", note=reason)
     r.finalize()
     return r
@@ -657,6 +649,17 @@ def run(cfg, ui_factory, approve_destructive=False, reset_baseline=True,
             else "건너뜀: --no-reset-baseline 지정"))
     reset_result, did_reset = _run_baseline_reset(cfg, approved=reset_baseline)
     results.append(reset_result)
+    if reset_baseline and reset_result.verdict == result_mod.FAIL:
+        _log("baseline 초기화 실패 — 이후 Phase를 실행하지 않고 전체 FAIL로 종료한다.")
+        for tc_id in run_order(set(all_ids) | set(IMPLEMENTED)):
+            if only and tc_id not in only:
+                continue
+            results.append(_downstream_fail(
+                tc_id, "baseline 초기화가 실패해(Baseline_Reset 결과 참고) 이번 "
+                       "회귀에서 이 TC를 실행하지 않았다. 초기 상태가 보장되지 않은 "
+                       "판정을 정식 회귀 결과로 만들지 않기 위해 중단했다.",
+                prerequisite="baseline 초기화"))
+        return results
 
     # 뷰어 준비. Phase 1이 뷰어를 내렸으면 여기서 다시 띄운다.
     ui = None
@@ -677,25 +680,36 @@ def run(cfg, ui_factory, approve_destructive=False, reset_baseline=True,
 
     # Phase 2
     _log("Phase 2 — VXvue 라이선스 확인")
-    results.append(_run_license_check(cfg, ui, evidence_root))
-
-    # Phase 3
-    _log("Phase 3 — DICOM 서버 연동 확인·구성")
-    dicom_result, mwl_ok = _run_dicom_registration(cfg, ui)
-    results.append(dicom_result)
-    if not mwl_ok:
-        # 사용자 지시(2026-08-25): MWL 서버 세팅부터 실패하면 그 뒤 TC를
-        # 계속 돌려봤자(대부분 MWL 오픈으로 시작하므로) 의미 없이 줄줄이
-        # 실패할 뿐이다 — Phase 4를 아예 건너뛰고 전부 FAIL로 종료한다.
-        _log("MWL 서버 등록 실패 — Phase 4(TC 실행)를 건너뛰고 전체 FAIL로 종료한다.")
+    license_result = _run_license_check(cfg, ui, evidence_root)
+    results.append(license_result)
+    if license_result.verdict == result_mod.FAIL:
+        _log("필수 라이선스 확인 실패 — 이후 Phase를 실행하지 않고 전체 FAIL로 종료한다.")
         for tc_id in run_order(set(all_ids) | set(IMPLEMENTED)):
             if only and tc_id not in only:
                 continue
             results.append(_downstream_fail(
-                tc_id, "MWL 서버 등록·Echo가 실패해(DICOM_Servers 결과 참고) 이번 "
-                       "회귀에서 이 TC를 실행하지 않았다. MWL 없이는 검사를 열 수 "
-                       "없어 이후 대부분의 TC가 같은 원인으로 실패할 뿐이므로 "
-                       "실행을 중단했다(사용자 지시, 2026-08-25)."))
+                tc_id, "필수 VXvue 라이선스 확인이 실패해(VXvue_License 결과 참고) "
+                       "이번 회귀에서 이 TC를 실행하지 않았다. 기능이 비활성화된 "
+                       "상태의 연쇄 실패를 제품 결함과 섞지 않기 위해 중단했다.",
+                prerequisite="필수 VXvue 라이선스 확인"))
+        return results
+
+    # Phase 3
+    _log("Phase 3 — DICOM 서버 연동 확인·구성")
+    dicom_result, servers_ok = _run_dicom_registration(cfg, ui)
+    results.append(dicom_result)
+    if not servers_ok:
+        _log("필수 DICOM 서버 등록·Echo 실패 — Phase 4(TC 실행)를 건너뛰고 "
+             "전체 FAIL로 종료한다.")
+        for tc_id in run_order(set(all_ids) | set(IMPLEMENTED)):
+            if only and tc_id not in only:
+                continue
+            results.append(_downstream_fail(
+                tc_id, "필수 DICOM 서버 등록·Echo가 실패해(DICOM_Servers 결과 "
+                       "참고) 이번 회귀에서 이 TC를 실행하지 않았다. 연결 선행조건이 "
+                       "깨진 상태의 연쇄 실패를 제품 결함과 섞지 않기 위해 실행을 "
+                       "중단했다(사용자 지시, 2026-08-26).",
+                prerequisite="필수 DICOM 서버 등록·Echo"))
         return results
 
     # Phase 4

@@ -10,6 +10,7 @@
 #  xipl.tesseract_exe로 경로를 지정한다).
 
 Pillow>=10.0          # 화면 캡처(ImageGrab), 체크박스 색 판별
+numpy>=1.26           # 화면/색상 배열 판독, SSIM 대체 구현, 투영·팔레트 위치 검출
 pytesseract>=0.3.13   # owner-draw 목록/로그 영역 OCR
 openpyxl>=3.1         # 체크리스트 xlsx 읽기·결과 기록 (core/checklist.py)
 pypdf>=6.0            # 사양서·매뉴얼 PDF 근거 검색 (core/specs.py)

@@ -21,7 +21,6 @@ from datetime import datetime
 
 DEFAULT_SERVER = r".\CHAMELEON"
 DEFAULT_DB = "DRF"
-DEFAULT_BACKUP_DIR = r"D:\Database\Database\Bak"
 
 # 실측(2026-08-19): 라이선스 파일은 `<data_dir>\Database\` 아래, 로그는
 # `<data_dir>\log\` 아래에 있다(이 PC는 data_dir=D:\Database, 다른 PC는
@@ -42,7 +41,11 @@ LOG_SUBDIR = "log"
 #   되돌릴 방법이 없어지는 유일한 자산이라 보존한다.
 # - log: 사용자 지시(2026-08-19) — 라이선스처럼 별도로 백업해 두고 되돌린
 #   뒤 다시 덮어써서 회귀 실행마다 로그가 사라지지 않게 한다.
-FOLDER_RESTORE_EXCLUDE_DIRS = ("Bak", LOG_SUBDIR)
+FOLDER_RESTORE_EXCLUDE_DIRS = (
+    "Bak",                             # 구형: <data_dir>\Bak
+    os.path.join("Database", "Bak"),  # 현재: <data_dir>\Database\Bak
+    LOG_SUBDIR,
+)
 # DB 파일은 SQL Server가 점유하고 있어 파일 복사로 다루면 안 된다(2절
 # 실측: robocopy가 이미 실패하는 것으로 확인됨) — DB는 항상 restore()로
 # SQL 레벨에서 복원한다.
@@ -53,7 +56,7 @@ FOLDER_RESTORE_EXCLUDE_FILES = ("*.mdf", "*.ldf")
 APP_PROCESSES = (
     "VXvue", "VX.LAUNCHER", "VX.PROCEDURE.MANAGER", "VX.EXPORT.MANAGER",
     "VX.LOGGER.VIEWER", "VW.STATISTICS", "VW.COMMUNICATOR",
-    "VX.WEB.DEVICE", "VX.WEB.IMAGE", "ImageExtractor",
+    "VX.WEB.DEVICE", "VX.WEB.IMAGE", "VX.LIVE.VIEW", "ImageExtractor",
 )
 
 
@@ -122,12 +125,15 @@ def stop_app(processes=APP_PROCESSES, wait_timeout=30, poll=1.0):
     return stopped
 
 
-def backup(server=DEFAULT_SERVER, database=DEFAULT_DB, out_dir=DEFAULT_BACKUP_DIR,
+def backup(server=DEFAULT_SERVER, database=DEFAULT_DB, out_dir=None,
            prefix="SAFETY", note=""):
     """DB를 네이티브 백업한다. 만들어진 .bak 경로를 반환.
 
     파일명에 접두를 붙여 제품의 정기 백업 로테이션과 섞이지 않게 한다.
+    PC마다 data_dir 드라이브가 다르므로 출력 폴더는 반드시 호출부가 명시한다.
     """
+    if not out_dir:
+        raise DbResetError("DB 안전 백업 out_dir을 명시해야 합니다.")
     os.makedirs(out_dir, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     path = os.path.join(out_dir, "%s_%s_%s.bak" % (prefix, database, stamp))
@@ -162,7 +168,8 @@ def restore(bak_path, server=DEFAULT_SERVER, database=DEFAULT_DB,
     if not os.path.exists(bak_path):
         raise DbResetError("백업 파일이 없습니다: %s" % bak_path)
 
-    safety = backup(server, database, prefix="PRERESTORE",
+    safety = backup(server, database, out_dir=os.path.dirname(bak_path),
+                    prefix="PRERESTORE",
                     note="taken automatically before restore") if safety_backup else None
     stopped = stop_app() if stop_processes else []
 
@@ -290,6 +297,8 @@ def backup_folder(data_dir, out_dir):
     extra = []
     for pat in FOLDER_RESTORE_EXCLUDE_FILES:
         extra += ["/XF", pat]
+    extra += ["/XD"] + [os.path.join(data_dir, d)
+                         for d in FOLDER_RESTORE_EXCLUDE_DIRS]
     rc = _robocopy(data_dir, out_dir, extra)
     return {"out_dir": out_dir, "returncode": rc}
 

@@ -94,7 +94,7 @@ Step 정답지는 XIPL 파라미터 파일명에서 얻는다(`{Projection} {Ste
 
 | Step | 코드가 하는 일 | Expected Result(판정 기준) | 판정 |
 |---|---|---|---|
-| 1~9 | preflight 9항목: 관리자 권한 / 물리 메모리 / 페이지파일 / 해상도 / DPI / VXvue 실행 파일 / DRF DB 접속 / XIPL 로그 경로 / Bunny 수신 폴더 | 관리자 권한·DPI·실행 파일·DB 접속은 **없으면 아무것도 못 하므로 NG(FAIL)**. 메모리/페이지파일·해상도·경로는 WARN(MANUAL) — 실행을 막지 않는다 | PASS/FAIL 또는 PASS/MANUAL |
+| 1~10 | preflight 10항목: 관리자 권한 / 물리 메모리 / 페이지파일 / 해상도 / DPI / VXvue 실행 파일 / DRF DB 접속 / XIPL 로그 경로 / Bunny 수신 폴더(TC06 Extra Tool 근거) / **Storage SCP 가동**(원격 서버 `/api/scp-status`의 AE Title·Port가 등록값과 일치하고 `running=true`인지, 2026-08-26 추가) | 관리자 권한·DPI·실행 파일·DB 접속·**Storage SCP 가동**은 **없으면 아무것도 못 하므로 NG(FAIL)**. 메모리/페이지파일·해상도·경로는 WARN(MANUAL) — 실행을 막지 않는다 | PASS/FAIL 또는 PASS/MANUAL |
 | 10 | 시험 Worklist 서버에 **당일 날짜** VXvue 전용 DX 처방을 보장(같은 patient_id의 지난 처방은 삭제하고 재생성) | 처방 1건이 오늘 날짜로 존재해야 한다 | PASS/FAIL |
 | 11 | XIPL.SERVER About 창에서 영상처리 라이선스 4종 등록 확인 | 필요 라이선스가 전부 등록돼야 한다. About 창이 닫혀 있으면 판정 불가 → MANUAL(사람이 열어야 함) | PASS/FAIL/MANUAL |
 
@@ -164,10 +164,16 @@ Port=30098).
 
 | Step | 코드가 하는 일 | Expected Result(판정 기준) | 판정 |
 |---|---|---|---|
-| n | Storage인 경우 먼저 로컬 `Bunny.exe`가 떠 있는지 확인하고 없으면 실행한다(포트 3000이 열려야 Echo가 성립) | Bunny 실행 확인 | (아래 판정에 포함) |
+| n | 로컬 `Bunny.exe`가 떠 있는지 확인하고 없으면 실행한다. **2026-08-26부터 Bunny는 Storage SCP가 아니라 TC06 Extra Tool 전송 대상이므로 이 결과는 Storage 등록의 통과 조건이 아니다** — 원격 Storage가 정상인데 Bunny가 안 떠서 회귀가 멈추면 안 된다. 대신 원격 Storage의 웹 상태(`/api/scp-status`)를 읽어 note에 남긴다 | Bunny 실행 여부와 원격 Storage `running` 상태를 note에 기록 | (Storage 판정을 막지 않음) |
 | n | DB(`AE_LIST`)에 그 AE Title+Port가 이미 있는지 확인 → 없으면 화면에서 Add로 등록, 있으면 목록에서 그 행을 선택 | 등록 상태여야 한다 | PASS/FAIL |
 | n | Storage인 경우 Burning Option 3종(Annotation 31503 / Information 31504 / Orientation 31505)을 전부 체크하고 Update. 체크박스가 owner-draw라 상태를 못 읽어 **캡처 기반 색 판별**(체크 시 나타나는 황금색 `(223,182,56)`)로 이미 체크된 건 다시 누르지 않는다 | 3종 모두 체크 상태 | (판정 note에 상태 기록) |
 | n | Echo(C-ECHO) 버튼을 눌러 로그 영역을 캡처+OCR로 판독. 폴링마다 캡처 직전 `ensure_foreground()`를 다시 불러 다른 창 겹침을 줄이고, OCR 결과에 오염 신호(`core/screen.looks_contaminated()`)가 보이면 그 프레임은 버리고 계속 폴링한다(2026-08-24 추가 — 실측: 이 자동화를 구동하는 터미널의 JSON 로그가 로그 영역에 겹쳐 찍혀 `succeeded`를 못 찾은 사례, 격리 재캡처로는 정상 확인) | `succeeded`가 나와야 한다. 시간 내 못 찾으면 오염 프레임을 제외했다는 사실을 note에 남긴다 | PASS/FAIL |
+
+세 서버는 전체 회귀의 선행조건이다. MWL/Storage/Print 중 하나라도 등록 또는
+Echo가 실패하거나 처리 결과에서 누락되면 `servers_ok=False`가 되어 Phase 4를
+시작하지 않는다. 이후 TC는 같은 환경 원인으로 실행하지 않았음을 FAIL로 기록한
+뒤 즉시 종료한다(사용자 지시, 2026-08-26). 서버 값을 바꾸는 위치와 현재 PC
+IPv4/Bunny 포트 확인 절차는 `README.md` 5.1.1절에 있다.
 
 ---
 
@@ -319,7 +325,7 @@ Column(2, 'Patient ID', w=143, x=174..317)   Column(8, 'Study Description', w=13
 | 5 | F2 데모 촬영 | 영상 1장 이상 획득. 사양서1 p.86 `VP-526` — Demo License 등록이 선행 조건 | PASS/FAIL |
 | 6 | 촬영 중 뜬 팝업 판정 | 오류 팝업 없음. 단 **이미 원인을 규명한 환경 문제**(`Image process parameter file does not exist` — XIPL 파라미터 경로 구성)는 MANUAL로 내리고 근거를 남긴다 | FAIL/MANUAL |
 | 7 | 영상 선택 후 Exposure 화면에서 Send(All Images) | 전송 범위 팝업 처리 성공. **체크리스트 Step 순서는 Close 뒤지만 Database 목록이 비어 대상을 고를 수 없어 실행 지점을 옮겼다** — 검증 내용은 동일하고 그 차이를 note에 남긴다 | PASS/FAIL |
-| 8 | Bunny 로그의 C-STORE Status와 실제 수신 파일을 함께 확인 | Status 0000h + 파일 1건 이상. **로그 문구 하나로 성공을 단정하지 않는다** | PASS/FAIL |
+| 8 | Storage SCP 수신 확인 — **2026-08-26부터 원격 서버의 웹 API**(`core/storagescp.py`)로 이번 실행의 Patient ID 스터디를 지목하고 그 스터디의 원본을 내려받는다. 설정이 로컬 Bunny를 가리키면 옛 경로(로그 C-STORE Status + 수신 파일)로 위임한다 | 수신 목록에 이번 Patient ID 스터디 1건 + 내려받은 원본 1건 이상. **제품이 '보냈다'고 말한 것을 그대로 믿지 않고 받은 쪽에서 확인한다** | PASS/FAIL |
 | 9 | 수신 파일의 DICOM 태그를 정답지와 대조 | PatientID / PatientName / AccessionNumber / Modality 일치. 체크리스트 Expected Result 3·4·5의 마지막 고리 | PASS/FAIL |
 | 10 | 검사 Close | Database 화면의 Close 실행, 상태가 `Not Exposure mode`로 | PASS/FAIL |
 | 11 | DB(`STUDY`+`PATIENT`) 조회로 대조 | PatientId / AccessionNumber / Modality 일치 | PASS/FAIL |
@@ -391,9 +397,9 @@ TC02와 다른 점: TC02는 "정보 일치"를, 이 TC는 **"전송된 객체의
 | 1 | Setting > DICOM - General 화면 진입 후 Send Dose SR Yes/No 라디오 확인(컨트롤 ID 2026-08-21 실측 확정), 이미 Yes면 건드리지 않고 No면 Yes로 바꾼다 | Yes 상태여야 한다. 컨트롤을 못 찾으면 MANUAL(근거 없는 조작 금지) | PASS/MANUAL |
 | 2 | MWL 오픈 + 촬영 | 영상 1장 이상 | PASS/FAIL |
 | 3 | Send(All Images) | 팝업 처리 성공. All Images를 택하는 이유: Test Data가 `Image, 스냅샷 영상, Dose SR 전송됨`을 기대하므로 검사의 객체 전부를 보내야 한다 | PASS/FAIL |
-| 4 | Bunny 로그 Status + 수신 파일 확인 | Status 0000h + 파일 1건 이상 | PASS/FAIL |
+| 4 | Storage SCP 수신 확인(원격 서버 웹 API, `core/storagescp.py`) | 이번 Patient ID 스터디 1건 + 내려받은 원본 1건 이상 | PASS/FAIL |
 | 5 | 수신 객체에 **Image**(`1.2.840.10008.5.1.4.1.1.1.1`) 포함 | 포함돼야 한다 | PASS/FAIL |
-| 6 | 수신 객체에 **Dose SR**(`1.2.840.10008.5.1.4.1.1.88.67`) 포함. 수신된 Image 객체의 `Modality` 태그를 함께 읽는다 | 포함되면 PASS. 안 포함이어도 **수신 Modality가 MG가 아니면 SKIP** — DICOM Conformance Statement Rev.4.2 p.10 2.2.9절: "Dose structured report service as SCU is implemented ... for correctly transferred **MG** images." **이 자동화는 DX(일반촬영) 환자/절차로만 검증하기로 범위를 확정했다**(사용자 지시, 2026-08-25 — MG 절차는 검증하지 않는다). 그래서 DX 촬영에서 Dose SR이 없는 것은 결함도 재검증 대상도 아니라 이 자동화 범위 밖이다(2026-08-24 MANUAL → 2026-08-25 SKIP으로 재조정). 이 범위 제한은 모든 리포트 상단 유의사항(`core.result.REPORT_CAVEATS`)에도 명시된다. Modality가 MG이고 Send Dose SR=Yes인데도 미수신이면 FAIL(결함 가능성, 이론상 남겨 둔 분기 — 이 자동화는 MG를 촬영하지 않으므로 실제로는 타지 않는다) | PASS/SKIP/FAIL |
+| 6 | 수신 객체에 **Dose SR**(`1.2.840.10008.5.1.4.1.1.88.67`) 포함. 수신된 Image 객체의 `Modality` 태그를 함께 읽는다 | 포함되면 PASS. 안 포함이면 **SKIP — 단 사유는 2026-08-26에 바뀌었다.** 2026-08-25까지는 사양서(Conformance Statement Rev.4.2 p.10 2.2.9절 "…for correctly transferred **MG** images")를 근거로 'MG 전용이니 DX에는 없는 것이 정상 = 범위 밖'으로 정리했다. **그 설명은 실측으로 유지되지 않는다** — 새 Storage SCP에 다른 시험대가 보낸 **DX 스터디 2건**(P002 / test111)을 내려받아 확인하니 Modality `DX,SR,XC`이고 그 SR의 SOP Class가 정확히 `…88.67`이었다. 서버 수신 능력의 문제도, DX라서 없는 것도 아니다. 반면 이 자동화 실행에서는 Send Dose SR=Yes를 확인한 두 차례 모두 DX 영상 1건만 도달했다 — **원인 미확정**이므로 추측으로 판정을 바꾸지 않고 SKIP을 유지하되 결함으로도 단정하지 않고 사용자·QA 결정 대기 항목으로 남긴다. 이 사실은 모든 리포트 상단 유의사항(`core.result.REPORT_CAVEATS`)에도 명시된다. Modality가 MG이고 Send Dose SR=Yes인데도 미수신이면 FAIL(이 자동화는 MG를 촬영하지 않으므로 실제로는 타지 않는다) | PASS/SKIP/FAIL |
 
 ---
 
@@ -415,7 +421,7 @@ TC02와 다른 점: TC02는 "정보 일치"를, 이 TC는 **"전송된 객체의
 전송 대상 서버(AE Title/IP/Port)는 `config.json`의 `extra_tool.server`에서만
 읽는다 — `dicom.servers_to_register`와 독립적인 항목이다(사용자 지시: 나중에
 Dose SR 검증 등으로 Bunny 대신 다른 서버를 쓰게 되어도 Extra Tool 대상은
-따로 바꿀 수 있어야 한다). 지금 값은 Storage SCP(Bunny)와 동일.
+따로 바꿀 수 있어야 한다). **2026-08-26에 그 상황이 실제로 왔다** — Storage SCP는 원격 `STORAGE_SCP`(10.13.0.222:11116)로 옮겼고 Extra Tool은 지시대로 로컬 Bunny(`10.13.0.114:3000`)에 그대로 남았다. 그래서 TC06만 `core/bunny.py`를 계속 쓴다.
 
 | Step | 코드가 하는 일 | Expected Result(판정 기준) | 판정 |
 |---|---|---|---|
@@ -498,10 +504,10 @@ Print SCP는 체크리스트 Precondition대로 **다른 PC**에 있다 — Stor
 코드: `tests/tc08_study_export.py` · 실행: `python run.py tc08`
 
 체크리스트 Precondition은 *CD/USB*지만 물리 매체 굽기·삽입은 사람이 해야 한다.
-사용자 지시로 **E 드라이브를 기준**으로 수행하고(`config.json > export.dest_dir`),
-**E가 없으면 D로 대체하며 그 사실을 판정에 남긴다**(2026-08-21 지시 — "이건
-외부 드라이브 export/import를 보는 테스트라서"). 경로를 코드에 박지 않았으므로
-실제 USB 드라이브 문자로 바꾸면 그대로 동작한다.
+`config.json > export.dest_dir`의 드라이브가 준비돼 있으면 그대로 쓰고, 아니면
+현재 연결된 이동식 드라이브가 정확히 하나일 때 그 문자(D:/E: 등)로 경로를
+자동 대체한다(`core/media.py`). 현재 PC는 D:, 이전 PC는 E:로 실측했다. USB가
+여러 개면 엉뚱한 매체를 지우거나 덮어쓰지 않도록 임의 선택하지 않고 중단한다.
 
 체크리스트 Comment에 **알려진 결함 `#21049`(Win11에서 Study Export 시 에러 발생
 하며 Export 안 됨)** 이력이 있다. 이 시험대는 Windows 11이므로 **이 TC는 그
@@ -890,6 +896,6 @@ Windows Update 체크리스트에는 없는 별도 신규 TC다. **"옵션 값�
 15. **비-PASS는 리포트 첫 부분에서도 설명한다.** FAIL뿐 아니라 MANUAL, SKIP,
     BLOCKED도 TC/실행 순서/원본 Step, 확인 결과, 판정 이유, 후속 조치와 함께
     요약한다. 개별 TC 실행과 전체 회귀는 같은 출력 모델을 사용한다.
-16. **리포트 완전성을 개발 완료 조건으로 삼는다.** 원본 값은 JSON/CSV에
+16. **리포트 완전성을 개발 완료 조건으로 삼는다.** 원본 값은 JSON에
     보존하고, `core.result.assert_report_readable()`로 사용자용 필드 누락과
     문장 사전 미등록 Step이 모두 0건인지 검사한다.

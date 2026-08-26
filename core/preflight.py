@@ -124,11 +124,43 @@ def run(config):
                            OK if xipl_log and os.path.isdir(xipl_log) else WARN,
                            xipl_log, "존재"))
 
-    # 7) Bunny 수신 폴더 (TC05 판정 근거)
+    # 7) Bunny 수신 폴더 (TC06 Extra Tool 판정 근거)
+    #    2026-08-26부터 Storage SCP는 원격(STORAGE_SCP)이고, Bunny는 Extra
+    #    Tool(TC06) 전송 대상으로만 남는다 — 그래서 이 항목의 근거 TC가 05에서
+    #    06으로 바뀌었다.
     recv = ((cfg.get("dicom") or {}).get("bunny") or {}).get("receive_dir")
     items.append(CheckItem("Bunny Receive 폴더",
                            OK if recv and os.path.isdir(recv) else WARN,
                            recv, "존재"))
+
+    # 8) 원격 Storage SCP 가동 (TC02/TC05 판정 근거)
+    #    "개별 TC 실행에서 왜 수신이 0건인가"를 앞에서 알려주기 위한 점검이다
+    #    (NEXT_TASK.md P1 5b와 같은 취지). 폴더 존재만 보던 7)로는 원격 서버가
+    #    죽어 있는 상태를 잡을 수 없다.
+    from . import storagescp
+    if storagescp.uses_local_bunny(cfg):
+        items.append(CheckItem("Storage SCP 가동", OK, "로컬 Bunny 구성",
+                               "원격 점검 대상 아님"))
+    else:
+        url = storagescp.server_url(cfg)
+        spec = storagescp.storage_spec(cfg)
+        try:
+            status = storagescp.StorageServer(url, timeout=8).status() or {}
+        except Exception as exc:                  # noqa: BLE001 - 점검 자체는 계속한다
+            status, note = {}, "%s: %s" % (type(exc).__name__, exc)
+        else:
+            note = ""
+        running = bool(status.get("running"))
+        matches = (str(status.get("ae_title")) == str(spec.get("ae_title"))
+                   and str(status.get("port")) == str(spec.get("port")))
+        items.append(CheckItem(
+            "Storage SCP 가동", OK if (running and matches) else NG,
+            "%s AE=%s port=%s running=%s"
+            % (url, status.get("ae_title"), status.get("port"), running),
+            "AE=%s port=%s running=True" % (spec.get("ae_title"), spec.get("port")),
+            note or ("" if matches else
+                     "서버가 알려주는 AE/Port가 config의 등록값과 다르다 — "
+                     "config.json의 dicom.servers_to_register[Storage]를 맞출 것.")))
 
     return items
 

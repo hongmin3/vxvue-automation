@@ -62,18 +62,21 @@ XIPL 서버 로그 근거로 원인은 **파라미터 경로 구성**이며 파�
 성공으로 판정하되, 팝업이 떴다는 사실과 원인을 `note`에 남긴다. Image
 Processing 성공 여부의 판정은 TC04의 책임이다.
 
-## Storage에 대한 한계
+## Storage 수신 판정 (2026-08-26 변경)
 
-체크리스트 Precondition은 "뷰어와 다른 PC 의 Server 이용"이다. 이 실행은 MWL은
-다른 PC(시험 서버)를 쓰지만 **Storage는 이 PC의 Bunny**를 쓴다(사용자 지시).
-`core/bunny.precondition_note()`가 그 차이를 판정 note에 남긴다.
+체크리스트 Precondition은 "뷰어와 다른 PC 의 Server 이용"이다. 2026-08-25까지는
+MWL만 다른 PC를 쓰고 **Storage는 이 PC의 Bunny**였고 그 차이를 판정 note에
+고지했다. 2026-08-26 사용자 지시로 Storage도 MWL/Print와 같은 사내 공용 시험
+서버(`STORAGE_SCP` / `10.13.0.222:11116`)로 옮겨 **Precondition을 실제로
+충족한다.** 수신 판정은 그 서버의 웹 API를 읽는 `core/storagescp.py`가 하고,
+설정이 다시 로컬 Bunny를 가리키면 자동으로 옛 경로로 위임한다.
 """
 
 import os
 import time
 
-from core import bunny as bunny_mod
 from core import dicomlite
+from core import storagescp as store_mod
 from core import workflow as W
 from core.db import VXvueDb
 from core.result import FAIL, MANUAL, PASS, SKIP, TCResult
@@ -299,8 +302,7 @@ def run(ui, cfg, evidence_dir=None, do_send=True, map_procedure=None,
     # **검증 내용(전송 성공 + 전송정보 일치)은 유지하고 실행 지점만 옮긴다.**
     # 그 차이를 판정 note에 남긴다.
     if do_send:
-        log_off = bunny_mod.log_size(cfg)
-        t0 = time.time() - 5
+        store_mark = store_mod.mark(cfg)
         W.select_first_image(ui)
         sent = W.send(ui, scope="all")
         r.add(step, "DICOM Send 실행 (Exposure 화면, All Images)",
@@ -315,14 +317,17 @@ def run(ui, cfg, evidence_dir=None, do_send=True, map_procedure=None,
                    "- Send 버튼은 두 화면에서 같은 컨트롤(30294)이다.")
         step += 1
 
-        res = bunny_mod.wait_for_store(cfg, count=1, timeout=120,
-                                       log_offset=log_off, files_newer_than=t0)
+        res = store_mod.wait_for_store(cfg, store_mark, count=1, timeout=120,
+                                       patient_id=want_id)
         r.add(step, "Storage SCP 수신 확인 (C-STORE Status + 파일)",
               PASS if res["ok"] else FAIL,
-              expected="C-STORE 응답 Status 0000h + 수신 파일 1건 이상",
+              expected=("C-STORE 응답 Status 0000h + 수신 파일 1건 이상"
+                        if res.get("backend") == "bunny" else
+                        "Storage SCP 수신 목록에 이번 실행의 Patient ID 스터디 1건 "
+                        "+ 그 스터디의 원본 객체 1건 이상"),
               actual=res["note"],
-              note="로그 문구 하나로 성공을 단정하지 않고 실제 저장된 파일까지 "
-                   "확인한다. " + bunny_mod.precondition_note(cfg))
+              note="제품이 '보냈다'고 말한 것을 그대로 믿지 않고 **받은 쪽**에서 "
+                   "확인한다. " + store_mod.precondition_note(cfg))
         step += 1
 
         if res["files"]:

@@ -178,8 +178,9 @@ python run.py snapshot / snapshot-diff / vxs-info / db-ae / mwl-list / scope / e
 | AI(CAD) 분석이 실제로 동작하는가 | 사내 검증 샘플 영상을 데모 영상으로 등록(무작위 선택) → 분석 실행 → 옵션 체크박스 3종의 체크/해제가 영상 표시에 실제로 반영되는지 **SSIM**으로, 'Copy original image' 저장은 DB `INSTANCE` 증가로 확인 (GPU 없이도 CPU 모드로 정확한 소견을 검출함을 실측) |
 | Export/Import가 값을 보존하는가 | DB 62개 테이블 스냅샷 **3단 비교**(S1≠S0 확인 후 S2=S0) |
 
-리포트는 **TXT / CSV / JSON / HTML** 4종으로 생성되고, 모든 포맷 상단에 체크리스트
-원본과 같은 형식의 **Windows 정보 + 패키지 정보 헤더**가 들어간다.
+리포트는 **HTML / JSON** 2종으로 생성된다. HTML은 사람이 읽는 판정 리포트,
+JSON은 원본 값과 실행 이력을 보존하는 기계 판독본이다. 두 형식 모두 체크리스트
+원본과 같은 **Windows 정보 + 패키지 정보**를 포함한다.
 
 ```
 ================================================================================
@@ -342,7 +343,7 @@ copy config.example.json config.json
 | 키 | 내용 |
 |---|---|
 | `install_dir` / `viewer.exe` | VXvue 설치 경로 (기본 `C:\Program Files\Vxvue`) |
-| `data_dir` | 데이터 폴더. **PC마다 다르다** (이 시험대는 `D:\Database`, 다른 PC는 `C:\Database`). 라이선스 `.lic`과 운영 로그가 이 아래에 있어 초기화 대상 판단에 쓴다 |
+| `data_dir` | 데이터 폴더. **PC마다 다르다** (현재 PC는 `C:\Database`, 이전 시험대는 `D:\Database`). 라이선스 `.lic`과 운영 로그가 이 아래에 있어 초기화 대상 판단에 쓴다 |
 | `sql_server` / `database` | SQL Server 인스턴스와 DB(기본 `.\CHAMELEON` / `DRF`) |
 | `viewer.login` | 자동 로그인 계정 |
 | `dicom.servers_to_register` | 등록·Echo를 확인할 MWL / Storage / Print SCP 목록 |
@@ -368,6 +369,89 @@ copy config.example.json config.json
 ```bash
 python run.py preflight
 ```
+
+#### 5.1.1 DICOM 서버 정보는 어디서 바꾸나
+
+실제 값은 Git에서 제외된 `auto/config.json`의 `dicom` 블록에서 바꾼다.
+`config.example.json`은 형식 예시일 뿐이며, 실행은 `config.json`을 읽는다.
+
+| 키 | 바꾸는 값 | 주의 |
+|---|---|---|
+| `dicom.mwl_server_url` | 시험 MWL 서버의 HTTP 관리 API | 시험 처방 생성·조회에 사용한다. DICOM 포트와 다른 값이다 |
+| `dicom.print_server_url` | 시험 Print 서버의 HTTP 관리 API | 수신 필름 목록과 Print SCP 상태 확인에 사용한다 |
+| `dicom.local_ae_title` | 이 VXvue의 Calling AE Title | 수신 서버에서 다른 제품의 객체와 구분할 때도 쓴다 |
+| `dicom.storage_server_url` | 시험 Storage 서버의 HTTP 관리 API | 수신 스터디 목록·원본 다운로드로 **받은 쪽에서** 전송을 판정한다. DICOM 포트와 다른 값이다 |
+| `dicom.servers_to_register[]` | VXvue Setting에 등록할 서버 목록 | 각 항목에 `kind`, `name`, `ae_title`, `ip`, `port`를 넣는다. `kind`는 `MWL` / `Storage` / `Print` 중 하나다 |
+| `dicom.bunny` | 로컬 Bunny 실행 파일·Receive/Temp/Log 경로 | **Storage SCP가 아니라 TC06 Extra Tool 전송 대상이다**(2026-08-26 이후). Phase 3가 이 경로로 Bunny를 기동하지만, 원격 Storage를 쓰는 동안 Bunny 실패는 회귀를 중단시키지 않는다 |
+| `extra_tool.server` | TC06 Extra Tool 전송 대상 | `servers_to_register`와 **독립 설정**이다. Storage SCP가 원격으로 옮겨간 뒤에도 여기는 로컬 Bunny로 남아 있다(사용자 지시 2026-08-24) |
+
+##### 현재 등록값 (2026-08-26 실측·Echo 확인)
+
+| kind | AE Title | IP | Port | 수신 판정 |
+|---|---|---|---|---|
+| MWL | `MWL_SCP` | `10.13.0.222` | 11112 | `http://10.13.0.222:5000` HTTP API |
+| Print | `PRINT_SCP` | `10.13.0.222` | 11113 | `http://10.13.0.222:8000` HTTP API |
+| Storage | `STORAGE_SCP` | `10.13.0.222` | 11116 | `http://10.13.0.222:5003` HTTP API |
+| (Extra Tool) | `Bunny` | `10.13.0.114` | 3000 | 로컬 Bunny 로그 + Receive/Temp 폴더 |
+
+세 SCP 모두 **다른 PC의 사내 공용 시험 서버**라서 체크리스트 Precondition의
+"다른 PC 의 Server 이용"을 실제로 충족한다. 2026-08-25까지는 Storage만 이 PC의
+Bunny였고, 그 차이를 판정 note에 고지하고 있었다.
+
+Storage 서버를 바꿀 때 함께 볼 것:
+
+* `python run.py preflight` — `Storage SCP 가동` 항목이 **서버가 알려주는
+  AE Title/Port**(`/api/scp-status`)와 `servers_to_register`의 등록값을
+  대조한다. 여기서 어긋나면 회귀를 돌리기 전에 잡힌다.
+* 제품 쪽 등록은 `Setting > DICOM - Storage`의 행을 **제자리 수정**한다 —
+  행을 선택하면 Name/AE Title/IP/Port 입력 필드가 그 행 값으로 채워지므로
+  (2026-08-26 실측) 값을 덮어쓰고 Update를 누르면 그 행이 갱신된다. Delete →
+  Add 순서는 중간에 "행 0개" 상태를 만들고, 2행이 되면
+  `dicom_settings.select_first_row()`가 동작하지 않으므로 쓰지 않는다.
+  **바꾼 뒤에는 반드시 DB로 확인한다** — 행이 늘지 않고 값만 바뀌었는지:
+
+  ```bash
+  python run.py db-ae --kind DICOM_STORAGE
+  ```
+
+  이 절차를 수행하는 일회성 스크립트는 `work/change_storage_scp.py`에 있다
+  (`work/`는 `.gitignore` 대상이라 저장소에는 없다 — 새 PC에서는 위 설명대로
+  화면에서 직접 하거나 스크립트를 다시 만들면 된다).
+* 이 서버는 여러 사람이 공유한다(`station_names`에 다른 시험대가 섞여 있다).
+  자동화는 삭제 API를 쓰지 않고 **이번 실행의 Patient ID로만** 우리 스터디를
+  골라낸다. 서버가 `retention_days`(현재 5일)로 스스로 정리한다.
+
+**로컬 Bunny를 Storage SCP로 되돌린다면**(`core/storagescp.uses_local_bunny()`가
+자동 감지한다) `servers_to_register`의 Storage `ip`는 **현재 PC의 실제 유선
+IPv4**여야 한다. 이전 PC의 IP를 그대로 두거나 `127.0.0.1`, `169.254.*`,
+`vEthernet` 주소를 넣지 않는다. 현재 주소는 관리자 PowerShell에서 다음처럼
+확인한다.
+
+```powershell
+Get-NetIPAddress -AddressFamily IPv4 |
+  Where-Object { $_.AddressState -eq 'Preferred' -and $_.IPAddress -notmatch '^(127\.|169\.254\.)' }
+```
+
+현재 PC 실측값은 유선 `10.13.0.114`, Bunny는 `0.0.0.0:3000`에서 Listen한다.
+PC나 망이 바뀌면 이 값은 다시 확인한다. 포트와 프로세스는 다음으로 확인한다.
+
+```powershell
+Get-NetTCPConnection -LocalPort 3000 -State Listen
+Get-Process Bunny
+```
+
+변경 후 정식 검증은 `python run.py run-regression`으로 한다. Phase 3가 세 서버를
+VXvue Setting 화면에 등록·갱신하고 각각 C-ECHO한다. **MWL/Storage/Print 중
+하나라도 등록 또는 Echo에 실패하면 Phase 4의 TC를 시작하지 않고 즉시 전체
+FAIL로 종료한다.** 연결이 깨진 상태의 연쇄 실패를 제품 결함과 섞지 않기 위한
+중단 게이트다. 결과 상세는 리포트의 `DICOM_Servers` 항목에서 서버별
+`등록=True/False`, `Echo=True/False`와 팝업·오류 문구를 확인한다.
+
+PC를 옮겼다면 DICOM 외에도 `data_dir`, `baseline.db_backup`,
+`baseline.folder_backup`, `checklist_xlsx`를 새 PC 경로로 맞춘다. Study Export와
+TC13 Folder Watch의 USB 문자는 고정하지 않는다. 설정된 문자가 준비되지 않았고
+연결된 이동식 드라이브가 정확히 하나면 D:/E: 등 현재 문자를 자동 탐지한다.
+USB가 여러 개면 오조작 방지를 위해 임의 선택하지 않고 중단한다.
 
 ### 5.2 뷰어 기동·로그인
 
@@ -407,6 +491,8 @@ Phase 순서대로 실행하고 **모든 결과를 리포트 1건으로 합친�
 
 baseline 복원은 전체 회귀의 코드 기본값이다. `--no-reset-baseline`으로 생략하면
 그 사실을 리포트에 `SKIP`으로 남기며, 그 실행은 정식 판정으로 사용하지 않는다.
+baseline 초기화, 필수 라이선스, Phase 3의 DICOM 서버 연결은 모두 중단
+게이트다. 어느 하나라도 FAIL이면 뒤 TC를 실행하지 않는다.
 
 **Setting Export/Import는 이 회귀에 들어 있지 않다**(사용자 지시, 2026-08-20).
 성격이 다르다 — 이 회귀는 Windows Update 후 제품이 정상 동작하는지 보는 것이고,
@@ -472,7 +558,7 @@ python run.py run-regression --no-checklist
 | `python run.py tc04` | **TC04 Image Processing** — 정확한 MWL 대상 → Exposure 레이아웃 → Chest/PA Step → 촬영(DB INSTANCE) → XIPL 로그 → 확장 팔레트 → `Proc.` → `XIPL.STUDIO` → **Studio 정리** | **299초** |
 | `python run.py tc05` | **TC05 DICOM 전송** — 촬영 → Send → 수신 객체의 SOP Class UID로 Image/Dose SR 포함 여부 판정. 이 자동화는 DX만 검증하므로 MG 전용 Dose SR은 범위 밖(SKIP) | 약 4분 |
 | `python run.py tc07` | **TC07 DICOM Print** — Print SCP 가동 확인 → 촬영 → Print → **받은 쪽 서버의 필름 목록으로 판정**(Calling AE로 다른 제품 필름과 구분) | 약 4분 |
-| `python run.py tc08` | **TC08 Study Export** — E 드라이브로 Export → 산출물 DICOM 태그 대조 → QXLink 포함 확인. 알려진 결함 **#21049**(Win11 Export 에러) 회귀 | 약 3분 |
+| `python run.py tc08` | **TC08 Study Export** — 현재 연결된 이동식 USB(D:/E: 자동 탐지)로 Export → 산출물 DICOM 태그 대조 → QXLink 포함 확인. 알려진 결함 **#21049**(Win11 Export 에러) 회귀 | 약 3분 |
 | `python run.py tc13` | **TC13 Import Patient** — Study > Import Patient 설정 → 환자정보 txt/csv Import → Registration-Reserved 목록 표시까지. TAB 구분자 회귀(#22985) 포함 | 316초 |
 | `python run.py tc13 --with-folder-watch` | 위에 더해 "Import Patient Information From a Specific Folder"(폴더 자동 감지) 경로까지. Import Patient Order와 **상호 배타**라 기본은 끔 | — |
 | `python run.py tc14` | **TC14 Setting 각 탭 표시 확인** — 대분류 10개를 펼쳐 소분류 55개 화면을 열고, 제목이 실제로 바뀌는지·본문이 그려지는지 확인 + 화면별 캡처 1장 | **182초** |
@@ -507,7 +593,7 @@ TC를 새로 구현하거나 화면 구조가 바뀌었을 때 쓰는 조회 전
 | `python run.py snapshot [--label 이름]` | 설정 스냅샷(DB 62개 테이블 + 설정파일 해시)을 파일로 저장 |
 | `python run.py snapshot-diff --a A.json --b B.json` | 두 스냅샷 비교 |
 | `python run.py vxs-info --a export.vxs [--b other.vxs]` | Export 파일(`.vxs`) 구성 판독 / 두 파일 비교 |
-| `python run.py report-sample` | 리포트 4종 형식 확인(판정은 비어 있음) |
+| `python run.py report-sample` | HTML/JSON 리포트 형식 확인(판정은 비어 있음) |
 | `python run.py design-report [--save 경로]` | TC별 **설계**(Step 구성·판정 근거) HTML 리포트를 `tests/tc*.py` docstring과 `automation_scope.json`에서 뽑아 생성한다(기본 `docs/TC_설계리포트.html`). 특정 실행의 PASS/FAIL이 아니라 "코드가 무엇을 검증하도록 설계됐는가"를 본다 — 코드가 바뀌면 다음 생성 때 그대로 반영된다 |
 
 ### 5.6 결과물
@@ -515,15 +601,13 @@ TC를 새로 구현하거나 화면 구조가 바뀌었을 때 쓰는 조회 전
 | 위치 | 내용 |
 |---|---|
 | `Reports/Result_<시각>.html` | 사람이 읽는 판정 리포트(판정별 색상 구분) |
-| `Reports/Result_<시각>.txt` | 콘솔·메일에 붙이는 텍스트 리포트 |
 | `Reports/Result_<시각>.json` | 기계 판독용 전체 판정·근거·소요시간 |
-| `Reports/Result_<시각>.csv` | 표 계산용 |
 | `Reports/Checklist_Result_<시각>.xlsx` | **체크리스트 원본 사본에 판정 열을 덧붙인 것.** 원본은 읽기만 한다 |
 | `Evidence/` | 단계별 화면 캡처(실패 원인 추적용) |
 
-리포트 4종 **모두** 상단에 체크리스트 원본과 같은 형식의 Windows 정보 + 패키지
-정보 헤더가 들어간다. 어떤 빌드·어떤 OS에서 나온 결과인지 없이는 판정이 근거가
-되지 않기 때문이다.
+HTML과 JSON **모두** 체크리스트 원본과 같은 Windows 정보 + 패키지 정보를
+담는다. 어떤 빌드·어떤 OS에서 나온 결과인지 없이는 판정이 근거가 되지 않기
+때문이다. CSV와 TXT는 두 파일의 내용을 중복하므로 기본 생성하지 않는다.
 
 체크리스트 xlsx 사본에는 원본 TC 행 오른쪽에 `자동화 판정 / 판정 일시 /
 PASS·FAIL·MANUAL·SKIP·BLOCKED 건수 / 실패 항목 / 수동 확인 항목 / 증거` 열이
@@ -594,12 +678,18 @@ PASS·FAIL·MANUAL·SKIP·BLOCKED 건수 / 실패 항목 / 수동 확인 항목 
 
 | 실행 | 판정 합계 | 소요 |
 |---|---|---|
-| 2026-08-25 16:27 | **PASS 149 / FAIL 0** / MANUAL 13 / SKIP 5 / BLOCKED 0 | 31분 |
+| 2026-08-26 12:37 | **PASS 149 / FAIL 0** / MANUAL 14 / SKIP 5 / BLOCKED 0 | 27분 |
 
-**FAIL 0을 처음 달성한 실행이다.** 직전 회귀(PASS 120 / FAIL 2)의 FAIL 2건
-(`TC_WindowsUpdate_05`의 Dose SR, `TC_WindowsUpdate_11`의 팝업 타이밍)은 원인을
-규명해 각각 "DX 촬영에는 해당하지 않는 검증"(범위 밖 SKIP으로 재조정)과 타이밍
-버그 수정으로 처리했고, 이번 실행에서 재발하지 않았다.
+11:41:52에 다시 만든 현재 PC baseline 세트를 쓴 첫 실행이다. 직전 회차
+(같은 날 10:47, PASS 150 / FAIL 0 / MANUAL 13)와의 **유일한 차이는
+`Precondition / 물리 메모리 여유`가 PASS→MANUAL로 바뀐 것**뿐이다(여유
+1.31GB→0.93GB, 기준 3.0GB 미달) — 자동화·제품 회귀가 아니라 이 PC의 메모리
+여유 변동이다.
+
+> **주의**: 두 회차 모두 **Storage SCP 교체(2026-08-26 오후) 전** 실행이다.
+> 교체 후에는 사용자 지시로 영향 범위만 개별 검증했다 — `tc02`(PASS 13/FAIL 0),
+> `tc05`(PASS 7/FAIL 0/SKIP 1), `preflight`, Phase 3 등록·Echo. 교체 후 전체
+> 회귀는 아직 돌리지 않았다.
 
 MANUAL 13건은 **전부 이미 알려진 한계**다 — 자동 판정 수단이 없는 항목(XIPL
 About 창은 트레이 아이콘으로만 열린다), 사양에 정량 기준이 없는 항목(TC03의
@@ -662,7 +752,8 @@ auto/
 │  ├─ db.py                   DB 조회 전용 브릿지 (쓰기 API 없음)
 │  ├─ mwl.py                  Worklist 시험 서버 HTTP 클라이언트
 │  ├─ printscp.py             Print SCP 시험 서버 클라이언트 + 수신 필름 픽셀 OCR
-│  ├─ bunny.py                Storage(Bunny) 시험 서버 클라이언트
+│  ├─ storagescp.py           Storage SCP 시험 서버(웹) 클라이언트 — TC02/05 수신 판정
+│  ├─ bunny.py                로컬 Bunny 클라이언트 — TC06 Extra Tool 수신 판정
 │  ├─ testdata.py             실행마다 구분되는 시험 처방 생성·기록·지난 처방 정리
 │  ├─ license.py              VXvue 본체 라이선스 확인 (화면 OCR + .lic 파일 대조)
 │  ├─ xipl.py                 XIPL 영상처리 라이선스 확인 + UTF-16 로그 판독
@@ -675,7 +766,7 @@ auto/
 │  ├─ preflight.py            실행 전 환경 점검 + 실패 시점 메모리 근거
 │  ├─ crash.py                제품 강제종료 감지 (WER 덤프로 크래시/원인불명 구분)
 │  ├─ notify.py               실행 종료 알림 (터미널 배너 + 별도 결과 창)
-│  ├─ result.py               판정 모델 + 리포트 4종
+│  ├─ result.py               판정 모델 + HTML/JSON 리포트
 │  └─ regression.py           체크리스트 전체 회귀 러너 (Phase 0~5, scope 반영)
 ├─ selfcheck/                 자동화 자신을 검사 (제품을 켜지 않는다)
 │  ├─ static_checks.py        저장소 일관성 10종 (TC ID 삼중 일치, scope 근거 등)
@@ -698,11 +789,12 @@ auto/
 
 ### 의존성
 
-`requirements.txt` 4개 + 표준 라이브러리가 전부다.
+`requirements.txt` 5개 + 표준 라이브러리가 전부다.
 
 | 패키지 | 쓰는 곳 |
 |---|---|
 | `Pillow` | 화면 캡처(`ImageGrab`), 체크박스 색 판별 |
+| `numpy` | 화면·색상 배열 판독, SSIM 대체 구현, 투영·팔레트 위치 검출 |
 | `pytesseract` | owner-draw 목록·로그 영역 OCR (Tesseract 본체는 별도 설치) |
 | `openpyxl` | 체크리스트 xlsx 읽기·결과 기록 |
 | `pypdf` | 사양서·매뉴얼 PDF 근거 검색 (`core/specs.py`) |
@@ -815,7 +907,7 @@ UI를 조작하는 명령은 **관리자 권한**으로 실행해야 한다(제�
 단독 TC의 콘솔 출력도 같은 여섯 항목을 보여 주므로, 사용자가 직접 명령을 실행할
 때도 결과 파일을 열기 전부터 판정 근거를 확인할 수 있다.
 
-원본 기대값·실제값·비고는 JSON/CSV에 보존한다. 실제값을 정확히 수집할 수
+원본 기대값·실제값·비고는 JSON에 보존한다. 실제값을 정확히 수집할 수
 있으면 반드시 표시하고, 수집할 수 없으면 값을 꾸며 내지 않고
 `자동으로 실제 결과를 확정할 수 없었다. 기대 결과와 같은지 사용자가 직접
 확인해야 한다.`라고 명시한다. 새 TC/Step은 `core/report_language.py`에 사용자용

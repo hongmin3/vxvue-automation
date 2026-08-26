@@ -90,19 +90,29 @@ class CaveatTests(unittest.TestCase):
 
 class WriteReportTests(unittest.TestCase):
 
-    def test_네_형식이_모두_생성되고_유의사항이_들어간다(self):
+    def test_HTML_JSON만_생성되고_유의사항과_원본값이_보존된다(self):
+        import json
+        import os
         import tempfile
         r = TCResult(_catalogued_tc_id(), "등록된 TC")
         r.add(1, "step", FAIL, expected="e", actual="a", note="n")
         r.finalize()
         with tempfile.TemporaryDirectory() as d:
             paths = result_mod.write_reports([r], d)
-            for kind in ("txt", "html", "json", "csv"):
+            self.assertEqual({"html", "json"}, set(paths))
+            for kind in ("html", "json"):
                 self.assertIn(kind, paths, "%s 리포트가 생성되지 않았다" % kind)
-            with open(paths["txt"], encoding="utf-8") as f:
-                txt = f.read()
-        self.assertIn(result_mod.REPORT_CAVEATS[0][:20], txt,
-                      "TXT 리포트 상단에 범위 유의사항이 없다")
+            self.assertFalse(any(name.endswith((".csv", ".txt"))
+                                 for name in os.listdir(d)))
+            with open(paths["html"], encoding="utf-8") as f:
+                html = f.read()
+            with open(paths["json"], encoding="utf-8") as f:
+                payload = json.load(f)
+        self.assertIn(result_mod.REPORT_CAVEATS[0][:20], html,
+                      "HTML 리포트 상단에 범위 유의사항이 없다")
+        check = payload["results"][0]["checks"][0]
+        self.assertEqual(("e", "a", "n"),
+                         (check["expected"], check["actual"], check["note"]))
 
 
 if __name__ == "__main__":

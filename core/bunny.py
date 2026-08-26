@@ -1,7 +1,18 @@
 # -*- coding: utf-8 -*-
-r"""Bunny(로컬 DICOM Storage SCP) 수신 확인 — TC_WindowsUpdate_05/06 판정 근거.
+r"""Bunny(로컬 DICOM SCP) 수신 확인 — TC_WindowsUpdate_06 판정 근거.
 
-## 왜 로컬 Storage로 확인하는가
+## 2026-08-26: 이 모듈은 더 이상 Storage SCP 판정에 쓰이지 않는다
+
+사용자 지시로 Storage SCP를 사내 공용 원격 서버(`STORAGE_SCP` /
+`10.13.0.222:11116`)로 옮겼다. TC02/TC05의 수신 판정은 그 서버의 웹 API를 읽는
+`core/storagescp.py`가 한다. **이 모듈이 남는 이유는 Extra Tool(TC06)**이다 —
+`config.json`의 `extra_tool` 블록은 `dicom.servers_to_register`와 독립이고
+(사용자 지시 2026-08-24) 여전히 로컬 Bunny(`AI_STATION`, 포트 3000)로 보낸다.
+
+`core/storagescp.py`는 설정이 다시 로컬 Bunny를 가리키면(`uses_local_bunny()`)
+이 모듈로 위임한다 — 아래 절은 그 경로의 근거로 그대로 유효하다.
+
+## 왜 로컬 Storage로 확인했는가 (2026-08-19 ~ 2026-08-26)
 
 체크리스트 TC05/06의 Precondition은 "다른 PC 의 Server 이용 - Storage"다. 하지만
 지금 시험대에는 **이 PC에 Bunny가 떠 있고 VXvue가 그것을 Storage SCP로 등록해

@@ -87,6 +87,61 @@ def load_scope():
         return json.load(f)
 
 
+def report_meta(cfg, env=None):
+    """HTML 상세 리포트에 실을 부가 정보를 모은다.
+
+    - 체크리스트 원문(Precondition / Step Description / Expected Result /
+      Test Data): "이 TC가 무엇을 검증하는가"를 **기준 문서 원문 그대로** 싣는다.
+    - 자동화 코드 위치: 리포트만 보고 판정 코드를 찾을 수 있게 한다.
+    - 자동화 범위(`automation_scope.json`): TC별 등급과 사유, 그리고 기준
+      체크리스트 전체를 훑는 "자동화 커버리지 총괄" 표의 원본 데이터.
+
+    수집에 실패해도 리포트 생성 자체는 살린다 — 대신 **조용히 넘기지 않고**
+    이유를 출력한다(체크리스트 기록이 죽은 코드였던 사례와 같은 처리).
+    """
+    # 리포트에 그대로 싣는 재현 명령이라 스크립트 이름까지 붙인다
+    # ("python report-sample" 처럼 실행할 수 없는 문자열이 남으면 안 된다).
+    meta = {"command": " ".join(["python", os.path.basename(sys.argv[0] or "run.py")]
+                                + list(sys.argv[1:]))}
+    if env:
+        meta["env"] = env
+    try:
+        from core import checklist as checklist_mod
+        source = checklist_mod.source_path(cfg, root=HERE)
+        meta["checklist_source"] = source
+        meta["checklist"] = checklist_mod.read_tc_rows(source) if source else {}
+        if not meta["checklist"]:
+            print("  report-meta: 체크리스트 원문을 읽지 못했습니다 "
+                  "(TC 상세의 '기준 문서 원문' 카드가 비어 나옵니다).")
+    except Exception as exc:                              # noqa: BLE001
+        print("  report-meta: 체크리스트 읽기 실패 — %s: %s"
+              % (type(exc).__name__, exc))
+    try:
+        from core import tc_modules
+        meta["modules"] = tc_modules.as_map()
+    except Exception as exc:                              # noqa: BLE001
+        print("  report-meta: 자동화 코드 위치 수집 실패 — %s: %s"
+              % (type(exc).__name__, exc))
+    try:
+        scope_rows = load_scope()
+        meta["scope"] = dict((x["tc_id"], {"level": x.get("level"),
+                                           "reason": x.get("reason")})
+                             for x in scope_rows if x.get("tc_id"))
+        # 자동화 커버리지 총괄 섹션의 원본. 사유는 만들어 내지 않고
+        # `automation_scope.json` 의 `reason` 을 그대로 옮긴다. Title 은
+        # 체크리스트 원문에서 찾아 붙인다(scope 에는 없다).
+        titles = meta.get("checklist") or {}
+        meta["coverage"] = [
+            {"tc_id": x["tc_id"],
+             "title": (titles.get(x["tc_id"]) or {}).get("title"),
+             "level": x.get("level"), "reason": x.get("reason")}
+            for x in scope_rows if x.get("tc_id")]
+    except Exception as exc:                              # noqa: BLE001
+        print("  report-meta: automation_scope.json 읽기 실패 — %s: %s"
+              % (type(exc).__name__, exc))
+    return meta
+
+
 # --- 명령 -------------------------------------------------------------
 def cmd_env(cfg, args):
     env = result_mod.collect_env(cfg)
@@ -251,7 +306,8 @@ def cmd_report_sample(cfg, args):
     r = result_mod.TCResult("TC_WindowsUpdate_00", "리포트 헤더 형식 확인")
     r.manual(1, "환경 헤더 출력", "Windows/패키지 정보가 상단에 표시되는지 사람이 확인")
     r.finalize()
-    paths = result_mod.write_reports([r], os.path.join(HERE, "Reports"), env=env)
+    paths = result_mod.write_reports([r], os.path.join(HERE, "Reports"),
+                                     env=env, meta=report_meta(cfg, env))
     for k, v in paths.items():
         print("%-5s %s" % (k, v))
     return 0
@@ -294,7 +350,7 @@ def _announce(results, paths, args, label):
                                             for st in result_mod.STATUSES))
     lines.append("소요: %d초" % int(sum(r.duration_seconds for r in results)))
     if paths:
-        lines.append("리포트: %s" % paths.get("txt", next(iter(paths.values()))))
+        lines.append("리포트: %s" % paths.get("html", next(iter(paths.values()))))
     notify_mod.announce(verdict, lines,
                         want_popup=not getattr(args, "no_popup", False))
     return verdict
@@ -408,7 +464,8 @@ def cmd_vxvue_license(cfg, args):
     result = license_mod.run_standalone(
         ui, cfg, evidence_dir=os.path.join(HERE, "Evidence"))
     env = None if args.no_env else result_mod.collect_env(cfg)
-    paths = result_mod.write_reports([result], os.path.join(HERE, "Reports"), env=env)
+    paths = result_mod.write_reports([result], os.path.join(HERE, "Reports"),
+                                     env=env, meta=report_meta(cfg, env))
     _print_result(result)
     for k, v in paths.items():
         print("%-5s %s" % (k, v))
@@ -424,7 +481,8 @@ def _run_tc_module(cfg, args, mod_name, **kwargs):
     result = mod.run(ui, cfg, **kwargs)
     _cleanup_studies(cfg, ui, result)
     env = None if args.no_env else result_mod.collect_env(cfg)
-    paths = result_mod.write_reports([result], os.path.join(HERE, "Reports"), env=env)
+    paths = result_mod.write_reports([result], os.path.join(HERE, "Reports"),
+                                     env=env, meta=report_meta(cfg, env))
     _print_result(result)
     for k, v in paths.items():
         print("%-5s %s" % (k, v))
@@ -511,7 +569,8 @@ def cmd_tc13(cfg, args):
     ui = _ready_ui(cfg)
     result = tc13.run(ui, cfg, with_folder_watch=not getattr(args, "skip_folder_watch", False))
     env = result_mod.collect_env(cfg) if not args.no_env else None
-    paths = result_mod.write_reports([result], os.path.join(HERE, "Reports"), env=env)
+    paths = result_mod.write_reports([result], os.path.join(HERE, "Reports"),
+                                     env=env, meta=report_meta(cfg, env))
     print("\n판정: %s" % result.verdict)
     for c in result.checks:
         print("  [%s] Step %s %s" % (c.status, c.step, c.title))
@@ -529,7 +588,8 @@ def cmd_tc14(cfg, args):
     ui = _ready_ui(cfg)
     result = tc14.run(ui, cfg, deep=getattr(args, "deep", False))
     env = result_mod.collect_env(cfg) if not args.no_env else None
-    paths = result_mod.write_reports([result], os.path.join(HERE, "Reports"), env=env)
+    paths = result_mod.write_reports([result], os.path.join(HERE, "Reports"),
+                                     env=env, meta=report_meta(cfg, env))
     print("\n판정: %s" % result.verdict)
     for c in result.checks:
         print("  [%s] Step %s %s" % (c.status, c.step, c.title))
@@ -608,7 +668,8 @@ def cmd_run_regression(cfg, args):
                           evidence_root=os.path.join(HERE, "Evidence"),
                           only=only, quick=getattr(args, "quick", False))
     env = None if args.no_env else result_mod.collect_env(cfg)
-    paths = result_mod.write_reports(results, os.path.join(HERE, "Reports"), env=env)
+    paths = result_mod.write_reports(results, os.path.join(HERE, "Reports"),
+                                     env=env, meta=report_meta(cfg, env))
 
     print()
     print("%-28s %-8s %s" % ("TC ID", "판정", "제목"))
@@ -658,7 +719,8 @@ def cmd_setting_export_import(cfg, args):
     ui = _ready_ui(cfg)
     result = tc.run(ui, cfg, do_import=not args.no_import)
     env = None if args.no_env else result_mod.collect_env(cfg)
-    paths = result_mod.write_reports([result], os.path.join(HERE, "Reports"), env=env)
+    paths = result_mod.write_reports([result], os.path.join(HERE, "Reports"),
+                                     env=env, meta=report_meta(cfg, env))
     print("\n판정: %s" % result.verdict)
     for c in result.checks:
         print("  [%s] Step %s %s" % (c.status, c.step, c.title))

@@ -38,6 +38,7 @@ import os
 import time
 from datetime import datetime
 
+from core import media
 from core import setting as S
 from core.result import TCResult
 
@@ -609,7 +610,13 @@ def _folder_watch_step(ui, r, cfg, work_dir, with_folder_watch=True):
             if not yes_ok:
                 return
 
-        drive = os.path.splitdrive((cfg.get("export") or {}).get("dest_dir", "E:\\"))[0] or "E:"
+        configured = (cfg.get("export") or {}).get("dest_dir", "E:\\")
+        media_dest, media_note = media.resolve_destination(configured)
+        if not media_dest:
+            r.add(8, "Folder Watch 대상 USB 확인", "MANUAL",
+                  "연결된 이동식 드라이브 1개", media_note)
+            return
+        drive = os.path.splitdrive(media_dest)[0]
         target_dir = os.path.join(drive + os.sep, "VXvue_QA_ImportWatch")
         os.makedirs(target_dir, exist_ok=True)
 

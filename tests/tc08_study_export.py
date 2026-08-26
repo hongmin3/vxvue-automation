@@ -102,7 +102,7 @@ Operation Manual 8.14 "검사 가져오기"(p.204): **"VXvue에서 생성된 IMG
 import os
 import time
 
-from core import dicomlite
+from core import dicomlite, media
 from core import workflow as W
 from core.listgrid import ListGrid
 from core.result import BLOCKED, FAIL, MANUAL, PASS, SKIP, TCResult
@@ -427,6 +427,14 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
     step = 1
 
     # --- Step 0: 대상 매체(드라이브) 준비 -------------------------------
+    resolved_dest, media_note = media.resolve_destination(dest)
+    if resolved_dest:
+        if os.path.normcase(resolved_dest) != os.path.normcase(dest):
+            r.add(step, "이동식 드라이브 자동 탐지", PASS,
+                  expected="현재 연결된 USB 드라이브 사용",
+                  actual=resolved_dest, note=media_note)
+            step += 1
+        dest = resolved_dest
     drive = os.path.splitdrive(dest)[0] or dest[:2]
     if not os.path.isdir(drive + os.sep):
         fallback_drive = "D:"
@@ -446,10 +454,9 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
             drive = fallback_drive
         else:
             r.add(step, "Export 대상 드라이브 확인", BLOCKED,
-                  expected="%s 또는 대체 드라이브 %s 사용 가능" % (drive, fallback_drive),
+                  expected="이동식 USB 또는 대체 드라이브 %s 사용 가능" % fallback_drive,
                   actual="둘 다 사용할 수 없음",
-                  note="config.json의 export.dest_dir을 실제 매체 경로로 바꾼 뒤 "
-                       "다시 실행할 것.")
+                  note=media_note + " / USB를 연결한 뒤 다시 실행할 것.")
             r.finalize()
             return r
     before = set()

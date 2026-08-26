@@ -61,6 +61,19 @@ ENV_ROW_LABELS = {
     "VX.LIVE.SERVER":   ("packages", "VX.LIVE.SERVER"),
 }
 
+# HTML 리포트의 "기준 문서 원문" 카드에 싣는 열.
+# **헤더 문구로 찾는다** — 열 순서를 코드에 박으면 체크리스트가 개정될 때 조용히
+# 엉뚱한 열을 읽는다. 자동화가 요약한 문장이 아니라 원문을 실어야 판정 근거를
+# 감사할 수 있다(CLAUDE.md 1절: 근거 없는 내용을 만들어 넣지 않는다).
+TC_TEXT_COLUMNS = {
+    "function": "Function",
+    "title": "Title",
+    "precondition": "Precondition",
+    "steps": "Step Description",
+    "expected": "Expected Result",
+    "test_data": "Test Data",
+}
+
 RESULT_HEADERS = ["자동화 판정", "판정 일시", "PASS", "FAIL", "MANUAL", "SKIP",
                   "BLOCKED", "실패 항목", "수동 확인 항목", "증거"]
 
@@ -107,6 +120,54 @@ def source_path(cfg, root=None):
             if os.path.isfile(candidate):
                 return candidate
     return ""
+
+
+def read_tc_rows(source_xlsx, sheet_name=None):
+    """체크리스트에서 TC 원문을 읽어 ``{TC ID: {precondition, steps, ...}}`` 로 준다.
+
+    HTML 리포트가 "이 TC가 무엇을 검증하는가"를 **기준 문서 원문 그대로**
+    보여주기 위한 것이다. 파일이 없거나 헤더를 찾지 못하면 빈 dict를 준다 —
+    리포트 생성 자체를 죽이지 않는다.
+    """
+    if not source_xlsx or not os.path.isfile(source_xlsx):
+        return {}
+    wb = load_workbook(source_xlsx, data_only=True, read_only=True)
+    try:
+        ws = wb[sheet_name] if sheet_name else (
+            wb[CHECKLIST_SHEET] if CHECKLIST_SHEET in wb.sheetnames
+            else _pick_tc_sheet(wb))
+        rows = list(ws.iter_rows(values_only=True))
+    finally:
+        wb.close()
+    if not rows:
+        return {}
+
+    hdr_index = None
+    for i, row in enumerate(rows[:20]):
+        if any(str(v or "").strip() == TC_COL_HEADER for v in row):
+            hdr_index = i
+            break
+    if hdr_index is None:
+        return {}
+    header = [str(v or "").strip() for v in rows[hdr_index]]
+    try:
+        tc_col = header.index(TC_COL_HEADER)
+    except ValueError:
+        return {}
+    col_of = dict((key, (header.index(name) if name in header else None))
+                  for key, name in TC_TEXT_COLUMNS.items())
+
+    out = {}
+    for row in rows[hdr_index + 1:]:
+        tc_id = str(row[tc_col] or "").strip() if tc_col < len(row) else ""
+        if not tc_id:
+            continue
+        entry = {}
+        for key, col in col_of.items():
+            entry[key] = ("" if col is None or col >= len(row)
+                          else str(row[col] or "").strip())
+        out[tc_id] = entry
+    return out
 
 
 def _find_header_row(ws, tc_col_name=TC_COL_HEADER):
