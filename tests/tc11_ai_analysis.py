@@ -179,24 +179,41 @@ CANCEL_BUTTON_ID = 30642
 DETECTED_LIST_CTRL_ID = 31100
 
 
-def _find_ai_tool_point(ui, cfg, evidence_dir):
-    """annotation 팝업에서 Ellipse/Circle/Delete 좌표로 AI Tool(3번째 칸) 위치를 보간한다."""
+def _find_ai_tool_point(ui, cfg, evidence_dir, attempts=2):
+    """annotation 팝업에서 Ellipse/Circle/Delete 좌표로 AI Tool(3번째 칸) 위치를 보간한다.
+
+    OCR 판독이라 기준 라벨(Ellipse/Circle/Delete)을 간헐적으로 못 읽는다
+    (실측: 2026-08-26 전체 회귀에서 같은 코드로 1차 PASS -> 2차 MANUAL,
+    `Delete` 라벨을 한 번 못 읽어 이 Step부터 전체가 멈췄다). 팝업이 열려
+    있는 동안만 캡처할 수 있고 약 2.1초 뒤 스스로 닫히므로(실측: 0.32s 열림
+    -> 2.42s 닫힘, `read_tool_palette` docstring과 이 파일의 Step 6 재시도
+    루프가 같은 근거를 쓴다), 실패하면 그 수명만큼 기다린 뒤 팝업을 다시 열어
+    재시도한다.
+    """
     btn = W._section_button(ui, ANNOTATION_SECTION)
     if btn is None:
         return None, None, "annotation 섹션 ≡ 버튼을 찾지 못함"
     area = W._palette_area(btn)
-    palette = W.read_tool_palette(ui, cfg, section=ANNOTATION_SECTION,
-                                  evidence_dir=evidence_dir, refresh=True,
-                                  search_area=area)
-    if "AI Tool" in palette:
-        return btn, palette["AI Tool"], "OCR로 직접 읽음: %s" % sorted(palette)
-    ellipse, circle, delete = palette.get("Ellipse"), palette.get("Circle"), palette.get("Delete")
-    if not (ellipse and circle and delete):
-        return None, None, "보간에 필요한 기준 라벨(Ellipse/Circle/Delete)을 못 읽음(읽힌 것: %s)" % sorted(palette)
-    step = (delete[0] - circle[0]) / 3.0
-    point = (circle[0] + step, (circle[1] + delete[1]) / 2.0)
-    return btn, point, ("직접 매칭 실패(읽힌 라벨: %s) — Ellipse=%s/Circle=%s/Delete=%s 기준 "
-                        "3번째 칸으로 보간: %s" % (sorted(palette), ellipse, circle, delete, point))
+
+    last_note = "annotation 팝업 영역을 찾지 못함"
+    for attempt in range(1, attempts + 1):
+        if attempt > 1:
+            time.sleep(2.5)  # 팝업이 스스로 닫히길 기다린 뒤 재시도(Step 6과 동일 근거)
+        palette = W.read_tool_palette(ui, cfg, section=ANNOTATION_SECTION,
+                                      evidence_dir=evidence_dir, refresh=True,
+                                      search_area=area)
+        suffix = " (%d/%d번째 시도에서 성공)" % (attempt, attempts) if attempt > 1 else ""
+        if "AI Tool" in palette:
+            return btn, palette["AI Tool"], "OCR로 직접 읽음: %s%s" % (sorted(palette), suffix)
+        ellipse, circle, delete = palette.get("Ellipse"), palette.get("Circle"), palette.get("Delete")
+        if ellipse and circle and delete:
+            gap = (delete[0] - circle[0]) / 3.0
+            point = (circle[0] + gap, (circle[1] + delete[1]) / 2.0)
+            return btn, point, ("직접 매칭 실패(읽힌 라벨: %s) — Ellipse=%s/Circle=%s/Delete=%s 기준 "
+                                "3번째 칸으로 보간: %s%s"
+                                % (sorted(palette), ellipse, circle, delete, point, suffix))
+        last_note = "보간에 필요한 기준 라벨(Ellipse/Circle/Delete)을 못 읽음(읽힌 것: %s)" % sorted(palette)
+    return None, None, "%s — %d회 재시도해도 실패" % (last_note, attempts)
 
 
 def _other_dialog(ui, exclude_title):
@@ -823,7 +840,9 @@ def _verify_use_checkbox(r, ui, dlg, step):
 
 
 def _reopen_ai_tool(ui, cfg, evidence_dir):
-    """AI Tool을 다시 연다 — 이미 한 번 연 뒤 재확인용이라 재시도는 하지 않는다."""
+    """AI Tool을 다시 연다 — 이미 한 번 연 뒤 재확인용이라 다이얼로그 미표시
+    재시도(Step 6의 MAX_ATTEMPTS 루프)는 넣지 않는다. 좌표 재획득 자체의 OCR
+    재시도는 `_find_ai_tool_point()`가 내부적으로 한다."""
     btn, point, note = _find_ai_tool_point(ui, cfg, evidence_dir)
     if point is None:
         return None, note

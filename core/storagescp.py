@@ -193,14 +193,22 @@ def server(cfg):
 
 # --- TC가 쓰는 판정 API -------------------------------------------------
 
-def mark(cfg):
+def mark(cfg, force_backend=None):
     """전송 직전의 기준점. 이 값을 `wait_for_store()`에 그대로 넘긴다.
 
     로컬 Bunny면 로그 오프셋과 파일 mtime 기준을, 원격 서버면 수신 목록
     signature를 담는다 — 두 백엔드의 "이번 전송으로 새로 생긴 것"을 가르는
     기준이 서로 다르기 때문에 TC 쪽에서 그 차이를 몰라도 되게 감싼다.
+
+    `force_backend`("bunny"/"storagescp")를 주면 `uses_local_bunny(cfg)`
+    판단(= `dicom.servers_to_register`의 Storage 항목 기준) 대신 그 값을
+    쓴다. Extra Tool(TC06)처럼 **Storage와 별개로 등록되는 대상**(`config.json`의
+    `extra_tool.server`, 사용자 지시 2026-08-24로 `dicom.servers_to_register`와
+    독립)의 수신 판정에 이 모듈을 재사용할 때 필요하다 — Storage 자신의 등록이
+    나중에 바뀌어도(예: 다시 로컬로) Extra Tool의 판단은 그것과 무관해야 한다.
     """
-    if uses_local_bunny(cfg):
+    backend = force_backend or ("bunny" if uses_local_bunny(cfg) else "storagescp")
+    if backend == "bunny":
         return {"backend": "bunny",
                 "log_offset": bunny_mod.log_size(cfg),
                 "since": time.time() - 5}
@@ -238,7 +246,7 @@ def _remote_result(ok, files, study, note):
 
 
 def wait_for_store(cfg, baseline, count=1, timeout=150, poll=3.0,
-                   patient_id=None, work_dir=None):
+                   patient_id=None, work_dir=None, force_backend=None):
     """C-STORE 수신을 기다린다. 반환 형식은 두 백엔드가 동일하다.
 
     반환: {"ok", "files"(로컬 .dcm 경로), "note", "log_excerpt"(수신 근거 텍스트),
@@ -251,9 +259,14 @@ def wait_for_store(cfg, baseline, count=1, timeout=150, poll=3.0,
     원격에서는 **이번 실행의 Patient ID로 스터디를 지목**하고, 그 스터디의
     객체를 내려받아 파일로 준다 — 판정하는 쪽(TC05의 SOP Class 확인)이
     로컬/원격을 구분하지 않아도 되게 하기 위함이다.
+
+    `force_backend`는 `mark()`와 같은 이유로 있다 — 보통은 `baseline`이 이미
+    `mark()`가 정한 `backend`를 담고 있어 그대로 따르지만, 명시적으로 override할
+    수 있게 남겨 둔다.
     """
     baseline = baseline or {}
-    if baseline.get("backend") == "bunny" or uses_local_bunny(cfg):
+    backend = force_backend or baseline.get("backend")
+    if backend == "bunny" or (backend is None and uses_local_bunny(cfg)):
         res = bunny_mod.wait_for_store(
             cfg, count=count, timeout=timeout, poll=poll,
             log_offset=baseline.get("log_offset", 0),
@@ -328,6 +341,74 @@ def wait_for_store(cfg, baseline, count=1, timeout=150, poll=3.0,
          if ok else
          "스터디는 보이는데 내려받은 객체가 %d건(기대 %d건 이상)이다."
          % (len(files), count)))
+
+
+def wait_for_resend(cfg, patient_id, since_last_received_at, timeout=90, poll=3.0,
+                    work_dir=None):
+    """같은 영상을 다시 보냈을 때(재전송) 원격 서버가 실제로 다시 받았는지 확인한다.
+
+    `wait_for_store()`의 "건수가 N 이상"과는 다른 신호가 필요하다 — **재전송은
+    같은 SOP Instance UID를 다시 보내는 것**이라 서버가 기존 객체를 갱신 처리하고
+    `instance_count`가 늘지 않는다(2026-08-27 실측: TC06 2차 전송 후에도
+    Instances=3 그대로였다 — 그래서 `wait_for_store(count=이전+1)`로 재전송을
+    판정하려던 첫 시도가 오탐 FAIL을 냈다). 대신 스터디의 `last_received_at`이
+    `since_last_received_at`(1차 전송 직후 값)보다 **뒤로 갱신**됐는지로 판정한다.
+
+    반환 형식은 `wait_for_store()`와 동일하다.
+    """
+    srv = server(cfg)
+    if srv is None:
+        return _remote_result(
+            False, [], None,
+            "config.json의 dicom.storage_server_url이 비어 있어 재전송 수신을 "
+            "확인할 수 없다.")
+    if not patient_id:
+        return _remote_result(
+            False, [], None,
+            "이번 실행의 Patient ID를 받지 못해 재전송 확인 대상을 지목할 수 없다.")
+
+    since = str(since_last_received_at or "")
+    end = time.time() + timeout
+    study, last_error = None, ""
+    while time.time() < end:
+        try:
+            found = srv.studies_of(patient_id)
+        except Exception as exc:                                 # noqa: BLE001
+            last_error = "%s: %s" % (type(exc).__name__, exc)
+            found = []
+        if found:
+            candidate = max(found, key=lambda s: str(s.get("last_received_at") or ""))
+            if str(candidate.get("last_received_at") or "") > since:
+                study = candidate
+                break
+        time.sleep(poll)
+
+    if not study:
+        note = ("%ds 안에 Storage SCP(%s)에서 Patient ID=%s 스터디의 최종 수신 "
+                "시각이 %s 이후로 갱신되는 것을 확인하지 못했다."
+                % (timeout, server_url(cfg), patient_id, since or "(없음)"))
+        if last_error:
+            note += " 마지막 오류: %s" % last_error
+        return _remote_result(False, [], None, note)
+
+    dest = work_dir or _work_dir(str(patient_id) + "_resend")
+    try:
+        files = srv.download_study(study.get("study_instance_uid"), dest)
+    except Exception as exc:                                     # noqa: BLE001
+        return _remote_result(
+            True, [], study,
+            "재전송으로 최종 수신 시각이 %s → %s로 갱신된 것은 확인했으나 원본을 "
+            "다시 내려받지 못했다: %s: %s"
+            % (since or "(없음)", study.get("last_received_at"),
+               type(exc).__name__, exc))
+
+    return _remote_result(
+        True, files, study,
+        "재전송을 확인했다 — Patient ID=%s 스터디의 최종 수신 시각이 %s → %s로 "
+        "갱신됐다(Instances=%s, 같은 SOP Instance UID라 건수는 그대로다). "
+        "원본 %d건을 다시 내려받았다."
+        % (patient_id, since or "(없음)", study.get("last_received_at"),
+           study.get("instance_count"), len(files)))
 
 
 def precondition_note(cfg):

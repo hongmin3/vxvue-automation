@@ -15,6 +15,7 @@ Setting Import는 export 안의 `Data.bak`으로 **DB 전체를 복원**하는 �
 """
 
 import os
+import shutil
 import subprocess
 import time
 from datetime import datetime
@@ -287,11 +288,38 @@ def _robocopy(src, dst, extra_args, timeout=1800):
     return proc.returncode
 
 
+def _find_excluded_dirs_present(root):
+    """`root` 밑에 `FOLDER_RESTORE_EXCLUDE_DIRS`에 해당하는 폴더가 실제로
+    있는지 찾는다. 있으면 그 절대경로 목록을 반환(없으면 빈 리스트).
+
+    2026-08-27 실측: robocopy `/MIR ... /XD <dir>`는 그 `<dir>`가 **source
+    쪽에도 존재하면 제외가 먹지 않고 그대로 미러링(덮어쓰기+퍼지)한다** —
+    source에 없을 때만 안전하게 보호된다. 즉 `/XD`만 믿고 baseline
+    스냅샷 안에 `Bak`/`log`가 섞여 있으면, 복원 시 라이브 `Bak`(백업 이력)이
+    그 스냅샷 내용으로 통째로 덮어써진다. 실제로 초기 baseline
+    (`CurrentPC_20260826_093422`, `Database\\Bak`에 예외 규칙이 생기기 전에
+    만들어짐)이 이 상태였고, 그걸로 복원할 때마다 방금 만든 안전 백업까지
+    포함해 라이브 `Bak` 전체가 사라졌다. 이 함수는 그 사고를 다시 내지
+    않기 위한 사전/사후 점검용이다.
+    """
+    found = []
+    for d in FOLDER_RESTORE_EXCLUDE_DIRS:
+        p = os.path.join(root, d)
+        if os.path.isdir(p):
+            found.append(p)
+    return found
+
+
 def backup_folder(data_dir, out_dir):
     """`data_dir` 전체를 `out_dir`로 미러링한다(robocopy /MIR).
 
     DB 파일(*.mdf/*.ldf)은 SQL Server가 점유 중이라 애초에 복사가 실패한다
     (2절 실측과 동일한 원리, 예상된 동작) — DB는 `backup()`으로 따로 다룬다.
+
+    `Bak/`·`log/`는 제외 대상이지만, source(`data_dir`)에도 그 폴더가 있으면
+    robocopy의 `/XD`가 먹지 않는 경우가 있어(`_find_excluded_dirs_present`
+    설명 참고) **복사 후 결과를 직접 확인해 새어 들어온 것을 지운다** —
+    baseline 스냅샷에는 그 폴더들이 있으면 안 된다.
     """
     os.makedirs(out_dir, exist_ok=True)
     extra = []
@@ -300,7 +328,12 @@ def backup_folder(data_dir, out_dir):
     extra += ["/XD"] + [os.path.join(data_dir, d)
                          for d in FOLDER_RESTORE_EXCLUDE_DIRS]
     rc = _robocopy(data_dir, out_dir, extra)
-    return {"out_dir": out_dir, "returncode": rc}
+
+    leaked = _find_excluded_dirs_present(out_dir)
+    for p in leaked:
+        shutil.rmtree(p, ignore_errors=True)
+
+    return {"out_dir": out_dir, "returncode": rc, "cleaned_leaked_dirs": leaked}
 
 
 def restore_folder(baseline_dir, data_dir, confirm=False, stop_processes=True,
@@ -308,9 +341,17 @@ def restore_folder(baseline_dir, data_dir, confirm=False, stop_processes=True,
     """`data_dir`를 `baseline_dir` 상태로 되돌린다(robocopy /MIR). **파괴적 조작이다.**
 
     confirm=True 없이 호출하면 아무 것도 하지 않고 예외를 던진다.
-    `Bak/`(DB 백업 이력)과 `log/`(운영 로그)는 절대 지우지 않는다
+    `Bak/`(DB 백업 이력)과 `log/`(운영 로그)는 절대 지우지 않는 것이 원칙이다
     (`FOLDER_RESTORE_EXCLUDE_DIRS`) — baseline 스냅샷에 그 폴더들이 있어도
     없어도, 지금 이 PC에 있는 내용을 그대로 둔다.
+
+    이 원칙을 robocopy의 `/XD`만으로는 보장할 수 없다는 게 실측으로
+    확인됐다(`_find_excluded_dirs_present` 설명 참고) — `baseline_dir` 쪽에
+    `Bak`/`log`가 섞여 있으면 라이브 `Bak`(백업 이력) 전체가 그 스냅샷
+    내용으로 덮어써질 수 있다. 그래서 복사를 실행하기 **전에** `baseline_dir`를
+    검사해 오염돼 있으면 아예 진행하지 않는다 — "혹시 몰라 지우지 않는다"가
+    아니라 "위험하니 실행 자체를 막는다"(CLAUDE.md 3절, 파괴적 삭제 안전장치
+    원칙과 동일).
     """
     if not confirm:
         raise DbResetError(
@@ -318,6 +359,24 @@ def restore_folder(baseline_dir, data_dir, confirm=False, stop_processes=True,
             "이 조작은 현재 폴더 내용을 baseline으로 덮어씁니다(Bak/log 제외).")
     if not os.path.isdir(baseline_dir):
         raise DbResetError("baseline 폴더가 없습니다: %s" % baseline_dir)
+
+    contaminated = _find_excluded_dirs_present(baseline_dir)
+    if contaminated:
+        raise DbResetError(
+            "baseline 폴더가 오염돼 있어 복원을 중단합니다 — 다음 폴더가 "
+            "baseline 스냅샷 안에 있으면 안 됩니다(있으면 robocopy 제외가 "
+            "먹지 않아 라이브 Bak/log를 통째로 덮어씁니다): %s. "
+            "baseline을 다시 만들거나(work/rebuild_baseline.py), "
+            "위 폴더를 baseline 스냅샷에서 지운 뒤 재시도하십시오."
+            % ", ".join(contaminated))
+
+    # 복원 전에 존재하던 보호 대상만 사후 확인 대상으로 삼는다 — 예를 들어
+    # 이 PC에는 구형 경로 `<data_dir>\Bak`이 애초에 없고 `<data_dir>\Database\Bak`
+    # 만 쓰는데, "목록에 있으니 복원 후에도 있어야 한다"고 무조건 확인하면
+    # 원래 없던 것도 "사라졌다"고 오탐한다(2026-08-27 실측 — 실제로는 멀쩡히
+    # 살아 있었는데 이 오탐 때문에 회귀가 잘못 FAIL했다).
+    existed_before = [d for d in FOLDER_RESTORE_EXCLUDE_DIRS
+                       if os.path.isdir(os.path.join(data_dir, d))]
 
     stopped = stop_app() if stop_processes else []
 
@@ -330,5 +389,14 @@ def restore_folder(baseline_dir, data_dir, confirm=False, stop_processes=True,
         extra += ["/XF", pat]
     extra += ["/XD"] + [os.path.join(data_dir, d) for d in FOLDER_RESTORE_EXCLUDE_DIRS]
     rc = _robocopy(baseline_dir, data_dir, extra)
+
+    # 사후 확인: 복원 전에 있던 보호 대상이 사라지지 않았는지 확인한다(정직성
+    # 원칙 — "지웠을 리 없다"고 가정하지 않고 실측한다).
+    missing = [d for d in existed_before
+               if not os.path.isdir(os.path.join(data_dir, d))]
+    if missing:
+        raise DbResetError(
+            "폴더 복원 후 다음 보호 대상이 라이브 데이터에서 사라졌습니다 — "
+            "즉시 확인하십시오: %s" % ", ".join(missing))
 
     return {"stopped": stopped, "returncode": rc, "safety_backup": safety}

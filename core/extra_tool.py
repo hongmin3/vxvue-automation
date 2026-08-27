@@ -49,6 +49,28 @@ class ExtraToolError(RuntimeError):
     pass
 
 
+def uses_local_bunny(cfg):
+    """Extra Tool 대상(`config.json`의 `extra_tool.server`)이 이 PC의 Bunny인가.
+
+    `core.storagescp.uses_local_bunny()`와 같은 판단 방식(포트 3000 + Bunny
+    app_path + AE Title="Bunny")이되, **Storage 등록(`dicom.servers_to_register`)이
+    아니라 `extra_tool.server`를 본다** — 사용자 지시(2026-08-24)로 이 둘은
+    독립적으로 바뀔 수 있어야 한다. 2026-08-27 Extra Tool을 Storage와 같은
+    원격 서버로 옮기면서 TC06의 수신 판정도 이 값으로 로컬/원격을 가른다
+    (`tests/tc06_extra_tool.py`).
+    """
+    from . import storagescp
+    if not storagescp.server_url(cfg):
+        return True
+    spec = (cfg.get("extra_tool") or {}).get("server") or {}
+    bunny = (cfg.get("dicom") or {}).get("bunny") or {}
+    if not bunny:
+        return False
+    return (str(spec.get("port")) == "3000"
+            and bool(bunny.get("app_path"))
+            and str(spec.get("ae_title", "")).lower() == "bunny")
+
+
 def _field(ui, cid):
     """dicom_settings._field()와 동일한 이유로 필요하다: Extra Tool 화면은
     길어서(Options 섹션까지) 스크롤 없이는 Echo/S.B.S.C.가 화면 밖에 있다

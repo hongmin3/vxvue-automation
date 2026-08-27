@@ -51,10 +51,24 @@ Server Log에 `PureGrid.Apply="0"`이 남는다** — 만 판정한다.
 화면에서 SBSC를 켤 수 있는 절차·파라미터 파일이 확인되면 그때 이 한계를
 보완할 것 — 지금은 확인되지 않은 것을 추측해 조작하지 않는다(`CLAUDE.md` 3절).
 
-## Bunny 한계 (TC05와 동일한 사용자 지시)
+## 수신 판정: Bunny(로컬) 또는 Storage SCP 웹 API(원격)
 
-Precondition은 "다른 PC 의 Server"지만 이 실행은 이 PC의 Bunny를 쓴다.
-`core.bunny.precondition_note()`가 그 차이를 판정 note에 남긴다.
+2026-08-27 사용자 지시로 Extra Tool 대상을 Storage와 같은 원격 서버
+(`STORAGE_SCP`, 10.13.0.222:11116)로 옮겼다. `core.extra_tool.uses_local_bunny()`가
+`extra_tool.server`만 보고 로컬/원격을 가른다(`dicom.servers_to_register`의
+Storage 항목과는 독립 — 둘이 나중에 다시 달라져도 이 판단은 그것과 무관하다).
+원격이면 `core.storagescp`의 웹 API 폴링(`mark()`/`wait_for_store()`)을
+`force_backend="storagescp"`로 재사용한다 — Extra Tool 대상이 물리적으로
+Storage SCP와 같은 서버이므로 같은 웹 API에서 이번 실행의 Patient ID로
+스터디를 찾을 수 있다. 로컬 Bunny로 남아 있다면(과거 구성) 기존
+`core.bunny` 경로를 그대로 쓴다 — "다른 PC 의 Server" Precondition과의
+차이는 `precondition_note()`가 판정 note에 남긴다.
+
+**재전송(Step4) 확인은 건수가 아니라 최종 수신 시각으로 한다.** 실측
+(2026-08-27): 같은 영상을 다시 보내면 같은 SOP Instance UID라 서버가 기존
+객체를 갱신 처리하고 `instance_count`가 늘지 않는다 — "건수가 1차보다 많아야
+한다"는 첫 시도는 이 때문에 오탐 FAIL을 냈다. `core.storagescp.wait_for_resend()`가
+`last_received_at` 갱신으로 판정한다.
 """
 
 import os
@@ -62,10 +76,31 @@ import time
 
 from core import bunny as bunny_mod
 from core import extra_tool as ET
+from core import storagescp as store_mod
 from core import workflow as W
 from core import xipl
 from core.db import DbError, VXvueDb
 from core.result import FAIL, MANUAL, PASS, SKIP, TCResult
+
+
+def _mark(cfg):
+    backend = "bunny" if ET.uses_local_bunny(cfg) else "storagescp"
+    return store_mod.mark(cfg, force_backend=backend)
+
+
+def _wait_for_store(cfg, baseline, **kwargs):
+    return store_mod.wait_for_store(cfg, baseline, **kwargs)
+
+
+def _precondition_note(cfg):
+    if ET.uses_local_bunny(cfg):
+        return bunny_mod.precondition_note(cfg)
+    spec = (cfg.get("extra_tool") or {}).get("server") or {}
+    return ("체크리스트 Precondition의 '다른 PC 의 Server 이용 - Extra Tool'을 "
+            "충족한다 — 이 실행은 다른 PC의 사내 공용 시험 서버(%s %s:%s, "
+            "Storage SCP와 같은 서버)를 Extra Tool 대상으로 썼고, 수신은 그 서버의 "
+            "웹 API로 받은 쪽에서 확인했다(사용자 지시, 2026-08-27)."
+            % (spec.get("ae_title"), spec.get("ip"), spec.get("port")))
 
 TC_ID = "TC_WindowsUpdate_06"
 TC_TITLE = "Extra Tool 전송 (Remove SBSC 옵션 → XIPL 재처리 → 전송)"
@@ -99,6 +134,7 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
         return r.finalize()
 
     db = VXvueDb(cfg.get("sql_server", r".\CHAMELEON"), cfg.get("database", "DRF"))
+    want_id = (cfg.get("test_data") or {}).get("mwl_patient_id")
 
     # --- Step 1: Extra Tool 대상 서버 등록 + Remove SBSC(S.B.S.C.) 켜기 ----
     try:
@@ -168,7 +204,7 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
 
     vm = W.viewer_mode(ui, cfg)
     W.select_first_image(ui)
-    log_off = bunny_mod.log_size(cfg)
+    mark1 = _mark(cfg)
     t0 = time.time() - 5
     xipl_cfg = cfg.get("xipl") or {}
     xipl_log_dir = xipl_cfg.get("server_log_dir")
@@ -192,15 +228,14 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
         return r.finalize()
 
     # --- Step 3: 수신 확인 + XIPL Server Log의 PureGrid.Apply="0" 확인 -----
-    res = bunny_mod.wait_for_store(cfg, count=1, timeout=90,
-                                   log_offset=log_off, files_newer_than=t0)
+    res = _wait_for_store(cfg, mark1, count=1, timeout=90, patient_id=want_id)
     for path in res["files"]:
         r.attach(path)
     r.add(step, "Extra Tool 대상 SCP 수신 확인 (C-STORE Status + 파일, 체크리스트 Step2 결과)",
           PASS if res["ok"] else FAIL,
           expected="C-STORE 응답 Status 0000h + 수신 파일 1건 이상",
           actual=res["note"],
-          note=bunny_mod.precondition_note(cfg))
+          note=_precondition_note(cfg))
     step += 1
 
     if xipl_log_dir:
@@ -220,8 +255,7 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
     step += 1
 
     # --- Step 4: 뷰어모드에서 기존 영상 선택 → Extra Tool 재클릭 -----------
-    log_off2 = bunny_mod.log_size(cfg)
-    t1 = time.time() - 5
+    mark2 = _mark(cfg)
     W.select_first_image(ui)
     clicked2 = W.click_tool(ui, cfg, name="Extra Tool", section="tools",
                             evidence_dir=evidence_dir)
@@ -231,8 +265,11 @@ def run(ui, cfg, evidence_dir=None, do_acquire=True, map_procedure=None,
           actual="매칭=%s / 클릭 지점=%s" % (clicked2.get("matched"), clicked2.get("point")))
     step += 1
     if clicked2.get("ok"):
-        res2 = bunny_mod.wait_for_store(cfg, count=1, timeout=90,
-                                        log_offset=log_off2, files_newer_than=t1)
+        if ET.uses_local_bunny(cfg):
+            res2 = _wait_for_store(cfg, mark2, count=1, timeout=90, patient_id=want_id)
+        else:
+            prior_ts = ((res or {}).get("study") or {}).get("last_received_at")
+            res2 = store_mod.wait_for_resend(cfg, want_id, prior_ts, timeout=90)
         for path in res2["files"]:
             r.attach(path)
         r.add(step, "재전송 수신 확인 (체크리스트 Step4 결과)",

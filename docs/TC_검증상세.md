@@ -653,7 +653,7 @@ CPU 모드로 실제 분석까지 실행하고, 사내 공유폴더의 VXCAD-CXR
 | 2 | **VXCAD-CXR 검증 샘플 영상을 데모 영상으로 등록** — 로컬 캐시(`auto/TestData/tc11_ai_samples/`, git 제외)의 3종(Nodule Mass/Pleural Effusion/Pneumothorax) 중 무작위로 하나를 골라 `<data_dir>\DemoImage\Default.img`로 교체(Service Manual p.170-171 5.2.5절), 실행 끝에 반드시 원복 | 교체·등록 성공. 캐시가 없으면 기존 기본 데모 영상 그대로(MANUAL) | PASS/MANUAL |
 | 3 | MWL 오픈 + 촬영 — Step 2가 교체한 샘플이 촬영됨 | 영상 1장 이상 획득 | PASS/FAIL |
 | 4 | Viewer 모드 전환 | Tools 섹션 노출 | PASS/FAIL |
-| 5 | annotation 팝업에서 AI Tool 좌표 확보 — OCR로 'AI Tool' 라벨을 직접 못 읽으면(8px 라벨, 'Extra Tool' 등으로 오인식) 안정적으로 읽히는 Ellipse/Circle/Delete 좌표로 격자 칸을 보간 | 사양서2 p.150 VP-616 — 좌표 확보 자체가 목적 | PASS/MANUAL |
+| 5 | annotation 팝업에서 AI Tool 좌표 확보 — OCR로 'AI Tool' 라벨을 직접 못 읽으면(8px 라벨, 'Extra Tool' 등으로 오인식) 안정적으로 읽히는 Ellipse/Circle/Delete 좌표로 격자 칸을 보간. **기준 라벨(Ellipse/Circle/Delete)을 못 읽으면 팝업이 스스로 닫히길(2.5초) 기다린 뒤 재시도(최대 2회)**(2026-08-27 추가 — 2026-08-26 회귀에서 같은 코드로 1차 PASS→2차 MANUAL, `Delete` 1회 미판독으로 재현) | 사양서2 p.150 VP-616 — 좌표 확보 자체가 목적 | PASS/MANUAL |
 | 6 | AI Tool 클릭 → 'AI Medical findings tool' 창 표시 확인. **클릭 전 2.5초 대기 후 팔레트를 다시 연다**(아래 참고), 그래도 안 뜨면 최대 3회 재시도 | Operation Manual 근거 — 클릭 시 이 창이 뜬다 | PASS/FAIL |
 | 7 | 'Request an analysis' 버튼(30736) 존재 확인 | 체크리스트 Step6 근거 | PASS/FAIL |
 | 8 | 옵션 체크박스 3종(Insert findings name/Insert probability text/Copy original image, 31509/31510/31512) 존재 확인 | 사양서2 p.150-152 VP-616 | PASS/FAIL |
