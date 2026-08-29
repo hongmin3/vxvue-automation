@@ -8,7 +8,8 @@
 
 import unittest
 
-from core.result import (BLOCKED, FAIL, MANUAL, PASS, SKIP, STATUSES, TCResult)
+from core.result import (BLOCKED, FAIL, MANUAL, PASS, SKIP, STATUSES, TCResult,
+                          tc_totals)
 
 
 def _tc(*steps):
@@ -108,6 +109,25 @@ class CountsTests(unittest.TestCase):
         first = r.completed
         r.finalize()
         self.assertEqual(first, r.completed)
+
+
+class TcTotalsTests(unittest.TestCase):
+    """`tc_totals()`는 Step 개수가 아니라 **TC 개수**를 센다(사용자 지시,
+    2026-08-30): 전체 결과는 Step 단위가 아니라 TC 단위 PASS/FAIL로 정리한다."""
+
+    def test_step이_많은_TC도_TC_1건으로_센다(self):
+        """PASS 20건 + FAIL 1건인 TC는 판정이 FAIL이라 TC로는 1건뿐이다.
+
+        Step 단위 합계(`_totals`)였다면 PASS 20 / FAIL 1로 잡혔을 것이다."""
+        many_steps = _tc(*([PASS] * 20 + [FAIL]))
+        only_pass = _tc(PASS)
+        total = tc_totals([many_steps, only_pass])
+        self.assertEqual(1, total[FAIL])
+        self.assertEqual(1, total[PASS])
+        self.assertEqual(2, sum(total.values()))
+
+    def test_모든_상태_키를_갖는다(self):
+        self.assertEqual(set(STATUSES), set(tc_totals([_tc(PASS)])))
 
 
 if __name__ == "__main__":

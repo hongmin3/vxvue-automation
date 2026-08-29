@@ -612,6 +612,23 @@ def _totals(results):
     return total
 
 
+def tc_totals(results):
+    """TC 단위 판정 집계.
+
+    `_totals()`는 **검증 항목(Step) 개수** 기준이라, 한 TC 안에 Step이 몇 개
+    있느냐에 따라 그 TC의 비중이 부풀거나 줄어든다. 회귀 전체의 결과를 사람이
+    바로 판단하려면 "Step이 몇 개 PASS했는가"가 아니라 "TC가 몇 건 통과했는가"가
+    필요하다(사용자 지시, 2026-08-30). TC의 판정(`TestCaseResult.verdict`)은
+    이미 Step 중 하나라도 FAIL/MANUAL/SKIP/BLOCKED이면 그쪽으로 나쁜 쪽이
+    이기게 매겨져 있으므로, 여기서는 그 판정만 센다.
+    """
+    total = dict((s, 0) for s in STATUSES)
+    for r in results:
+        if r.verdict in total:
+            total[r.verdict] += 1
+    return total
+
+
 def _attention_items(results):
     """사용자가 결정을 내려야 하는 비-PASS Step을 실행 순서와 함께 반환한다."""
     items = []
@@ -710,6 +727,7 @@ def write_txt(results, path, env=None):
     """사람이 바로 읽는 요약 텍스트. 상단에 환경 헤더를 붙인다."""
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     total = _totals(results)
+    tc_total = tc_totals(results)
 
     L = []
     L.append("=" * 80)
@@ -718,7 +736,13 @@ def write_txt(results, path, env=None):
     L.append(" 수행 일시     : %s" % datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     L.extend(_env_lines(env))
     L.append(" TC 건수       : %d" % len(results))
+    # TC 단위 판정이 먼저다 — Step 하나라도 FAIL/MANUAL이면 그 TC 전체가 그
+    # 판정이다(`tc_totals` 참고, 사용자 지시 2026-08-30).
+    L.append(" TC 판정 합계  : PASS %d / FAIL %d / MANUAL %d / SKIP %d / BLOCKED %d"
+             % (tc_total[PASS], tc_total[FAIL], tc_total[MANUAL],
+                tc_total[SKIP], tc_total[BLOCKED]))
     L.append(" 판정 합계     : PASS %d / FAIL %d / MANUAL %d / SKIP %d / BLOCKED %d"
+             " (Step 단위 — 참고용)"
              % (total[PASS], total[FAIL], total[MANUAL], total[SKIP], total[BLOCKED]))
     L.append("=" * 80)
     L.append("")
@@ -1138,10 +1162,7 @@ def _render_html(results, meta, siblings=None):
     meta = meta or {}
     total = _totals(results)
     checks = sum(total.values())
-    tc_total = dict((s, 0) for s in STATUSES)
-    for r in results:
-        if r.verdict in tc_total:
-            tc_total[r.verdict] += 1
+    tc_total = tc_totals(results)
     wall = sum(r.duration_seconds for r in results)
     first_start = min((r.started for r in results), default=None)
     last_end = max(((r.completed or datetime.now()) for r in results), default=None)
@@ -1517,7 +1538,11 @@ def write_reports(results, out_dir, run_name=None, env=None, meta=None):
                    "caveats": list(REPORT_CAVEATS),
                    "environment": env or {},
                    "report_quality": report_quality(results),
+                   # `totals`는 Step(검증 항목) 단위, `tc_totals`는 TC 단위다.
+                   # 전체 결과는 TC 단위로 판단한다(사용자 지시, 2026-08-30) —
+                   # Step 하나라도 FAIL/MANUAL이면 그 TC 전체가 그 판정이다.
                    "totals": total,
+                   "tc_totals": tc_totals(results),
                    "results": [r.as_dict() for r in results]},
                   f, ensure_ascii=False, indent=2)
 

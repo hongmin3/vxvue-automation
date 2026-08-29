@@ -346,6 +346,11 @@ def _announce(results, paths, args, label):
         lines.append("TC %d건 — 종합 판정 %s" % (len(results), verdict))
         if fails:
             lines.append("FAIL: " + ", ".join(fails))
+        # TC 단위 결과가 먼저다 — Step 하나라도 FAIL/MANUAL이면 그 TC 전체가
+        # 그 판정이다(사용자 지시, 2026-08-30). Step 합계는 참고용 상세다.
+        tc_total = result_mod.tc_totals(results)
+        lines.append("TC 합계: " + " / ".join("%s %d" % (st, tc_total[st])
+                                              for st in result_mod.STATUSES))
     lines.append("Step 합계: " + " / ".join("%s %d" % (st, total[st])
                                             for st in result_mod.STATUSES))
     lines.append("소요: %d초" % int(sum(r.duration_seconds for r in results)))
