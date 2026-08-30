@@ -188,8 +188,10 @@ STEP_ACTIVITY_RULES = {
         ("Tools 팝업에서 'Live View'", "Tools 팝업에 Live View 버튼이 표시되는지 확인하고 클릭해 기능을 실행한다."),
         ("Live View 오버레이 창", "Live View 실행 후 카메라 영상을 표시할 오버레이 창이 화면에 나타나는지 확인한다."),
         ("Play 클릭", "오버레이의 Play를 누른 뒤 영상 영역 픽셀 변화가 지속되는지 비교해 데모 영상이 실제 재생되는지 확인한다."),
-        ("Step Analysis", "촬영 Step 일치·불일치 표시와 Snapshot 촬영 및 Storage Queue 전송 결과를 화면과 큐에서 확인한다."),
+        ("Step Analysis", "촬영 Step과 카메라 영상의 일치 여부를 나타내는 테두리 표시를 확인한다(진입 경로를 찾지 못해 MANUAL)."),
         ("Live View 토글 off", "Live View를 끈 뒤 오버레이 창이 실제로 닫혀 화면에 남지 않는지 확인한다."),
+        ("Send Camera Snapshot Image 전송", "Send Camera Snapshot Image를 켠 상태로 영상을 전송하고, Storage SCP가 DX 본영상과 별개로 Secondary Capture(스냅샷) 객체를 실제로 받았는지 확인한다."),
+        ("시험 후 정리 — Send Camera Snapshot Image 원복", "이 TC가 켠 Send Camera Snapshot Image 설정을 원래 값으로 되돌려 이후 다른 TC의 전송에 영향이 남지 않게 한다."),
     ),
     "TC_WindowsUpdate_13": (
         ("Folder Watch 대상 USB 확인", "Folder Watch가 감시할 이동식 드라이브를 지금 연결된 매체에서 찾고, 하나로 특정되지 않으면 감시 폴더를 만들지 않은 채 그 사유를 남긴다."),

@@ -448,8 +448,12 @@ def check(ui, cfg, result, first_step=1, evidence_dir=None):
                    note="제품이 열 폭에 맞춰 줄여 그리므로 Company Code 등 뒷부분을 "
                         "읽을 수 없다(실측: 'Demo License 2100-08-18(Shima...'). "
                         "만료일까지는 읽히므로 종류·만료일 판정에는 영향이 없다. "
-                        "Company Code 전체 확인이 필요하면 사람이 확인할 것 "
-                        "— 사양서1 p.7 Company Code 표(None=0, Shimadzu=1) 참고.")
+                        "구조적 한계다(2026-08-30 재검토) — 이 목록은 표준 리스트뷰가 "
+                        "아니라 커스텀 MFC 컨트롤이라 열 폭 조정·hover 툴팁·더블클릭 "
+                        "상세창·우클릭 메뉴가 전부 없고, 라이선스 파일에도 이 문구가 "
+                        "없다(화면 전용 렌더링). 화면에서는 사람도 이 이상 읽을 수 "
+                        "없다 — Company Code 확인이 꼭 필요하면 사양서1 p.7 표"
+                        "(None=0, Shimadzu=1)와 발급 기록 등 다른 경로로 확인할 것.")
         step += 1
 
     # Step 9: Demo License 만료일 — 사양 근거를 그대로 남긴다
